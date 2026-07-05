@@ -138,13 +138,9 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 一个人直接问AI，上下文窗口是一个。4个Agent并行，等于4倍的搜索量、4倍的信息源、4个独立视角。
 
-**Team Lead（你）**：统筹协调、汇总研判，并行调度以下 4 个 Agent——
-
-| Agent 1 · 段永平视角 | Agent 2 · 巴菲特视角 | Agent 3 · 芒格视角 | Agent 4 · 李录视角 |
-|:---:|:---:|:---:|:---:|
-| 商业模式 | 财务估值 | 行业竞争 | 风险与管理层 |
-
-↓ 并行研究、实时汇报进度，最终由 Team Lead 输出**综合报告**
+<p align="center">
+  <img src="assets/team-core.svg" alt="Team Lead 并行调度四大师 Agent" width="720" />
+</p>
 
 ### 一句话总结
 

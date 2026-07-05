@@ -138,13 +138,9 @@ AI Berkshire ensures: **Same input → structurally consistent, equally deep out
 
 Ask AI directly, and you have one context window. Four parallel Agents means 4× the search volume, 4× the information sources, and 4 independent perspectives.
 
-**Team Lead (you)**: orchestrates and synthesizes, running 4 agents in parallel —
-
-| Agent 1 · Duan Yongping | Agent 2 · Buffett | Agent 3 · Munger | Agent 4 · Li Lu |
-|:---:|:---:|:---:|:---:|
-| Business model | Financials & valuation | Industry & competition | Risk & management |
-
-↓ Parallel research with live progress, synthesized by the Team Lead into the **final report**
+<p align="center">
+  <img src="assets/team-core-en.svg" alt="Team Lead orchestrating four master agents in parallel" width="720" />
+</p>
 
 ### In One Sentence
 
