@@ -18,6 +18,7 @@ Usage (called automatically by Skills, no manual execution needed):
 import argparse
 import json
 import math
+import re
 import sys
 from decimal import Decimal, Context, ROUND_HALF_EVEN, InvalidOperation
 
@@ -285,6 +286,9 @@ def benford_check(values: list):
 # 5. Exact Calculator (精确计算器)
 # ---------------------------------------------------------------------------
 
+_NUMBER_RE = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
 def exact_calc(expr: str):
     """Evaluate a financial expression with exact decimal arithmetic.
 
@@ -301,13 +305,15 @@ def exact_calc(expr: str):
         return None
 
     try:
-        # Replace scientific notation for Decimal compatibility
-        result = eval(expr, {"__builtins__": {}}, {})
+        # Wrap each numeric literal (incl. scientific notation) in Decimal(...)
+        # so evaluation never touches binary floats
+        dec_expr = _NUMBER_RE.sub(r"Decimal('\g<0>')", expr)
+        result = eval(dec_expr, {"__builtins__": {}}, {"Decimal": Decimal})
         d_result = exact(result)
         print(f"  表达式: {expr}")
         print(f"  结果:   {fmt_number(d_result)}")
         print(f"  精确值: {d_result}")
-        return float(d_result)
+        return d_result
     except Exception as e:
         print(f"  ❌ 计算错误: {e}")
         return None
@@ -317,11 +323,25 @@ def exact_calc(expr: str):
 # 6. Three-Scenario Valuation (三情景估值)
 # ---------------------------------------------------------------------------
 
+def _validate_growth(name: str, growth) -> Decimal:
+    """Growth must be a decimal fraction: 0.20 means +20%/yr. Reject unit mistakes."""
+    g = exact(growth)
+    if g > 2 or g <= -1:
+        raise ValueError(
+            f"{name}增速 {growth} 超出合理区间 (-1, 2]。"
+            f"增长率必须用小数表示: 20% 请输入 0.20, 而不是 20")
+    return g
+
+
 def three_scenario_valuation(current_price, current_eps, shares_billion,
                              growth_optimistic, growth_neutral, growth_pessimistic,
                              pe_optimistic, pe_neutral, pe_pessimistic,
                              years=3, currency=""):
-    """Calculate three-scenario target prices with exact arithmetic."""
+    """Calculate three-scenario target prices with exact arithmetic.
+
+    shares_billion 的单位是亿股, 隐含市值输出单位即为亿(对应币种)。
+    Returns a list of per-scenario dicts (bull, base, bear).
+    """
     print("=" * 60)
     print("三情景估值模型 (Three-Scenario Valuation)")
     print("=" * 60)
@@ -331,38 +351,60 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
     shares = exact(shares_billion)
 
     scenarios = [
-        ("乐观 (Bull)", growth_optimistic, pe_optimistic),
-        ("中性 (Base)", growth_neutral, pe_neutral),
-        ("悲观 (Bear)", growth_pessimistic, pe_pessimistic),
+        ("乐观 (Bull)", _validate_growth("乐观", growth_optimistic), pe_optimistic),
+        ("中性 (Base)", _validate_growth("中性", growth_neutral), pe_neutral),
+        ("悲观 (Bear)", _validate_growth("悲观", growth_pessimistic), pe_pessimistic),
     ]
 
     print(f"  当前股价: {p} {currency}")
     print(f"  当前EPS:  {eps}")
+    print(f"  总股本:   {shares}亿股")
     print(f"  预测期:   {years}年")
     print()
-    print(f"  {'情景':12} {'年增速':>8} {'目标PE':>8} {'目标EPS':>10} {'目标股价':>10} {'涨跌幅':>8}")
-    print(f"  {'-'*12} {'-'*8} {'-'*8} {'-'*10} {'-'*10} {'-'*8}")
+    print(f"  {'情景':12} {'年增速':>8} {'目标PE':>8} {'目标EPS':>10} {'目标股价':>10} {'隐含市值(亿)':>12} {'涨跌幅':>8}")
+    print(f"  {'-'*12} {'-'*8} {'-'*8} {'-'*10} {'-'*10} {'-'*12} {'-'*8}")
 
-    for name, growth, pe in scenarios:
-        g = exact(growth)
+    results = []
+    for name, g, pe in scenarios:
         target_pe = exact(pe)
         # Future EPS = current EPS × (1 + growth)^years
         future_eps = eps
         for _ in range(years):
             future_eps = _CTX.multiply(future_eps, _CTX.add(Decimal("1"), g))
         target_price = _CTX.multiply(future_eps, target_pe)
+        implied_mcap = _CTX.multiply(target_price, shares)
         change = float(target_price - p) / float(p) * 100
 
         print(f"  {name:12} {float(g)*100:>7.0f}% {float(target_pe):>7.0f}x "
-              f"{float(future_eps):>10.2f} {float(target_price):>9.1f} {change:>+7.1f}%")
+              f"{float(future_eps):>10.2f} {float(target_price):>9.1f} "
+              f"{float(implied_mcap):>11,.0f} {change:>+7.1f}%")
+
+        results.append({
+            "name": name,
+            "growth": g,
+            "pe": target_pe,
+            "future_eps": future_eps,
+            "target_price": target_price,
+            "implied_mcap": implied_mcap,
+            "change_pct": change,
+        })
 
     print()
     print("  ✅ 所有计算使用精确十进制, 结果可审计复现")
+    return results
 
 
 # ---------------------------------------------------------------------------
 # CLI Entry Point
 # ---------------------------------------------------------------------------
+
+def decimal_arg(text: str) -> Decimal:
+    """argparse type: parse numeric CLI input directly as Decimal, never via float."""
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        raise argparse.ArgumentTypeError(f"无效数值: {text}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -381,19 +423,19 @@ Examples:
 
     # verify-market-cap
     mc = sub.add_parser("verify-market-cap", help="验算市值 = 股价 × 总股本")
-    mc.add_argument("--price", type=float, required=True)
-    mc.add_argument("--shares", type=float, required=True, help="总股本")
-    mc.add_argument("--reported", type=float, required=True, help="报告市值")
+    mc.add_argument("--price", type=decimal_arg, required=True)
+    mc.add_argument("--shares", type=decimal_arg, required=True, help="总股本")
+    mc.add_argument("--reported", type=decimal_arg, required=True, help="报告市值")
     mc.add_argument("--currency", default="", help="币种")
 
     # verify-valuation
     val = sub.add_parser("verify-valuation", help="验算估值指标")
-    val.add_argument("--price", type=float, required=True)
-    val.add_argument("--eps", type=float, default=None)
-    val.add_argument("--bvps", type=float, default=None, help="每股净资产")
-    val.add_argument("--fcf-per-share", type=float, default=None)
-    val.add_argument("--dividend", type=float, default=None, help="每股股息")
-    val.add_argument("--revenue-per-share", type=float, default=None)
+    val.add_argument("--price", type=decimal_arg, required=True)
+    val.add_argument("--eps", type=decimal_arg, default=None)
+    val.add_argument("--bvps", type=decimal_arg, default=None, help="每股净资产")
+    val.add_argument("--fcf-per-share", type=decimal_arg, default=None)
+    val.add_argument("--dividend", type=decimal_arg, default=None, help="每股股息")
+    val.add_argument("--revenue-per-share", type=decimal_arg, default=None)
 
     # cross-validate
     cv = sub.add_parser("cross-validate", help="多源交叉验证")
@@ -412,12 +454,12 @@ Examples:
 
     # three-scenario
     ts = sub.add_parser("three-scenario", help="三情景估值")
-    ts.add_argument("--price", type=float, required=True)
-    ts.add_argument("--eps", type=float, required=True)
-    ts.add_argument("--shares", type=float, required=True, help="总股本(亿)")
-    ts.add_argument("--growth", nargs=3, type=float, required=True,
+    ts.add_argument("--price", type=decimal_arg, required=True)
+    ts.add_argument("--eps", type=decimal_arg, required=True)
+    ts.add_argument("--shares", type=decimal_arg, required=True, help="总股本(亿)")
+    ts.add_argument("--growth", nargs=3, type=decimal_arg, required=True,
                     help="三情景年增速 (乐观 中性 悲观), 如 0.15 0.08 0.0")
-    ts.add_argument("--pe", nargs=3, type=float, required=True,
+    ts.add_argument("--pe", nargs=3, type=decimal_arg, required=True,
                     help="三情景目标PE, 如 25 20 15")
     ts.add_argument("--years", type=int, default=3)
     ts.add_argument("--currency", default="")
@@ -438,11 +480,15 @@ Examples:
     elif args.command == "calc":
         exact_calc(args.expr)
     elif args.command == "three-scenario":
-        three_scenario_valuation(
-            args.price, args.eps, args.shares,
-            args.growth[0], args.growth[1], args.growth[2],
-            args.pe[0], args.pe[1], args.pe[2],
-            args.years, args.currency)
+        try:
+            three_scenario_valuation(
+                args.price, args.eps, args.shares,
+                args.growth[0], args.growth[1], args.growth[2],
+                args.pe[0], args.pe[1], args.pe[2],
+                args.years, args.currency)
+        except ValueError as e:
+            print(f"❌ 参数错误: {e}")
+            sys.exit(2)
     else:
         parser.print_help()
 
