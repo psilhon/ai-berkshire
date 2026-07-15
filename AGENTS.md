@@ -60,8 +60,10 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
 - Preserve existing report files unless the task specifically asks to change
   them.
 - Keep changes scoped to the requested skill, tool, script, or documentation.
-- Before finishing a skill/tool change, run the relevant syntax or generation
-  check. For compatibility changes, run:
+- Before finishing a skill/tool change, run the unified local check
+  (unit tests + generated-artifact sync checks):
+  `bash scripts/check.sh`
+- For compatibility changes, regenerate with:
   `python3 scripts/sync-codex-skills.py`
 - To verify generated Codex artifacts are current without rewriting files, run:
   `python3 scripts/sync-codex-skills.py --check`

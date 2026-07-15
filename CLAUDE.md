@@ -31,6 +31,9 @@ skills/*.md（Claude Code slash command 源文件，权威）
 ## 常用命令
 
 ```bash
+# 统一本地检查（单测 + 生成物同步校验）——改 tools/ 或 skills/ 后必跑
+bash scripts/check.sh
+
 # 精确金融计算（Decimal 无浮点漂移；市值/估值/多源交叉/Benford）
 python3 tools/financial_rigor.py verify-market-cap --price 510 --shares 9.11e9 --reported 4.65e12 --currency HKD
 python3 tools/financial_rigor.py calc --expr '510 * 9.11e9'
