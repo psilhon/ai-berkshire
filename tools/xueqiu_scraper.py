@@ -34,9 +34,17 @@ import json
 import os
 import random
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
-from playwright.async_api import async_playwright
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError:
+    sys.exit(
+        "缺少 playwright 依赖（本工具是 tools/ 零依赖原则的唯一例外）。安装：\n"
+        "  pip install playwright && playwright install chromium"
+    )
 
 
 def is_match(text, keywords):

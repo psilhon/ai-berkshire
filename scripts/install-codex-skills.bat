@@ -22,13 +22,21 @@ if errorlevel 1 exit /b %ERRORLEVEL%
 if not exist "%DEST%" mkdir "%DEST%"
 if errorlevel 1 exit /b %ERRORLEVEL%
 
+rem 覆盖前把已存在的同名 skill 移入备份目录（滚动保留上一代）
+set "BACKUP=%DEST%-backup"
+
 for /d %%D in ("%ROOT%\codex-skills\*") do (
-  if exist "%DEST%\%%~nxD" rmdir /s /q "%DEST%\%%~nxD"
-  if errorlevel 1 exit /b 1
+  if exist "%DEST%\%%~nxD" (
+    if not exist "%BACKUP%" mkdir "%BACKUP%"
+    if exist "%BACKUP%\%%~nxD" rmdir /s /q "%BACKUP%\%%~nxD"
+    move "%DEST%\%%~nxD" "%BACKUP%\%%~nxD" >nul
+    if errorlevel 1 exit /b 1
+  )
   xcopy "%%~fD" "%DEST%\%%~nxD\" /E /I /Y >nul
   if errorlevel 1 exit /b 1
 )
 
+if exist "%BACKUP%" echo Previous versions backed up to %BACKUP% (one generation kept).
 echo Installed Codex skills to %DEST%
 echo Run .\scripts\install-codex-prompts.bat if you want slash-command prompts.
 echo Restart Codex to pick up new skills.

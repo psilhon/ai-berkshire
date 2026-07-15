@@ -46,7 +46,7 @@ python3 tools/report_audit.py verdict --results '[...]'
 python3 tools/ashare_data.py ...
 ```
 
-其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。工具原则上零外部依赖（仅 Python stdlib）。
+其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。`scripts/build_report_index.py` 重建 `reports/INDEX.md` 报告索引。工具原则上零外部依赖（仅 Python stdlib）；**唯一例外** `xueqiu_scraper.py` 需 playwright（`pip install playwright && playwright install chromium`）。
 
 ## 目录结构
 
