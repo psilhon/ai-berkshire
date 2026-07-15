@@ -323,9 +323,17 @@ def exact_calc(expr: str):
 # 6. Three-Scenario Valuation (三情景估值)
 # ---------------------------------------------------------------------------
 
+def _require_finite(name: str, value) -> Decimal:
+    """Reject NaN/Infinity — 金融输入必须是有限数，否则结果是无声的垃圾。"""
+    d = exact(value)
+    if not d.is_finite():
+        raise ValueError(f"{name}必须是有限数值, 收到 {value}")
+    return d
+
+
 def _validate_growth(name: str, growth) -> Decimal:
     """Growth must be a decimal fraction: 0.20 means +20%/yr. Reject unit mistakes."""
-    g = exact(growth)
+    g = _require_finite(f"{name}增速", growth)
     if g > 2 or g <= -1:
         raise ValueError(
             f"{name}增速 {growth} 超出合理区间 (-1, 2]。"
@@ -346,14 +354,23 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
     print("三情景估值模型 (Three-Scenario Valuation)")
     print("=" * 60)
 
-    p = exact(current_price)
-    eps = exact(current_eps)
-    shares = exact(shares_billion)
+    p = _require_finite("当前股价", current_price)
+    if p <= 0:
+        raise ValueError(f"当前股价必须为正数, 收到 {current_price}")
+    eps = _require_finite("当前EPS", current_eps)
+    shares = _require_finite("总股本", shares_billion)
+    if shares <= 0:
+        raise ValueError(f"总股本必须为正数, 收到 {shares_billion}")
+    if years < 1:
+        raise ValueError(f"预测期 years 必须 ≥ 1, 收到 {years}")
 
     scenarios = [
-        ("乐观 (Bull)", _validate_growth("乐观", growth_optimistic), pe_optimistic),
-        ("中性 (Base)", _validate_growth("中性", growth_neutral), pe_neutral),
-        ("悲观 (Bear)", _validate_growth("悲观", growth_pessimistic), pe_pessimistic),
+        ("乐观 (Bull)", _validate_growth("乐观", growth_optimistic),
+         _require_finite("乐观PE", pe_optimistic)),
+        ("中性 (Base)", _validate_growth("中性", growth_neutral),
+         _require_finite("中性PE", pe_neutral)),
+        ("悲观 (Bear)", _validate_growth("悲观", growth_pessimistic),
+         _require_finite("悲观PE", pe_pessimistic)),
     ]
 
     print(f"  当前股价: {p} {currency}")
@@ -399,11 +416,17 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
 # ---------------------------------------------------------------------------
 
 def decimal_arg(text: str) -> Decimal:
-    """argparse type: parse numeric CLI input directly as Decimal, never via float."""
+    """argparse type: parse numeric CLI input directly as Decimal, never via float.
+
+    拒绝 NaN/Infinity——它们是合法 Decimal，但作为金融输入只会静默产出垃圾结果。
+    """
     try:
-        return Decimal(text)
+        d = Decimal(text)
     except InvalidOperation:
         raise argparse.ArgumentTypeError(f"无效数值: {text}")
+    if not d.is_finite():
+        raise argparse.ArgumentTypeError(f"无效数值 (NaN/Infinity 不接受): {text}")
+    return d
 
 
 def main():

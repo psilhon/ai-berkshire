@@ -55,6 +55,16 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
 - Clearly label low-confidence conclusions, incomplete data, and source gaps.
 - This project is for learning and research, not investment advice.
 
+## Privacy Boundary (public repo)
+
+This repository is public. The following stay local-only and must never be
+moved into tracked paths (already excluded via .gitignore):
+
+- `local/` — anything not meant to be public.
+- `reports/portfolio-latest.md` — portfolio report, local only.
+- `实盘记录/` contains the public weight-based view; the raw ledger
+  (share counts / amounts) lives in `local/实盘记录-原始/`.
+
 ## Editing Rules
 
 - Preserve existing report files unless the task specifically asks to change

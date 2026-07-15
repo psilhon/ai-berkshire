@@ -59,7 +59,7 @@ Thanks for your interest in AI Berkshire. This project grew out of my personal i
 - **Documentation fixes** — typos, dead links, unclear wording, and syncing the English README with the Chinese one.
 - **Compatibility fixes** for new versions of Claude Code / Codex.
 - **Research reports produced with this framework** — submit to the `reports/community/` subdirectory (organized as `reports/community/[company]/`). Requirements: (1) the report was actually generated with this repo's skills — state the skill and model used at the top; (2) include a disclaimer (not investment advice); (3) one report per PR. Reports that clearly miss the bar (framework not used, hand-written opinions only, missing financial cross-validation) will be closed.
-- **New skill proposals** — open an issue first to discuss the research scenario it addresses and how it differs from the existing 18 skills. Large unsolicited feature PRs may be closed to avoid wasted effort on both sides.
+- **New skill proposals** — open an issue first to discuss the research scenario it addresses and how it differs from the existing skills (see the Skills Overview in the README). Large unsolicited feature PRs may be closed to avoid wasted effort on both sides.
 
 ## Out of scope
 

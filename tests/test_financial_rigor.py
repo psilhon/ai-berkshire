@@ -127,6 +127,48 @@ class TestExistingBehaviorStillWorks(unittest.TestCase):
         with self.assertRaises(Exception):
             fr.decimal_arg("abc")
 
+    def test_decimal_arg_rejects_non_finite(self):
+        # nan/inf 是合法 Decimal，但作为金融输入必须拒绝，否则静默产出 NaN 结果
+        for bad in ("nan", "inf", "-inf", "Infinity"):
+            with self.assertRaises(Exception, msg=bad):
+                fr.decimal_arg(bad)
+
+
+class TestThreeScenarioRobustness(unittest.TestCase):
+    BASE = dict(growth_optimistic=0.1, growth_neutral=0.05, growth_pessimistic=0.0,
+                pe_optimistic=20, pe_neutral=15, pe_pessimistic=10)
+
+    def test_zero_price_rejected_cleanly(self):
+        # 修复前: ZeroDivisionError 裸 traceback
+        with self.assertRaises(ValueError):
+            quiet(fr.three_scenario_valuation, current_price=0, current_eps=5,
+                  shares_billion=10, **self.BASE)
+
+    def test_negative_price_rejected(self):
+        with self.assertRaises(ValueError):
+            quiet(fr.three_scenario_valuation, current_price=-100, current_eps=5,
+                  shares_billion=10, **self.BASE)
+
+    def test_nan_growth_rejected_as_value_error(self):
+        # 修复前: Decimal NaN 比较抛 InvalidOperation 裸 traceback
+        with self.assertRaises(ValueError):
+            quiet(fr.three_scenario_valuation, current_price=100, current_eps=5,
+                  shares_billion=10, growth_optimistic=Decimal("nan"),
+                  growth_neutral=0.05, growth_pessimistic=0.0,
+                  pe_optimistic=20, pe_neutral=15, pe_pessimistic=10)
+
+    def test_nan_eps_rejected(self):
+        with self.assertRaises(ValueError):
+            quiet(fr.three_scenario_valuation, current_price=100,
+                  current_eps=Decimal("nan"), shares_billion=10, **self.BASE)
+
+    def test_non_positive_years_rejected(self):
+        # 修复前: years=-3 打印"-3年"却静默按 0 年复利
+        for bad_years in (0, -3):
+            with self.assertRaises(ValueError, msg=bad_years):
+                quiet(fr.three_scenario_valuation, current_price=100, current_eps=5,
+                      shares_billion=10, years=bad_years, **self.BASE)
+
 
 if __name__ == "__main__":
     unittest.main()

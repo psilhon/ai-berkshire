@@ -110,7 +110,7 @@ _KV_TABLE_RE = re.compile(
 # 带标签的 KV 行：标签：数值 单位
 _KV_LABEL_RE = re.compile(
     r'(?P<label>[\u4e00-\u9fa5A-Za-z][^\|\n：:*]{1,30})[：:]\s*[~约]?\$?'
-    r'(?P<num>[\d,，\.]+)\s*(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?'
+    r'(?P<num>(?:(?<![\d,，\.])-)?[\d,，\.]+)\s*(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?'
 )
 
 
@@ -140,9 +140,9 @@ def _parse_md_tables(lines: list) -> list:
                     row_label = cells[0]
                     for col_idx, cell in enumerate(cells[1:], start=1):
                         col_header = headers_raw[col_idx] if col_idx < len(headers_raw) else f'列{col_idx}'
-                        # 提取 cell 中的数字+单位
+                        # 提取 cell 中的数字+单位（负号仅在非区间语境下捕获，如 -13.5亿）
                         m = re.search(
-                            r'[~约]?\$?([\d,，\.]+)\s*(亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?',
+                            r'[~约]?\$?((?:(?<![\d,，\.])-)?[\d,，\.]+)\s*(亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?',
                             cell
                         )
                         if m:
@@ -160,10 +160,12 @@ def _parse_md_tables(lines: list) -> list:
 _YEAR_LABEL_RE = re.compile(r'(FY)?(19|20)\d{2}(年|财年)?(\s*[QH][1-4])?')
 # 时间类列标题下的数字是期间标识，不是待核验财务数据
 _TIME_HEADER_RE = re.compile(r'年份|年度|季度|日期|时间|期间')
-# 定性字段里的数字（建议仓位/逻辑描述/评分等）无法从外部信源核验
-_QUAL_KEYWORDS = ('逻辑', '判断', '建议', '结论', '观点', '评分', '点评', '理由', '置信度', '概率')
-# 无单位裸年份数值（如 预测年份：2030）
+# 定性/标识字段里的数字（建议仓位/逻辑描述/评分/股票代码等）无法从外部信源按数值核验
+_QUAL_KEYWORDS = ('逻辑', '判断', '建议', '结论', '观点', '评分', '点评', '理由', '置信度', '概率',
+                  '代码', '编号')
+# 无单位裸年份数值（如 预测年份：2030）——仅在标签含时间语境时过滤，避免误杀真实金额
 _BARE_YEAR_RE = re.compile(r'(19|20)\d{2}')
+_TIME_HINT_RE = re.compile(r'年|FY|季度|日期|时间|期间')
 
 
 def extract_data_points(md_text: str):
@@ -199,7 +201,8 @@ def extract_data_points(md_text: str):
         if any(k in label for k in _QUAL_KEYWORDS):
             stats['filtered_qualitative'] += 1
             return
-        if not unit and _BARE_YEAR_RE.fullmatch(num_str.strip()):
+        if (not unit and _BARE_YEAR_RE.fullmatch(num_str.strip())
+                and _TIME_HINT_RE.search(label)):
             stats['filtered_year'] += 1
             return
         key = f"{label}|{round(val,4)}|{unit}"
@@ -216,18 +219,30 @@ def extract_data_points(md_text: str):
         })
 
     lines = md_text.split('\n')
+
+    # 屏蔽 ``` 代码块内容（置空行保留行号）：示例/模板表格不进抽检池
+    masked = []
+    in_fence = False
+    for line in lines:
+        if line.strip().startswith('```'):
+            in_fence = not in_fence
+            masked.append('')
+            continue
+        masked.append('' if in_fence else line)
+
     in_code = False
 
     # --- 1. 多列表格 ---
-    for row_label, col_header, val, unit, lineno, raw, num_str in _parse_md_tables(lines):
+    for row_label, col_header, val, unit, lineno, raw, num_str in _parse_md_tables(masked):
         header_clean = re.sub(r'[\*_`]+', '', col_header).strip()
         row_clean = re.sub(r'[\*_`]+', '', row_label).strip()
         # 时间类列（年份/日期）里的数字是期间标识，不是待核验数据
         if _TIME_HEADER_RE.search(header_clean):
             stats['filtered_year'] += 1
             continue
-        # 跳过无意义列标题（YoY增速列单独标注，不作为待核验数据）
-        if col_header.upper() in ('YOY', 'YOY增速', '增速', '同比', '变化', '趋势', '说明', '备注'):
+        # 跳过增速/说明类列标题（子串匹配，覆盖"营收同比/环比增速"等变体）
+        if 'YOY' in header_clean.upper() or any(
+                k in header_clean for k in ('同比', '环比', '增速', '涨跌', '变化', '趋势', '说明', '备注')):
             continue
         if _YEAR_LABEL_RE.fullmatch(row_clean):
             # 年份作行标签的财务历史表：年份是期间上下文，数据在各列
@@ -276,7 +291,7 @@ def sample_points(points: list, ratio: float = 0.15, seed: int = None) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 准出/打回判决
+# 三态判决（准出/证据不足/打回）
 # ---------------------------------------------------------------------------
 
 _TOLERANCE = 0.01   # 1% 容差
@@ -493,7 +508,7 @@ def main():
   Step 2 — Claude 对清单中每个数据点，从可靠信源取数，
             填入 fetched_value / fetched_source / fetched_value2 / fetched_source2
 
-  Step 3 — 输入核验结果，输出准出/打回判决：
+  Step 3 — 输入核验结果，输出三态判决（准出/证据不足/打回，退出码 0/2/1）：
     python3 tools/report_audit.py verdict --results '[
       {"id":1,"label":"营业收入","reported_value":7518,"unit":"亿","fetched_value":7518,"fetched_source":"macrotrends","fetched_value2":7500,"fetched_source2":"stockanalysis"},
       ...
@@ -519,7 +534,7 @@ def main():
     ext.add_argument('--dry-run', action='store_true', help='只打印，不输出 JSON')
 
     # verdict
-    vrd = sub.add_parser('verdict', help='根据核验结果输出准出/打回判决')
+    vrd = sub.add_parser('verdict', help='根据核验结果输出三态判决（准出/证据不足/打回）')
     vrd.add_argument('--results', required=True, help='JSON 数组，含 fetched_value 等字段')
     vrd.add_argument('--report', default='', help='报告名称（可选，用于显示）')
     vrd.add_argument('--output-json', action='store_true', help='将判决结果以 JSON 输出到 stdout')
@@ -574,8 +589,8 @@ def main():
                     'raw_text': p['raw_text'],
                     'fetched_value': None,       # ← 填入主来源核验值
                     'fetched_source': '',        # ← 填入主来源名称
-                    'fetched_value2': None,      # ← 填入副来源核验值（可选）
-                    'fetched_source2': '',       # ← 填入副来源名称（可选）
+                    'fetched_value2': None,      # ← 填入副来源核验值（双源核验必填，缺失判证据不足）
+                    'fetched_source2': '',       # ← 填入副来源名称
                 })
             print('抽检清单 JSON（填入 fetched_value 后，传给 verdict 命令）：')
             print()

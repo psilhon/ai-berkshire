@@ -137,6 +137,38 @@ class TestBareYearValueFilter(unittest.TestCase):
         self.assertNotIn(2030, values)
         self.assertIn(1500, values)
 
+    def test_year_range_value_with_unit_header_kept(self):
+        # 年份过滤只针对时间语境；单位在列头时 1900-2105 区间的真实数值不能误杀
+        md = "| 指标 | 金额(亿元) |\n|---|---|\n| 净利润 | 2024 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        self.assertEqual([p["reported_value"] for p in points], [2024.0])
+
+
+class TestNegativeNumbers(unittest.TestCase):
+    def test_negative_table_value_keeps_sign(self):
+        md = "| 指标 | 数值 |\n|---|---|\n| 净利润 | -13.5亿 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        self.assertEqual([p["reported_value"] for p in points], [-13.5])
+
+    def test_negative_kv_value_extracted(self):
+        points, _ = quiet(ra.extract_data_points, "经营现金流：-25.8亿元\n")
+        self.assertEqual([p["reported_value"] for p in points], [-25.8])
+
+    def test_range_values_not_misread_as_negative(self):
+        md = "| 指标 | 区间 |\n|---|---|\n| PB | 1-1.5倍 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        for p in points:
+            self.assertGreater(p["reported_value"], 0)
+
+
+class TestCodeFenceExcluded(unittest.TestCase):
+    def test_fenced_table_not_extracted(self):
+        md = "```\n| 示例指标 | 数值 |\n|---|---|\n| 模板营收 | 999亿 |\n```\n\n真实营收：1500亿元\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        values = [p["reported_value"] for p in points]
+        self.assertNotIn(999, values)
+        self.assertIn(1500, values)
+
 
 if __name__ == "__main__":
     unittest.main()

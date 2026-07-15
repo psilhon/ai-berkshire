@@ -15,7 +15,7 @@ backed_up=0
 for skill_dir in "$ROOT"/codex-skills/*; do
   [ -d "$skill_dir" ] || continue
   name="$(basename "$skill_dir")"
-  if [ -d "$DEST/$name" ]; then
+  if [ -e "$DEST/$name" ]; then
     mkdir -p "$BACKUP"
     rm -rf "$BACKUP/$name"
     mv "$DEST/$name" "$BACKUP/$name"

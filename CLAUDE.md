@@ -38,7 +38,7 @@ bash scripts/check.sh
 python3 tools/financial_rigor.py verify-market-cap --price 510 --shares 9.11e9 --reported 4.65e12 --currency HKD
 python3 tools/financial_rigor.py calc --expr '510 * 9.11e9'
 
-# 报告数据抽检（抽15%数据点比对信源，准出/打回）——报告发布前跑
+# 报告数据抽检（抽15%数据点比对信源，准出/证据不足/打回三态判决）——报告发布前跑
 python3 tools/report_audit.py extract --report reports/xxx.md
 python3 tools/report_audit.py verdict --results '[...]'
 
