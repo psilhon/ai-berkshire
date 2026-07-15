@@ -2,7 +2,8 @@
 # 记录用户指令到日志文件
 # 由 user_prompt_submit hook 调用，stdin 接收用户输入
 
-LOG_DIR="$HOME/ai-berkshire/logs"
+# Resolve logs/ relative to this script so any checkout location works
+LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/logs"
 LOG_FILE="$LOG_DIR/command-log.jsonl"
 COUNTER_FILE="$LOG_DIR/.counter"
 
