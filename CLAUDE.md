@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 同时兼容 Claude Code 与 Codex 的价值投资研究 Skill 合集。四大师框架：巴菲特、芒格、段永平、李录。
 GitHub: xbtlin/ai-berkshire。本仓库既是个人投研工作区（reports/ 有真实研究产出），也是开源产品——改工具/skill 时不要顺手改动无关报告。
 
+`ai_CLAUDE.md` 是项目级 AI 记忆文件（用户画像、Skill 体系演进、历史误判教训），已入库公开；做投研任务前值得参考，重要修正后可沉淀进去。
+
 ## 架构：双系统 Skill 管线
 
 `skills/*.md` 是**唯一权威源**，Codex 侧文件全部由脚本生成：
@@ -105,6 +107,16 @@ docs/            — ROADMAP 与专题文档
 - 货币单位明确标注（港币/人民币/美元/韩元），防止混淆
 - PE/ROE 等指标用 `tools/financial_rigor.py` 精确计算
 - 发布级报告先过 `tools/report_audit.py` 抽检
+
+## 公开仓库与隐私边界
+
+本仓库公开。以下内容只存本地、永不入库（.gitignore 已排除）：
+
+- `local/` — 所有不打算公开的文件放这里
+- `reports/portfolio-latest.md` — 组合报告只存本地
+- `实盘记录/` 内是公开的**权重口径**版；原始账本（含股数/金额）在 `local/实盘记录-原始/`
+
+写报告/整理文件时不要把上述私密内容挪进会被 track 的路径。音视频大文件（.m4a/.mp3/.mp4 等）默认不入库，确需提交用 `git add -f` 显式加入。
 
 ## Git 操作
 
