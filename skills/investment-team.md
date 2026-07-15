@@ -205,13 +205,13 @@ python3 tools/report_audit.py extract \
 
 # Step 2 — 对清单每项从可靠信源取数（参见 skills/financial-data.md）
 
-# Step 3 — 输出准出/打回判决
+# Step 3 — 输出三态判决（准出/证据不足/打回）
 python3 tools/report_audit.py verdict \
   --results '<填好的JSON>' \
   --report <报告文件名>
 ```
 
-**【准出】** 全部通过 → 报告可发布；**【打回】** 有不通过 → 修正后重审。
+**【准出】** 全部抽检点双源核验通过 → 可发布；**【证据不足】** 有未核验/单一来源/两源冲突点 → 补齐第二来源后重跑；**【打回】** 有不通过 → 修正后重审。
 
 ### 第十步：清理团队
 
