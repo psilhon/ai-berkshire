@@ -2,7 +2,10 @@
 """Report Audit Tool for AI Berkshire.
 
 数据抽检工具：从研究报告中抽取15%的财务数据点，与可靠信源比对，
-通过则准出，不通过则打回并说明原因。
+输出三态判决（fail-closed，证据不足时不放行）：
+  PASS（准出）        全部抽检点双源核验且偏差 ≤ 1%
+  INSUFFICIENT（证据不足） 空结果/样本<3/未填核验值/单一来源/两源冲突
+  FAIL（打回）        任一数据点与所填全部信源不符
 
 Zero external dependencies — uses only Python stdlib.
 Requires Python >= 3.7.
@@ -11,10 +14,11 @@ Requires Python >= 3.7.
   Step 1 — 提取数据点，随机抽样15%：
     python3 tools/report_audit.py extract --report reports/xxx.md
 
-  Step 2 — Claude 对抽检清单中的每个数据点，从可靠信源（macrotrends/
-            stockanalysis/aastocks/eastmoney）取数，填入 fetched_value
+  Step 2 — Claude 对抽检清单中的每个数据点，从两个独立信源（macrotrends/
+            stockanalysis/aastocks/eastmoney）取数，填入 fetched_value 与
+            fetched_value2（缺第二来源会降级为 INSUFFICIENT）
 
-  Step 3 — 输入核验结果，输出准出/打回判决：
+  Step 3 — 输入核验结果，输出三态判决（退出码 0/2/1）：
     python3 tools/report_audit.py verdict --results '[...]'
 
   一步完成（仅提取+打印抽检清单，不做网络验证）：
@@ -145,28 +149,45 @@ def _parse_md_tables(lines: list) -> list:
                             val = _clean_num(m.group(1))
                             unit = (m.group(2) or '').strip()
                             if val and val != 0 and val < 1e15:
-                                results.append((row_label, col_header, val, unit, i + 1, dline))
+                                results.append((row_label, col_header, val, unit, i + 1, dline, m.group(1)))
                     i += 1
                 continue
         i += 1
     return results
 
 
-def extract_data_points(md_text: str) -> list:
-    """从 Markdown 报告中提取所有可识别的财务数据点。
+# 年份型行标签（财务历史表常以年份作首列）：作期间上下文保留，不作数据丢弃
+_YEAR_LABEL_RE = re.compile(r'(FY)?(19|20)\d{2}(年|财年)?(\s*[QH][1-4])?')
+# 时间类列标题下的数字是期间标识，不是待核验财务数据
+_TIME_HEADER_RE = re.compile(r'年份|年度|季度|日期|时间|期间')
+# 定性字段里的数字（建议仓位/逻辑描述/评分等）无法从外部信源核验
+_QUAL_KEYWORDS = ('逻辑', '判断', '建议', '结论', '观点', '评分', '点评', '理由', '置信度', '概率')
+# 无单位裸年份数值（如 预测年份：2030）
+_BARE_YEAR_RE = re.compile(r'(19|20)\d{2}')
+
+
+def extract_data_points(md_text: str):
+    """从 Markdown 报告中提取所有可核验的财务数据点。
 
     覆盖三类结构：
-      1. 多列 Markdown 表格（最主要的来源）：(行标签 + 列标题) → 数值
+      1. 多列 Markdown 表格（最主要的来源）：(行标签 + 列标题) → 数值；
+         年份作行标签时保留为期间上下文（如 "营收 · 2024"）
       2. 带冒号的 KV 行：标签：数值 单位
       3. 加粗数字行：**数值** 单位
 
-    返回 list of dict：
-      {id, label, reported_value, unit, raw_text, line_number}
+    过滤不可核验的噪声（数量计入 stats，不静默丢弃）：
+      - 年份/期间数值（如 2025、2030）
+      - 定性字段数字（建议仓位/逻辑/评分等，无外部信源可比对）
+
+    返回 (points, stats)：
+      points: list of dict {id, label, reported_value, unit, raw_text, line_number}
+      stats:  {'filtered_year': int, 'filtered_qualitative': int}
     """
     points = []
     seen = set()
+    stats = {'filtered_year': 0, 'filtered_qualitative': 0}
 
-    def _add(label, val, unit, lineno, raw):
+    def _add(label, val, unit, lineno, raw, num_str=''):
         label = re.sub(r'[\*_`]+', '', label).strip()
         if not _is_valid_label(label):
             return
@@ -174,6 +195,12 @@ def extract_data_points(md_text: str) -> list:
             return
         # 过滤纯年份/季度
         if re.fullmatch(r'(20\d{2}|Q[1-4]|\d{4}\s*Q[1-4])', label.strip()):
+            return
+        if any(k in label for k in _QUAL_KEYWORDS):
+            stats['filtered_qualitative'] += 1
+            return
+        if not unit and _BARE_YEAR_RE.fullmatch(num_str.strip()):
+            stats['filtered_year'] += 1
             return
         key = f"{label}|{round(val,4)}|{unit}"
         if key in seen:
@@ -192,19 +219,31 @@ def extract_data_points(md_text: str) -> list:
     in_code = False
 
     # --- 1. 多列表格 ---
-    for row_label, col_header, val, unit, lineno, raw in _parse_md_tables(lines):
-        # 跳过无意义行标签
-        if not _is_valid_label(row_label):
+    for row_label, col_header, val, unit, lineno, raw, num_str in _parse_md_tables(lines):
+        header_clean = re.sub(r'[\*_`]+', '', col_header).strip()
+        row_clean = re.sub(r'[\*_`]+', '', row_label).strip()
+        # 时间类列（年份/日期）里的数字是期间标识，不是待核验数据
+        if _TIME_HEADER_RE.search(header_clean):
+            stats['filtered_year'] += 1
             continue
         # 跳过无意义列标题（YoY增速列单独标注，不作为待核验数据）
         if col_header.upper() in ('YOY', 'YOY增速', '增速', '同比', '变化', '趋势', '说明', '备注'):
             continue
-        # label = "行标签 · 列标题"（若列标题是行标签的补充）
-        if col_header and col_header != row_label:
-            label = f"{row_label} · {col_header}"
+        if _YEAR_LABEL_RE.fullmatch(row_clean):
+            # 年份作行标签的财务历史表：年份是期间上下文，数据在各列
+            if not _is_valid_label(header_clean):
+                continue
+            label = f"{header_clean} · {row_clean}"
         else:
-            label = row_label
-        _add(label, val, unit, lineno, raw)
+            # 跳过无意义行标签
+            if not _is_valid_label(row_label):
+                continue
+            # label = "行标签 · 列标题"（若列标题是行标签的补充）
+            if col_header and col_header != row_label:
+                label = f"{row_label} · {col_header}"
+            else:
+                label = row_label
+        _add(label, val, unit, lineno, raw, num_str)
 
     # --- 2. KV 冒号行 ---
     for lineno, line in enumerate(lines, start=1):
@@ -221,9 +260,9 @@ def extract_data_points(md_text: str) -> list:
             label = m.group('label')
             val = _clean_num(m.group('num'))
             unit = (m.group('unit') or '').strip()
-            _add(label, val, unit, lineno, stripped)
+            _add(label, val, unit, lineno, stripped, m.group('num'))
 
-    return points
+    return points, stats
 
 
 def sample_points(points: list, ratio: float = 0.15, seed: int = None) -> list:
@@ -250,9 +289,18 @@ def _pct_diff(reported: float, fetched: float) -> float:
     return abs(reported - fetched) / abs(reported)
 
 
+_MIN_SAMPLE = 3   # 已核验抽检点低于此数不足以支撑准出
+
+
 def render_verdict(results: list, report_name: str = "") -> dict:
     """
-    根据核验结果输出准出/打回判决。
+    根据核验结果输出三态判决（fail-closed：证据不足时不放行）。
+
+      FAIL          任一数据点与所填全部信源不符 → 打回修正
+      INSUFFICIENT  无硬失配但存在证据缺口 → 不可宣称审计通过：
+                    空结果 / 已核验点不足3个 / 有未填核验值 /
+                    有单一来源数据点 / 两来源冲突待人工复核
+      PASS          全部抽检点均双源核验且偏差 ≤ 1%
 
     results: list of dict，每项包含：
       - id, label, reported_value, unit, fetched_value, fetched_source
@@ -260,12 +308,10 @@ def render_verdict(results: list, report_name: str = "") -> dict:
 
     返回：
       {
-        'verdict': 'PASS' | 'FAIL',
-        'pass_count': int,
-        'fail_count': int,
-        'total': int,
-        'fail_items': [...],
-        'summary': str,
+        'verdict': 'PASS' | 'INSUFFICIENT' | 'FAIL',
+        'pass_count', 'warn_count', 'fail_count',
+        'skipped_count', 'single_source_count', 'total',
+        'fail_items', 'warn_items', 'insufficient_reasons',
       }
     """
     BOLD = '\033[1m'
@@ -275,7 +321,7 @@ def render_verdict(results: list, report_name: str = "") -> dict:
     RESET = '\033[0m'
 
     print('=' * 70)
-    print(f'{BOLD}报告数据抽检 — 准出/打回判决{RESET}')
+    print(f'{BOLD}报告数据抽检 — 三态判决（准出/证据不足/打回）{RESET}')
     if report_name:
         print(f'报告：{report_name}')
     print('=' * 70)
@@ -283,6 +329,8 @@ def render_verdict(results: list, report_name: str = "") -> dict:
 
     fail_items = []
     warn_items = []
+    single_items = []
+    skipped_count = 0
 
     for item in results:
         label = item.get('label', '?')
@@ -293,35 +341,28 @@ def render_verdict(results: list, report_name: str = "") -> dict:
         fetched2 = item.get('fetched_value2')
         source2 = item.get('fetched_source2', '')
 
-        # --- 主来源比对 ---
+        # --- 未填核验值：计入证据缺口，不再静默跳过 ---
         if fetched is None:
-            # 没有提供核验值 → 跳过（不计入通过/失败）
-            print(f'  ⬜ [{item["id"]:>2}] {label[:35]:35s} {reported:>12.2f} {unit}  →  [未提供核验值，跳过]')
+            skipped_count += 1
+            print(f'  ⬜ [{item["id"]:>2}] {label[:35]:35s} {reported:>12.2f} {unit}  →  [未提供核验值 → 证据缺口]')
             continue
 
         fetched = float(fetched)
         diff1 = _pct_diff(reported, fetched)
 
-        # --- 第二来源比对（如有）---
         diff2 = None
         if fetched2 is not None:
             fetched2 = float(fetched2)
             diff2 = _pct_diff(reported, fetched2)
 
-        # 判断
         pass1 = diff1 <= _TOLERANCE
-        pass2 = (diff2 is None) or (diff2 <= _TOLERANCE)
+        pass2 = (diff2 <= _TOLERANCE) if diff2 is not None else None
 
-        if pass1 and pass2:
-            status = f'{GREEN}✅ 通过{RESET}'
-            detail = f'{source}: {fetched:.2f} (偏差 {diff1*100:.2f}%)'
-            if diff2 is not None:
-                detail += f'  |  {source2}: {fetched2:.2f} (偏差 {diff2*100:.2f}%)'
-        elif not pass1 and not pass2:
-            status = f'{RED}❌ 不通过{RESET}'
-            detail = f'{source}: {fetched:.2f} (偏差 {diff1*100:.2f}%)'
-            if diff2 is not None:
-                detail += f'  |  {source2}: {fetched2:.2f} (偏差 {diff2*100:.2f}%)'
+        detail = f'{source}: {fetched:.2f} (偏差 {diff1*100:.2f}%)'
+        if diff2 is not None:
+            detail += f'  |  {source2}: {fetched2:.2f} (偏差 {diff2*100:.2f}%)'
+
+        def _fail_item():
             fail_items.append({
                 'id': item['id'],
                 'label': label,
@@ -336,12 +377,23 @@ def render_verdict(results: list, report_name: str = "") -> dict:
                 'raw_text': item.get('raw_text', ''),
                 'line_number': item.get('line_number', 0),
             })
+
+        if diff2 is None:
+            # 只有单一来源：即使通过也不满足双源标准；不符则直接打回
+            if pass1:
+                status = f'{YELLOW}⚠️ 单源{RESET}'
+                single_items.append({'id': item.get('id'), 'label': label})
+            else:
+                status = f'{RED}❌ 不通过{RESET}'
+                _fail_item()
+        elif pass1 and pass2:
+            status = f'{GREEN}✅ 通过{RESET}'
+        elif not pass1 and not pass2:
+            status = f'{RED}❌ 不通过{RESET}'
+            _fail_item()
         else:
-            # 一个来源通过，一个不通过 → 警告，不计入失败
-            status = f'{YELLOW}⚠️  警告{RESET}'
-            detail = f'{source}: {fetched:.2f} (偏差 {diff1*100:.2f}%)'
-            if diff2 is not None:
-                detail += f'  |  {source2}: {fetched2:.2f} (偏差 {diff2*100:.2f}%)'
+            # 一个来源通过，一个不通过 → 冲突，需人工复核，不能视为通过
+            status = f'{YELLOW}⚠️ 冲突{RESET}'
             warn_items.append({
                 'id': item['id'], 'label': label,
                 'reported': reported, 'unit': unit,
@@ -355,18 +407,32 @@ def render_verdict(results: list, report_name: str = "") -> dict:
     print()
     print('-' * 70)
 
-    total = len([r for r in results if r.get('fetched_value') is not None])
+    checked = len(results) - skipped_count
     fail_count = len(fail_items)
     warn_count = len(warn_items)
-    pass_count = total - fail_count - warn_count
+    single_count = len(single_items)
+    pass_count = checked - fail_count - warn_count - single_count
 
-    print(f'  抽检总数: {total}  |  通过: {GREEN}{pass_count}{RESET}  |  警告: {YELLOW}{warn_count}{RESET}  |  不通过: {RED}{fail_count}{RESET}')
+    print(f'  抽检总数: {len(results)}  |  双源通过: {GREEN}{pass_count}{RESET}  |  单源: {YELLOW}{single_count}{RESET}  |  '
+          f'冲突: {YELLOW}{warn_count}{RESET}  |  不通过: {RED}{fail_count}{RESET}  |  未核验: {skipped_count}')
     print()
 
+    # --- 三态判决（fail-closed）---
+    reasons = []
     if fail_count == 0:
-        print(f'{BOLD}{GREEN}【准出】所有抽检数据通过，报告可发布。{RESET}')
-        verdict = 'PASS'
-    else:
+        if checked == 0:
+            reasons.append('没有任何已核验的数据点')
+        elif checked < _MIN_SAMPLE:
+            reasons.append(f'已核验抽检点仅 {checked} 个（最低要求 {_MIN_SAMPLE} 个）')
+        if skipped_count:
+            reasons.append(f'{skipped_count} 个抽检点未填核验值')
+        if single_count:
+            reasons.append(f'{single_count} 个数据点只有单一来源（标准要求两个独立信源）')
+        if warn_count:
+            reasons.append(f'{warn_count} 个数据点两来源冲突（可能是 GAAP/Non-GAAP 或汇率口径差异），需人工复核')
+
+    if fail_count > 0:
+        verdict = 'FAIL'
         print(f'{BOLD}{RED}【打回】{fail_count} 个数据点核验不通过，报告需修正后重审。{RESET}')
         print()
         print(f'{BOLD}打回原因：{RESET}')
@@ -378,10 +444,19 @@ def render_verdict(results: list, report_name: str = "") -> dict:
                 print(f'     {fi["source2"]}：{fi["fetched2"]}  （偏差 {fi["diff2_pct"]}%）')
             print(f'     原文：{fi["raw_text"][:80]}')
             print()
-        verdict = 'FAIL'
+    elif reasons:
+        verdict = 'INSUFFICIENT'
+        print(f'{BOLD}{YELLOW}【证据不足】审计未达准出标准，不可宣称"审计通过"。缺口：{RESET}')
+        for r in reasons:
+            print(f'  ⚠️  {r}')
+        print(f'  → 补齐核验值/第二来源后重跑 verdict。')
+    else:
+        verdict = 'PASS'
+        print(f'{BOLD}{GREEN}【准出】全部 {pass_count} 个抽检点均通过双源核验（偏差 ≤ 1%），报告可发布。{RESET}')
 
     if warn_count > 0:
-        print(f'{YELLOW}注意：{warn_count} 个数据点两来源结果不一致（超过1%），可能是口径差异（GAAP/Non-GAAP或汇率），请人工复核。{RESET}')
+        print()
+        print(f'{YELLOW}两源冲突明细：{RESET}')
         for wi in warn_items:
             print(f'  ⚠️  {wi["label"]}  报告:{wi["reported"]} {wi["unit"]}  偏差: {wi["diff1_pct"]}% / {wi["diff2_pct"]}%')
 
@@ -392,9 +467,12 @@ def render_verdict(results: list, report_name: str = "") -> dict:
         'pass_count': pass_count,
         'warn_count': warn_count,
         'fail_count': fail_count,
-        'total': total,
+        'skipped_count': skipped_count,
+        'single_source_count': single_count,
+        'total': len(results),
         'fail_items': fail_items,
         'warn_items': warn_items,
+        'insufficient_reasons': reasons if verdict == 'INSUFFICIENT' else [],
     }
 
 
@@ -456,13 +534,18 @@ def main():
         with open(args.report, 'r', encoding='utf-8') as f:
             text = f.read()
 
-        all_points = extract_data_points(text)
+        all_points, stats = extract_data_points(text)
         sampled = sample_points(all_points, ratio=args.ratio, seed=args.seed)
 
         print('=' * 70)
         print(f'报告数据抽检清单')
         print(f'文件：{args.report}')
         print(f'总提取数据点：{len(all_points)}  |  抽样比例：{args.ratio:.0%}  |  抽检数量：{len(sampled)}')
+        n_filtered = stats['filtered_year'] + stats['filtered_qualitative']
+        if n_filtered:
+            print(f'已过滤 {n_filtered} 个不可核验数据点（年份/期间 {stats["filtered_year"]} 个，定性字段 {stats["filtered_qualitative"]} 个）')
+        print('覆盖范围说明：本工具主要提取表格与"标签：数值"行，正文散落数字覆盖有限；')
+        print('　　　　　　　提取数过少时抽检不代表全文，verdict 会按证据不足处理。')
         if args.seed is not None:
             print(f'随机种子：{args.seed}（可用于复现同一批样本）')
         print('=' * 70)
@@ -511,8 +594,8 @@ def main():
         if args.output_json:
             print(json.dumps(outcome, ensure_ascii=False, indent=2))
 
-        # 非零退出码表示打回，方便 CI/脚本判断
-        sys.exit(0 if outcome['verdict'] == 'PASS' else 1)
+        # 退出码：0 准出 / 1 打回 / 2 证据不足，方便脚本与 skill 判断
+        sys.exit({'PASS': 0, 'FAIL': 1, 'INSUFFICIENT': 2}[outcome['verdict']])
 
     else:
         parser.print_help()
