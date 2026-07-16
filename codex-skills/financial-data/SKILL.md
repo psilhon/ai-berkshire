@@ -17,6 +17,19 @@ This skill is generated from `skills/financial-data.md` so Claude Code and Codex
 
 本规范适用于所有涉及企业财务数据的研究。**每个关键数据必须来自两个独立来源，误差>1%须标记。**
 
+## Berkshire A 股数据插件
+
+研究工作流可选使用 `python3 tools/ashare_data.py` 获取 A 股证据。插件支持实时行情、财务与股本历史、公告、龙虎榜、资金流、解禁和融资融券，并在结果中标注主源、备用源、数据时间和警告。
+
+```bash
+python3 tools/ashare_data.py quote 600519
+python3 tools/ashare_data.py financials 600519
+python3 tools/ashare_data.py announcements 600519 --limit 20
+python3 tools/ashare_data.py signals 600519 --date 2026-07-16
+```
+
+插件提供数据证据，不替代本规范的双来源交叉验证，也不直接生成买入或卖出结论。主源或备用源失败时，必须把结果标记为数据不足。
+
 ---
 
 ## 数据源优先级

@@ -311,5 +311,42 @@ class TestLegacyCommandExitSemantics(unittest.TestCase):
             ashare_data.main()
 
 
+class TestPluginCommands(unittest.TestCase):
+    @mock.patch.object(ashare_data, "fetch_signals")
+    def test_signals_prints_source_and_returns_success(self, fetch):
+        fetch.return_value = {
+            "ok": True,
+            "source": "multiple",
+            "fallback_used": False,
+            "as_of": "2026-07-16T00:00:00+00:00",
+            "warnings": [],
+            "data": {"fund_flow": {"ok": True, "data": []}},
+        }
+        with redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_signals("600036")
+        self.assertTrue(ok)
+        self.assertIn("multiple", output.getvalue())
+
+    @mock.patch.object(ashare_data, "fetch_announcements")
+    def test_announcements_failure_is_non_success(self, fetch):
+        fetch.return_value = {
+            "ok": False,
+            "source": "cninfo",
+            "error_type": "all_sources_failed",
+            "message": "offline",
+            "warnings": ["cninfo: offline"],
+        }
+        with redirect_stderr(StringIO()) as error:
+            ok = ashare_data.cmd_announcements("600036", 20)
+        self.assertFalse(ok)
+        self.assertIn("offline", error.getvalue())
+
+    def test_new_commands_are_discoverable(self):
+        proc = run_cli("--help")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("signals", proc.stdout)
+        self.assertIn("announcements", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

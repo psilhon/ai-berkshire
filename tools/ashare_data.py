@@ -20,33 +20,31 @@ import subprocess
 import sys
 from decimal import Decimal, ROUND_HALF_EVEN
 
-_TIMEOUT = 15
+try:
+    from tools.ashare_plugin.transport import TransportClient
+    from tools.ashare_plugin.disclosures import fetch_announcements
+    from tools.ashare_plugin.market_signals import fetch_signals
+except ModuleNotFoundError:  # direct execution: tools/ is the script directory
+    from ashare_plugin.transport import TransportClient
+    from ashare_plugin.disclosures import fetch_announcements
+    from ashare_plugin.market_signals import fetch_signals
+
 _DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
+_TRANSPORT = TransportClient()
 
 
 def _curl(url):
-    """用 curl --noproxy 直连，绕过系统代理。"""
-    result = subprocess.run(
-        ["/usr/bin/curl", "-s", "--noproxy", "*",
-         "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-         url],
-        capture_output=True, timeout=_TIMEOUT,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ConnectionError(f"请求失败: {url}")
-    # 腾讯行情 API 返回 GBK 编码，其他返回 UTF-8
-    try:
-        return result.stdout.decode("utf-8")
-    except UnicodeDecodeError:
-        return result.stdout.decode("gbk")
+    """兼容旧调用者的文本请求入口，底层统一使用插件 transport。"""
+    return _TRANSPORT.get_text(url, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    })
 
 
 def _curl_json(url, params=None):
-    """curl 获取 JSON。"""
-    if params:
-        from urllib.parse import urlencode
-        url = f"{url}?{urlencode(params)}"
-    return json.loads(_curl(url))
+    """兼容旧调用者的 JSON 请求入口，底层统一使用插件 transport。"""
+    return _TRANSPORT.get_json(url, params=params, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    })
 
 
 def _em_secu_code(code: str) -> str:
@@ -491,6 +489,53 @@ def cmd_search(keyword: str):
     return True
 
 
+def _print_result_meta(result):
+    print(f"  数据源:       {result.get('source', '-')}")
+    print(f"  备用源:       {'是' if result.get('fallback_used') else '否'}")
+    if result.get("as_of"):
+        print(f"  数据时间:     {result['as_of']}")
+    for warning in result.get("warnings", []):
+        print(f"  ⚠️ {warning}")
+
+
+def cmd_announcements(code: str, limit: int = 20):
+    """公告列表，主源失败时使用市场兼容备用源。"""
+    result = fetch_announcements(code, limit=limit)
+    if not result.get("ok"):
+        print(f"❌ 获取公告失败: {result.get('message', '数据不足')}", file=sys.stderr)
+        for warning in result.get("warnings", []):
+            print(f"  ⚠️ {warning}", file=sys.stderr)
+        return False
+    print("=" * 60)
+    print(f"公告: {code}")
+    print("=" * 60)
+    _print_result_meta(result)
+    for row in result["data"]:
+        print(f"  {row.get('date', '-')} | {row.get('type', '-')}: {row.get('title', '-')}")
+        if row.get("pdf"):
+            print(f"    PDF: {row['pdf']}")
+    return True
+
+
+def cmd_signals(code: str, trade_date: str = None):
+    """市场信号证据汇总，不将信号直接解释为投资结论。"""
+    result = fetch_signals(code, trade_date=trade_date)
+    if not result.get("ok"):
+        print(f"❌ 获取市场信号失败: {result.get('message', '数据不足')}", file=sys.stderr)
+        for warning in result.get("warnings", []):
+            print(f"  ⚠️ {warning}", file=sys.stderr)
+        return False
+    print("=" * 60)
+    print(f"市场信号证据: {code}")
+    print("=" * 60)
+    _print_result_meta(result)
+    for name, block in result.get("data", {}).items():
+        status = "可用" if block.get("ok") else f"不可用({block.get('error_type', 'unknown')})"
+        print(f"  {name}: {status} | source={block.get('source', '-')}")
+    print("  注：市场信号仅作为研究证据，不替代基本面判断。")
+    return True
+
+
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
@@ -526,6 +571,14 @@ def main():
     p_equity = sub.add_parser("equity-history", help="历史股本变动")
     p_equity.add_argument("code", help="股票代码")
 
+    p_signals = sub.add_parser("signals", help="龙虎榜、资金流、解禁、融资融券")
+    p_signals.add_argument("code", help="股票代码")
+    p_signals.add_argument("--date", default=None, help="交易日期 YYYY-MM-DD")
+
+    p_ann = sub.add_parser("announcements", help="公告列表")
+    p_ann.add_argument("code", help="股票代码")
+    p_ann.add_argument("--limit", type=int, default=20, help="返回数量，默认 20")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -539,6 +592,8 @@ def main():
         "search": lambda: cmd_search(args.keyword),
         "history": lambda: cmd_history(args.code, args.years),
         "equity-history": lambda: cmd_equity_history(args.code),
+        "signals": lambda: cmd_signals(args.code, args.date),
+        "announcements": lambda: cmd_announcements(args.code, args.limit),
     }
     try:
         outcome = cmds[args.command]()
