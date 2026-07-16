@@ -107,14 +107,15 @@
 
 ```bash
 # 行情/市值/近5年核心财务
-python3 tools/ashare_data.py quote/financials/valuation <代码>
+python3 tools/ashare_data.py quote <代码>
+python3 tools/ashare_data.py financials <代码>
+python3 tools/ashare_data.py valuation <代码>
 
-# 10年+年报全指标（ROEJQ/XSMLL毛利率/XSJLL净利率/NCO_NETPROFIT即OCF比/
-# INTSTCOVRATE利息覆盖/NETCASH_OPERATE_PK即OCF），复用东财 datacenter API：
-# type=RPT_F10_FINANCE_MAINFINADATA, filter=(SECUCODE="600036.SH")(REPORT_TYPE="年报"),
-# sty=ALL, ps=15 —— 写临时脚本到 scratchpad 调用（参照 ashare_data.py 的 _curl_json）
+# 10年年报指标：ROE、毛利率、净利率、OCF/净利润、利息覆盖、OCF
+python3 tools/ashare_data.py history <代码> --years 10
 
-# 第7条股本变化：type=RPT_F10_EH_EQUITY 拉股本变动史（含变动原因：增发/回购/配售）
+# 第7条股本变化：独立股本变动史（含变动原因：增发/回购/配售）
+python3 tools/ashare_data.py equity-history <代码>
 ```
 
 ⚠️ **陷阱**：`RPT_F10_FINANCE_MAINFINADATA` 返回的 `TOTAL_SHARE` 是**当前股本盖到所有历史行的静态值**，禁止用于第7条；历史股本必须走 `RPT_F10_EH_EQUITY` 股本变动史，或用历年"净利润÷EPS"反推交叉验证。
