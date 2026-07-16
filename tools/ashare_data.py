@@ -229,11 +229,15 @@ def _fmt_times(value) -> str:
 def cmd_quote(code: str):
     """实时行情快照。"""
     qq_code = _qq_code(code)
-    raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
+    try:
+        raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
+    except (ConnectionError, subprocess.TimeoutExpired) as exc:
+        print(f"❌ 获取行情失败: {exc}", file=sys.stderr)
+        return False
     d = _parse_qq_quote(raw)
     if not d:
-        print(f"❌ 未找到股票 {code}")
-        return
+        print(f"❌ 未找到股票 {code}", file=sys.stderr)
+        return False
 
     print("=" * 60)
     print(f"实时行情: {d['name']} ({d['code']})")
@@ -255,16 +259,21 @@ def cmd_quote(code: str):
     high_52w, low_52w = _fetch_52w(code)
     print(f"  52周最高:   {high_52w}")
     print(f"  52周最低:   {low_52w}")
+    return True
 
 
 def cmd_valuation(code: str):
     """估值指标汇总。"""
     qq_code = _qq_code(code)
-    raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
+    try:
+        raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
+    except (ConnectionError, subprocess.TimeoutExpired) as exc:
+        print(f"❌ 获取行情失败: {exc}", file=sys.stderr)
+        return False
     d = _parse_qq_quote(raw)
     if not d:
-        print(f"❌ 未找到股票 {code}")
-        return
+        print(f"❌ 未找到股票 {code}", file=sys.stderr)
+        return False
 
     price = d["price"]
     market_cap_yi = d["market_cap"]
@@ -293,13 +302,17 @@ def cmd_valuation(code: str):
         print(f"  市值验算:   ✅ 一致（推算法，偏差 {float(diff):.1f}%）")
     except Exception:
         pass
+    return True
 
 
 def cmd_financials(code: str):
     """近5年核心财务数据。"""
     qq_code = _qq_code(code)
-    raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
-    d = _parse_qq_quote(raw)
+    try:
+        raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
+        d = _parse_qq_quote(raw)
+    except (ConnectionError, subprocess.TimeoutExpired):
+        d = {}
     name = d.get("name", code) if d else code
 
     code_clean = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
@@ -321,26 +334,28 @@ def cmd_financials(code: str):
     reports = []
     try:
         data = _curl_json(fin_url, params)
-        reports = data.get("result", {}).get("data", [])
-    except Exception:
-        pass
+        reports = (data.get("result") or {}).get("data") or []
+    except (ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired):
+        reports = []
 
     # 如果年报筛选无结果，去掉年报限制
     if not reports:
         params["filter"] = f'(SECUCODE="{code_clean}.{market}")'
         try:
             data = _curl_json(fin_url, params)
-            reports = data.get("result", {}).get("data", [])
-        except Exception:
-            pass
+            reports = (data.get("result") or {}).get("data") or []
+        except (ConnectionError, json.JSONDecodeError,
+                subprocess.TimeoutExpired):
+            reports = []
 
     print("=" * 60)
     print(f"核心财务数据: {name} ({code_clean})")
     print("=" * 60)
 
     if not reports:
-        print("  ⚠️ 未能获取财务数据，建议通过 WebSearch 补充")
-        return
+        print("❌ 未能获取财务数据，建议通过 WebSearch 补充", file=sys.stderr)
+        return False
 
     for r in reports[:5]:
         date = r.get("REPORT_DATE", "")[:10]
@@ -368,6 +383,7 @@ def cmd_financials(code: str):
             print(f"  每股净资产:     {bps:.2f}")
         if roe is not None:
             print(f"  ROE(加权):      {_fmt_pct(roe)}")
+    return True
 
 
 def cmd_history(code: str, years: int = 10):
@@ -451,12 +467,17 @@ def cmd_search(keyword: str):
         "token": token,
         "count": "10",
     }
-    data = _curl_json(url, params)
-    results = data.get("QuotationCodeTable", {}).get("Data", [])
+    try:
+        data = _curl_json(url, params)
+    except (ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 搜索股票失败: {exc}", file=sys.stderr)
+        return False
+    results = (data.get("QuotationCodeTable") or {}).get("Data") or []
 
     if not results:
-        print(f"❌ 未找到匹配 '{keyword}' 的股票")
-        return
+        print(f"❌ 未找到匹配 '{keyword}' 的股票", file=sys.stderr)
+        return False
 
     print("=" * 60)
     print(f"搜索结果: '{keyword}'")
@@ -467,6 +488,7 @@ def cmd_search(keyword: str):
         market = r.get("MktNum", "")
         mkt_label = {"1": "沪", "2": "深", "3": "北"}.get(str(market), "")
         print(f"  {code} {name} [{mkt_label}]")
+    return True
 
 
 # ---------------------------------------------------------------------------

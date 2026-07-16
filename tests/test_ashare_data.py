@@ -26,6 +26,27 @@ def run_cli(*args):
     )
 
 
+def _quote_raw():
+    fields = [""] * 50
+    fields[1] = "样本公司"
+    fields[2] = "600036"
+    fields[3] = "10.00"
+    fields[4] = "9.90"
+    fields[5] = "9.95"
+    fields[6] = "100"
+    fields[31] = "0.10"
+    fields[32] = "1.01"
+    fields[33] = "10.10"
+    fields[34] = "9.80"
+    fields[37] = "1000"
+    fields[38] = "1.20"
+    fields[39] = "8.00"
+    fields[44] = "80.00"
+    fields[45] = "100.00"
+    fields[46] = "1.10"
+    return 'v_sh600036="' + "~".join(fields) + '";'
+
+
 class TestSecurityCode(unittest.TestCase):
     def test_normalizes_shenzhen_shanghai_and_beijing(self):
         self.assertEqual(ashare_data._em_secu_code("600036"), "600036.SH")
@@ -180,6 +201,114 @@ class TestEquityHistoryCommand(unittest.TestCase):
         proc = run_cli("--help")
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("equity-history", proc.stdout)
+
+
+class TestLegacyCommandExitSemantics(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
+    def test_quote_and_valuation_return_false_without_quote(self, _curl):
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            self.assertIs(ashare_data.cmd_quote("INVALID"), False)
+            self.assertIs(ashare_data.cmd_valuation("INVALID"), False)
+
+    @mock.patch.object(ashare_data, "_curl_json")
+    @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
+    def test_financials_returns_false_without_reports(self, _curl, curl_json):
+        curl_json.return_value = {"success": True, "result": {"data": []}}
+
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            self.assertIs(ashare_data.cmd_financials("600036"), False)
+
+        self.assertEqual(curl_json.call_count, 2)
+
+    @mock.patch.object(ashare_data, "_curl_json")
+    def test_search_returns_false_without_results(self, curl_json):
+        curl_json.return_value = {"QuotationCodeTable": {"Data": []}}
+
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            self.assertIs(ashare_data.cmd_search("不存在"), False)
+
+    @mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8"))
+    @mock.patch.object(ashare_data, "_curl", return_value=_quote_raw())
+    def test_quote_and_valuation_return_true_with_quote(self, _curl, _fetch):
+        with redirect_stdout(StringIO()):
+            self.assertIs(ashare_data.cmd_quote("600036"), True)
+            self.assertIs(ashare_data.cmd_valuation("600036"), True)
+
+    @mock.patch.object(ashare_data, "_curl_json")
+    @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
+    def test_financials_returns_true_with_report(self, _curl, curl_json):
+        curl_json.return_value = {
+            "success": True,
+            "result": {"data": [{
+                "REPORT_DATE": "2025-12-31",
+                "REPORT_DATE_NAME": "2025年报",
+                "TOTALOPERATEREVE": 100000000,
+                "PARENTNETPROFIT": 10000000,
+                "EPSJB": 1.0,
+                "BPS": 5.0,
+                "ROEJQ": 10.0,
+            }]},
+        }
+
+        with redirect_stdout(StringIO()):
+            self.assertIs(ashare_data.cmd_financials("600036"), True)
+
+    @mock.patch.object(ashare_data, "_curl_json")
+    def test_search_returns_true_with_results(self, curl_json):
+        curl_json.return_value = {
+            "QuotationCodeTable": {"Data": [{
+                "Code": "600036",
+                "Name": "招商银行",
+                "MktNum": "1",
+            }]},
+        }
+
+        with redirect_stdout(StringIO()):
+            self.assertIs(ashare_data.cmd_search("招商银行"), True)
+
+    @mock.patch.object(
+        ashare_data, "_curl", side_effect=ConnectionError("offline")
+    )
+    def test_quote_and_valuation_request_errors_return_false(self, _curl):
+        with redirect_stderr(StringIO()) as error:
+            self.assertIs(ashare_data.cmd_quote("600036"), False)
+            self.assertIs(ashare_data.cmd_valuation("600036"), False)
+
+        self.assertIn("offline", error.getvalue())
+
+    @mock.patch.object(
+        ashare_data, "_curl_json", side_effect=ConnectionError("offline")
+    )
+    @mock.patch.object(
+        ashare_data, "_curl", side_effect=ConnectionError("offline")
+    )
+    def test_financials_request_errors_return_false(self, _curl, _curl_json):
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()) as error:
+            self.assertIs(ashare_data.cmd_financials("600036"), False)
+
+        self.assertIn("财务数据", error.getvalue())
+
+    @mock.patch.object(
+        ashare_data, "_curl_json", side_effect=ConnectionError("offline")
+    )
+    def test_search_request_error_returns_false(self, _curl_json):
+        with redirect_stderr(StringIO()) as error:
+            self.assertIs(ashare_data.cmd_search("招商银行"), False)
+
+        self.assertIn("offline", error.getvalue())
+
+    def test_main_maps_false_to_exit_one(self):
+        with mock.patch.object(sys, "argv", [TOOL, "quote", "600036"]), \
+                mock.patch.object(ashare_data, "cmd_quote", return_value=False):
+            with self.assertRaises(SystemExit) as raised:
+                ashare_data.main()
+
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_main_keeps_success_at_zero(self):
+        with mock.patch.object(sys, "argv", [TOOL, "quote", "600036"]), \
+                mock.patch.object(ashare_data, "cmd_quote", return_value=True):
+            ashare_data.main()
 
 
 if __name__ == "__main__":
