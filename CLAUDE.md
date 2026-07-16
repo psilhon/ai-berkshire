@@ -136,8 +136,9 @@ docs/            — ROADMAP 与专题文档
 
 ## Git 操作
 
-- 远程仓库：`https://github.com/xbtlin/ai-berkshire.git`（README 面向外部用户写的安装路径是 `~/ai-berkshire/`，本机工作区就是本仓库所在目录）
-- 推送前先 `git pull --rebase origin main`（远程经常有新提交）
+- 远程布局：`origin` = `git@github.com:psilhon/ai-berkshire.git`（本人 fork，日常 push 与 release 落点，v2.0.0 起 release 发布在此）；`upstream` = `https://github.com/xbtlin/ai-berkshire.git`（公开产品仓，本机账号只读，任何写入需切换有权限账号人工执行）
+- README 面向外部用户写的安装路径是 `~/ai-berkshire/`，本机工作区就是本仓库所在目录
+- 推送前先 `git pull --rebase origin main`
 - commit message 用中文，描述清楚改了什么
 - 不要推送中间过程文件（如 data_collection.md），只推最终报告
 - 报告写完后主动询问是否推送到 GitHub
