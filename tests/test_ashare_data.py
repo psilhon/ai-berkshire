@@ -143,5 +143,44 @@ class TestHistoryCommand(unittest.TestCase):
         self.assertIn("--years 必须在 1 到 50 之间", proc.stderr)
 
 
+class TestEquityHistoryCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_fetch_datacenter_rows")
+    def test_outputs_date_shares_change_and_reason(self, fetch):
+        fetch.return_value = [{
+            "END_DATE": "2025-06-30 00:00:00",
+            "SECURITY_NAME_ABBR": "样本公司",
+            "TOTAL_SHARES": 1200000000,
+            "TOTAL_SHARES_CHANGE": -10000000,
+            "CHANGE_REASON": "股份回购",
+        }]
+
+        with redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_equity_history("430047")
+
+        text = output.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2025-06-30", text)
+        self.assertIn("12.00亿", text)
+        self.assertIn("-1000.00万", text)
+        self.assertIn("股份回购", text)
+        self.assertEqual(fetch.call_args.args[1], "430047.BJ")
+        self.assertEqual(fetch.call_args.kwargs["sort_column"], "END_DATE")
+        self.assertEqual(fetch.call_args.kwargs["sort_order"], "-1")
+        self.assertIsNone(fetch.call_args.kwargs.get("limit"))
+
+    @mock.patch.object(ashare_data, "_fetch_datacenter_rows", return_value=[])
+    def test_no_equity_history_returns_failure(self, _fetch):
+        with redirect_stderr(StringIO()) as error:
+            ok = ashare_data.cmd_equity_history("600036")
+
+        self.assertFalse(ok)
+        self.assertIn("历史股本", error.getvalue())
+
+    def test_equity_history_is_discoverable(self):
+        proc = run_cli("--help")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("equity-history", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

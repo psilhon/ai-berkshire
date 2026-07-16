@@ -406,6 +406,40 @@ def cmd_history(code: str, years: int = 10):
     return True
 
 
+def cmd_equity_history(code: str):
+    """历史股本变动；不得用财务主表的静态 TOTAL_SHARE 替代。"""
+    secu_code = _em_secu_code(code)
+    try:
+        rows = _fetch_datacenter_rows(
+            "RPT_F10_EH_EQUITY",
+            secu_code,
+            sort_column="END_DATE",
+            sort_order="-1",
+        )
+    except (ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 获取历史股本失败: {exc}", file=sys.stderr)
+        return False
+
+    if not rows:
+        print(f"❌ 未获取到 {secu_code} 的历史股本", file=sys.stderr)
+        return False
+
+    name = rows[0].get("SECURITY_NAME_ABBR") or secu_code
+    print("=" * 60)
+    print(f"历史股本: {name} ({secu_code})")
+    print("=" * 60)
+    for row in rows:
+        date = str(row.get("END_DATE") or "-")[:10]
+        reason = (row.get("CHANGE_REASON_EXPLAIN")
+                  or row.get("CHANGE_REASON") or "-")
+        print(f"\n  --- {date} ---")
+        print(f"  总股本:    {_fmt_yi(row.get('TOTAL_SHARES'))}")
+        print(f"  变动股数:  {_fmt_yi(row.get('TOTAL_SHARES_CHANGE'))}")
+        print(f"  变动原因:  {reason}")
+    return True
+
+
 def cmd_search(keyword: str):
     """搜索股票代码。"""
     url = "https://searchadapter.eastmoney.com/api/suggest/get"
@@ -467,6 +501,9 @@ def main():
         help="年度数量，默认 10，范围 1-50",
     )
 
+    p_equity = sub.add_parser("equity-history", help="历史股本变动")
+    p_equity.add_argument("code", help="股票代码")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -479,6 +516,7 @@ def main():
         "valuation": lambda: cmd_valuation(args.code),
         "search": lambda: cmd_search(args.keyword),
         "history": lambda: cmd_history(args.code, args.years),
+        "equity-history": lambda: cmd_equity_history(args.code),
     }
     try:
         outcome = cmds[args.command]()
