@@ -21,6 +21,7 @@ import sys
 from decimal import Decimal, ROUND_HALF_EVEN
 
 _TIMEOUT = 15
+_DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
 
 
 def _curl(url):
@@ -46,6 +47,69 @@ def _curl_json(url, params=None):
         from urllib.parse import urlencode
         url = f"{url}?{urlencode(params)}"
     return json.loads(_curl(url))
+
+
+def _em_secu_code(code: str) -> str:
+    """将六位 A 股代码标准化为东方财富 SECUCODE。"""
+    raw = code.strip().upper()
+    parts = raw.rsplit(".", 1)
+    code_clean = parts[0]
+    if len(code_clean) != 6 or not code_clean.isdigit():
+        raise ValueError(f"无效 A 股代码: {code}")
+
+    if len(parts) == 2:
+        market = parts[1]
+        if market not in {"SH", "SZ", "BJ"}:
+            raise ValueError(f"无效市场后缀: {market}")
+    elif code_clean.startswith(("6", "9", "5")):
+        market = "SH"
+    elif code_clean.startswith(("4", "8")):
+        market = "BJ"
+    elif code_clean.startswith(("0", "1", "2", "3")):
+        market = "SZ"
+    else:
+        raise ValueError(f"无法判断 A 股市场: {code}")
+    return f"{code_clean}.{market}"
+
+
+def _positive_years(text: str) -> int:
+    """argparse type: 年度数量限制在 1-50。"""
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--years 必须是整数") from exc
+    if not 1 <= value <= 50:
+        raise argparse.ArgumentTypeError("--years 必须在 1 到 50 之间")
+    return value
+
+
+def _fetch_datacenter_rows(report_type, secu_code, *, sort_column,
+                           sort_order="-1", extra_filter="", limit=None):
+    """读取东方财富 Datacenter 数据，按 pages 分页且不静默截断。"""
+    rows = []
+    page = 1
+    page_size = min(limit or 100, 100)
+    while True:
+        data = _curl_json(_DATACENTER_URL, {
+            "type": report_type,
+            "sty": "ALL",
+            "filter": f'(SECUCODE="{secu_code}"){extra_filter}',
+            "p": str(page),
+            "ps": str(page_size),
+            "sr": sort_order,
+            "st": sort_column,
+            "source": "HSF10",
+            "client": "PC",
+        })
+        if not data.get("success"):
+            raise ConnectionError(data.get("message") or "东方财富接口返回失败")
+
+        result = data.get("result") or {}
+        rows.extend(result.get("data") or [])
+        pages = int(result.get("pages") or 1)
+        if page >= pages or (limit is not None and len(rows) >= limit):
+            return rows[:limit] if limit is not None else rows
+        page += 1
 
 
 # ---------------------------------------------------------------------------
