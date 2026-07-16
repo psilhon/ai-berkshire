@@ -305,4 +305,3 @@ Expected: all commands exit `0` and show the expected options.
 - [ ] **Step 4: Record external smoke test as optional**
 
 Do not make external calls part of the required check. If run manually, record only endpoint success/failure and source selection, not raw response bodies.
-
