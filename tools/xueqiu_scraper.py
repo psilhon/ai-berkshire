@@ -396,6 +396,10 @@ async def main():
         print(f"Markdown → {args.output}")
         return
 
+    if not args.user_id:
+        print("在线模式需要 --user-id", file=sys.stderr)
+        sys.exit(2)
+
     # playwright 延迟导入：--help / 参数错误 / --from-cache 离线模式在未安装时也能正常工作
     try:
         from playwright.async_api import async_playwright
@@ -404,10 +408,6 @@ async def main():
             "缺少 playwright 依赖（本工具是 tools/ 零依赖原则的唯一例外）。安装：\n"
             "  pip install playwright && playwright install chromium"
         )
-
-    if not args.user_id:
-        print("需要 --user-id")
-        return
 
     progress_path = args.state_path + f'.progress.{args.user_id}'
     raw_json = args.raw_json or f'/tmp/xueqiu_{args.user_id}_raw.json'

@@ -57,9 +57,15 @@ class TestCliWithoutPlaywright(unittest.TestCase):
         self.assertIn("usage", proc.stderr)
         self.assertNotIn("playwright", proc.stderr)
 
-    def test_run_path_exits_with_playwright_hint(self):
-        # 无参数实跑：进入 main 后触发延迟导入，应报缺依赖并保留中文安装提示
+    def test_missing_user_id_exits_two_before_playwright_import(self):
         proc = run_cli()
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--user-id", proc.stderr)
+        self.assertNotIn("playwright", proc.stderr)
+
+    def test_run_path_exits_with_playwright_hint(self):
+        # 合法在线参数进入运行路径后，缺依赖应保留中文安装提示
+        proc = run_cli("--user-id", "1247347556")
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("playwright", proc.stderr)
         self.assertIn("零依赖原则的唯一例外", proc.stderr)
