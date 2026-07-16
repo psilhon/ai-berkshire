@@ -31,8 +31,14 @@ skills/*.md（Claude Code slash command 源文件，权威）
 ## 常用命令
 
 ```bash
-# 统一本地检查（单测 + 生成物同步校验）——改 tools/ 或 skills/ 后必跑
+# 统一本地检查（单测 + 生成物同步校验 + 报告索引校验）——改 tools/ 或 skills/ 后必跑
+# CI（.github/workflows/check.yml）跑的就是同一个脚本，本地过 = CI 过
 bash scripts/check.sh
+
+# 单独跑测试 / 单个测试文件 / 单个用例
+python3 -m unittest discover -s tests
+python3 -m unittest tests.test_financial_rigor
+python3 -m unittest tests.test_report_audit.TestVerdictFailClosed -v
 
 # 精确金融计算（Decimal 无浮点漂移；市值/估值/多源交叉/Benford）
 python3 tools/financial_rigor.py verify-market-cap --price 510 --shares 9.11e9 --reported 4.65e12 --currency HKD
@@ -43,10 +49,16 @@ python3 tools/report_audit.py extract --report reports/xxx.md
 python3 tools/report_audit.py verdict --results '[...]'
 
 # A股实时行情/财务（腾讯行情+东财，零依赖，curl 直连绕代理）
-python3 tools/ashare_data.py ...
+# CLI 入口是 ashare_data.py，实现拆在 tools/ashare_plugin/ 包（transport/quote/fundamentals/disclosures/market_signals）
+# skill 入口 /ashare-data（skills/ashare-data.md：子命令总览/退出码语义/数据陷阱）
+python3 tools/ashare_data.py quote 600519
+python3 tools/ashare_data.py financials 600519
+python3 tools/ashare_data.py search 茅台
 ```
 
-其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。`scripts/build_report_index.py` 重建 `reports/INDEX.md` 报告索引。工具原则上零外部依赖（仅 Python stdlib）；**唯一例外** `xueqiu_scraper.py` 需 playwright（`pip install playwright && playwright install chromium`）。
+其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。工具原则上零外部依赖（仅 Python stdlib）；**唯一例外** `xueqiu_scraper.py` 需 playwright（`pip install playwright && playwright install chromium`）。
+
+新增/改名/移动报告后跑 `python3 scripts/build_report_index.py` 重建 `reports/INDEX.md`（check.sh 的 `--check` 会拦住索引不同步）。
 
 ## 目录结构
 
@@ -55,7 +67,8 @@ skills/          — Skill 权威源（.md）
 codex-skills/    — 生成物，勿手改
 codex-prompts/   — 生成物，勿手改
 scripts/         — sync-* 生成脚本 + install-* 安装脚本
-tools/           — 金融计算/数据/审计工具（python3）
+tools/           — 金融计算/数据/审计工具（python3）；ashare_plugin/ 是 A股数据实现包
+tests/           — unittest 单测（financial_rigor / report_audit / ashare_plugin 等）
 data/            — watchlist.json、基本面缓存、回测 CSV
 reports/         — 研究报告产出（按公司名建文件夹）
 筛选公司/         — 全市场筛选结果与召回池
