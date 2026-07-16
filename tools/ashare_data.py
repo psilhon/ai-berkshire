@@ -213,6 +213,15 @@ def _fmt_pct(value) -> str:
         return str(value)
 
 
+def _fmt_times(value) -> str:
+    if value is None or value == "-" or value == "":
+        return "-"
+    try:
+        return f"{float(value):.2f}x"
+    except (ValueError, TypeError):
+        return str(value)
+
+
 # ---------------------------------------------------------------------------
 # 命令实现
 # ---------------------------------------------------------------------------
@@ -361,6 +370,42 @@ def cmd_financials(code: str):
             print(f"  ROE(加权):      {_fmt_pct(roe)}")
 
 
+def cmd_history(code: str, years: int = 10):
+    """长期年度财务数据，用于质量筛选的跨周期指标检查。"""
+    secu_code = _em_secu_code(code)
+    try:
+        reports = _fetch_datacenter_rows(
+            "RPT_F10_FINANCE_MAINFINADATA",
+            secu_code,
+            sort_column="REPORT_DATE",
+            extra_filter='(REPORT_TYPE="年报")',
+            limit=years,
+        )
+    except (ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 获取长期财务数据失败: {exc}", file=sys.stderr)
+        return False
+
+    if not reports:
+        print(f"❌ 未获取到 {secu_code} 的年度财务数据", file=sys.stderr)
+        return False
+
+    name = reports[0].get("SECURITY_NAME_ABBR") or secu_code
+    print("=" * 60)
+    print(f"长期财务数据: {name} ({secu_code})")
+    print("=" * 60)
+    for row in reports:
+        year = row.get("REPORT_YEAR") or str(row.get("REPORT_DATE", ""))[:4]
+        print(f"\n  --- {year}年报 ---")
+        print(f"  ROE(加权):          {_fmt_pct(row.get('ROEJQ'))}")
+        print(f"  毛利率:             {_fmt_pct(row.get('XSMLL'))}")
+        print(f"  净利率:             {_fmt_pct(row.get('XSJLL'))}")
+        print(f"  经营现金流/净利润:  {_fmt_times(row.get('NCO_NETPROFIT'))}")
+        print(f"  利息覆盖:           {_fmt_times(row.get('INTSTCOVRATE'))}")
+        print(f"  经营现金流:         {_fmt_yi(row.get('NETCASH_OPERATE_PK'))}")
+    return True
+
+
 def cmd_search(keyword: str):
     """搜索股票代码。"""
     url = "https://searchadapter.eastmoney.com/api/suggest/get"
@@ -413,6 +458,15 @@ def main():
     p_search = sub.add_parser("search", help="搜索股票代码")
     p_search.add_argument("keyword", help="公司名或关键词")
 
+    p_history = sub.add_parser("history", help="长期年度财务数据")
+    p_history.add_argument("code", help="股票代码")
+    p_history.add_argument(
+        "--years",
+        type=_positive_years,
+        default=10,
+        help="年度数量，默认 10，范围 1-50",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -424,8 +478,15 @@ def main():
         "financials": lambda: cmd_financials(args.code),
         "valuation": lambda: cmd_valuation(args.code),
         "search": lambda: cmd_search(args.keyword),
+        "history": lambda: cmd_history(args.code, args.years),
     }
-    cmds[args.command]()
+    try:
+        outcome = cmds[args.command]()
+    except ValueError as exc:
+        print(f"❌ 参数错误: {exc}", file=sys.stderr)
+        sys.exit(2)
+    if outcome is False:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

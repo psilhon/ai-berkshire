@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -90,6 +90,57 @@ class TestDatacenterPagination(unittest.TestCase):
             ashare_data._fetch_datacenter_rows(
                 "REPORT", "600036.SH", sort_column="END_DATE"
             )
+
+
+class TestHistoryCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_fetch_datacenter_rows")
+    def test_outputs_auditable_metrics_without_total_share(self, fetch):
+        fetch.return_value = [{
+            "REPORT_YEAR": "2025",
+            "SECURITY_NAME_ABBR": "样本公司",
+            "ROEJQ": 12.3,
+            "XSMLL": 45.6,
+            "XSJLL": 18.9,
+            "NCO_NETPROFIT": 1.2,
+            "INTSTCOVRATE": 8.5,
+            "NETCASH_OPERATE_PK": 1230000000,
+            "TOTAL_SHARE": 999999999,
+        }]
+
+        with redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_history("600036", 10)
+
+        text = output.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2025", text)
+        self.assertIn("ROE", text)
+        self.assertIn("12.30%", text)
+        self.assertIn("经营现金流", text)
+        self.assertIn("12.30亿", text)
+        self.assertNotIn("999999999", text)
+        self.assertEqual(fetch.call_args.args[1], "600036.SH")
+        self.assertEqual(fetch.call_args.kwargs["sort_column"], "REPORT_DATE")
+        self.assertEqual(fetch.call_args.kwargs["limit"], 10)
+        self.assertIn('(REPORT_TYPE="年报")',
+                      fetch.call_args.kwargs["extra_filter"])
+
+    @mock.patch.object(ashare_data, "_fetch_datacenter_rows", return_value=[])
+    def test_no_annual_reports_returns_failure(self, _fetch):
+        with redirect_stderr(StringIO()) as error:
+            ok = ashare_data.cmd_history("600036", 10)
+
+        self.assertFalse(ok)
+        self.assertIn("年度财务数据", error.getvalue())
+
+    def test_history_is_discoverable(self):
+        proc = run_cli("--help")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("history", proc.stdout)
+
+    def test_history_rejects_years_outside_range(self):
+        proc = run_cli("history", "600036", "--years", "0")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--years 必须在 1 到 50 之间", proc.stderr)
 
 
 if __name__ == "__main__":
