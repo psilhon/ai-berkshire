@@ -110,13 +110,34 @@ _KV_TABLE_RE = re.compile(
 # 带标签的 KV 行：标签：数值 单位
 _KV_LABEL_RE = re.compile(
     r'(?P<label>[\u4e00-\u9fa5A-Za-z][^\|\n：:*]{1,30})[：:]\s*[~约]?\$?'
-    r'(?P<num>(?:(?<![\d,，\.])-)?[\d,，\.]+)\s*(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?'
+    r'(?P<num>(?:(?<![\d,，\.])-)?[\d,，\.]+)\s*(?P<unit>亿[元美港]?元?|万亿|万[元美港]?元?|[xX倍]|%|[BMT])?'
+)
+
+# 表格单元格中的 数字+单位（负号仅在非区间语境下捕获，如 -13.5亿；"万亿"先于"万"匹配）
+_CELL_NUM_RE = re.compile(
+    r'[~约]?\$?((?:(?<![\d,，\.])-)?[\d,，\.]+)\s*(亿[元美港]?元?|万亿|万[元美港]?元?|[xX倍]|%|[BMT])?'
 )
 
 
-def _parse_md_tables(lines: list) -> list:
-    """解析 Markdown 中所有表格，返回 (row_label, col_header, value, unit, lineno, raw) 列表。"""
+def _is_year_context(num_str: str, text: str, end: int) -> bool:
+    """紧跟"年"字的 19xx/20xx 是期间语境（如 "2023年约20.5亿美元"），不是待核验数据点。
+
+    end 为数字在 text 中的结束位置；带单位的量（如 "营收2023亿元"）后跟的是单位不是"年"，
+    不受此过滤影响。
+    """
+    cleaned = num_str.replace(',', '').replace('，', '').strip()
+    return bool(_BARE_YEAR_RE.fullmatch(cleaned)) and text[end:end + 1] == '年'
+
+
+def _parse_md_tables(lines: list) -> tuple:
+    """解析 Markdown 中所有表格。
+
+    返回 (results, year_only_cells)：results 为 (row_label, col_header, value,
+    unit, lineno, raw, num_str) 列表；year_only_cells 是"整格只有年份、无真实量"
+    的单元格数——年份跳过不能静默，计数交给调用方并入 stats['filtered_year']。
+    """
     results = []
+    year_only_cells = 0
     i = 0
     while i < len(lines):
         line = lines[i].strip()
@@ -140,20 +161,27 @@ def _parse_md_tables(lines: list) -> list:
                     row_label = cells[0]
                     for col_idx, cell in enumerate(cells[1:], start=1):
                         col_header = headers_raw[col_idx] if col_idx < len(headers_raw) else f'列{col_idx}'
-                        # 提取 cell 中的数字+单位（负号仅在非区间语境下捕获，如 -13.5亿）
-                        m = re.search(
-                            r'[~约]?\$?((?:(?<![\d,，\.])-)?[\d,，\.]+)\s*(亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?',
-                            cell
-                        )
+                        # 提取 cell 中的数字+单位；紧跟"年"的 19xx/20xx 是期间语境
+                        # （如 "2023年约20.5亿美元"），跳过后取同一单元格里真正的量
+                        m = None
+                        saw_year = False
+                        for cand in _CELL_NUM_RE.finditer(cell):
+                            if _is_year_context(cand.group(1), cell, cand.end(1)):
+                                saw_year = True
+                                continue
+                            m = cand
+                            break
                         if m:
                             val = _clean_num(m.group(1))
                             unit = (m.group(2) or '').strip()
                             if val and val != 0 and val < 1e15:
                                 results.append((row_label, col_header, val, unit, i + 1, dline, m.group(1)))
+                        elif saw_year:
+                            year_only_cells += 1
                     i += 1
                 continue
         i += 1
-    return results
+    return results, year_only_cells
 
 
 # 年份型行标签（财务历史表常以年份作首列）：作期间上下文保留，不作数据丢弃
@@ -218,6 +246,9 @@ def extract_data_points(md_text: str):
             'line_number': lineno,
         })
 
+    # Unicode 负号（−/－）归一为 ASCII '-'：否则正则匹配不到符号，"−3016万"会被
+    # 静默抽成 +3016——符号翻转比漏抽更危险
+    md_text = md_text.replace('−', '-').replace('－', '-')
     lines = md_text.split('\n')
 
     # 屏蔽 ``` 代码块内容（置空行保留行号）：示例/模板表格不进抽检池
@@ -233,7 +264,9 @@ def extract_data_points(md_text: str):
     in_code = False
 
     # --- 1. 多列表格 ---
-    for row_label, col_header, val, unit, lineno, raw, num_str in _parse_md_tables(masked):
+    table_rows, year_only_cells = _parse_md_tables(masked)
+    stats['filtered_year'] += year_only_cells
+    for row_label, col_header, val, unit, lineno, raw, num_str in table_rows:
         header_clean = re.sub(r'[\*_`]+', '', col_header).strip()
         row_clean = re.sub(r'[\*_`]+', '', row_label).strip()
         # 时间类列（年份/日期）里的数字是期间标识，不是待核验数据
@@ -272,6 +305,10 @@ def extract_data_points(md_text: str):
             continue  # 表格已在上面处理
 
         for m in _KV_LABEL_RE.finditer(stripped):
+            # 与表格路径同一判据：紧跟"年"的 19xx/20xx 是期间语境，不抽为数据点
+            if _is_year_context(m.group('num'), stripped, m.end('num')):
+                stats['filtered_year'] += 1
+                continue
             label = m.group('label')
             val = _clean_num(m.group('num'))
             unit = (m.group('unit') or '').strip()
@@ -312,7 +349,7 @@ def render_verdict(results: list, report_name: str = "") -> dict:
     根据核验结果输出三态判决（fail-closed：证据不足时不放行）。
 
       FAIL          任一数据点与所填全部信源不符 → 打回修正
-      INSUFFICIENT  无硬失配但存在证据缺口 → 不可宣称审计通过：
+      INSUFFICIENT  无硬失配但存在证据缺口 → 不可宣称抽检通过：
                     空结果 / 已核验点不足3个 / 有未填核验值 /
                     有单一来源数据点 / 两来源冲突待人工复核
       PASS          全部抽检点均双源核验且偏差 ≤ 1%
@@ -461,7 +498,7 @@ def render_verdict(results: list, report_name: str = "") -> dict:
             print()
     elif reasons:
         verdict = 'INSUFFICIENT'
-        print(f'{BOLD}{YELLOW}【证据不足】审计未达准出标准，不可宣称"审计通过"。缺口：{RESET}')
+        print(f'{BOLD}{YELLOW}【证据不足】抽检未达准出标准，不可宣称"抽检通过"。缺口：{RESET}')
         for r in reasons:
             print(f'  ⚠️  {r}')
         print(f'  → 补齐核验值/第二来源后重跑 verdict。')

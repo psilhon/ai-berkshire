@@ -3,6 +3,7 @@
 
 import contextlib
 import io
+import subprocess
 import sys
 import unittest
 from decimal import Decimal
@@ -168,6 +169,124 @@ class TestThreeScenarioRobustness(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad_years):
                 quiet(fr.three_scenario_valuation, current_price=100, current_eps=5,
                       shares_billion=10, years=bad_years, **self.BASE)
+
+
+class TestVerifyMarketCapFailClosed(unittest.TestCase):
+    def test_zero_reported_rejected(self):
+        # 修复前: reported=0 时偏差被静默置 0, 错误显示"✅ 验证通过"
+        with self.assertRaises(ValueError):
+            quiet(fr.verify_market_cap, 1, 1000, 0)
+
+    def test_zero_shares_rejected(self):
+        with self.assertRaises(ValueError):
+            quiet(fr.verify_market_cap, 510, 0, 4.65e12)
+
+    def test_negative_price_rejected(self):
+        with self.assertRaises(ValueError):
+            quiet(fr.verify_market_cap, -510, 9.11e9, 4.65e12)
+
+    def test_deviation_exact_zero_on_matching_inputs(self):
+        # 510 × 9.11e9 恰等于 4646100000000, Decimal 偏差应精确为 0
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ok = fr.verify_market_cap(510, 9.11e9, 4646100000000)
+        self.assertTrue(ok)
+        self.assertIn("偏差仅 0.00%", buf.getvalue())
+
+
+class TestVerifyValuationFailClosed(unittest.TestCase):
+    def test_zero_price_rejected_cleanly(self):
+        # 修复前: price=0 抛 decimal.DivisionByZero 裸 traceback
+        with self.assertRaises(ValueError):
+            quiet(fr.verify_valuation, 0, eps=5)
+
+    def test_negative_price_rejected(self):
+        with self.assertRaises(ValueError):
+            quiet(fr.verify_valuation, -100, eps=5)
+
+    def test_negative_eps_skips_pe_without_error(self):
+        # 亏损公司: 不抛异常, 但不产出 PE
+        results = quiet(fr.verify_valuation, 100, eps=-5)
+        self.assertNotIn("PE", results)
+
+
+class TestCrossValidateFailClosed(unittest.TestCase):
+    def test_empty_sources_rejected(self):
+        # 修复前: 空 dict → IndexError 裸 traceback
+        with self.assertRaises(ValueError):
+            quiet(fr.cross_validate, "revenue", {})
+
+    def test_single_source_rejected(self):
+        # 项目双源规则: 关键数据至少 2 个独立来源交叉验证
+        with self.assertRaises(ValueError):
+            quiet(fr.cross_validate, "revenue", {"年报": 7518})
+
+    def test_huge_decimal_no_float_overflow(self):
+        # 修复前: 1e999 转 float 变 inf, 偏差 nan 仍返回成功
+        big = Decimal("1e999")
+        result = quiet(fr.cross_validate, "market_cap",
+                       {"a": big, "b": big, "c": big})
+        self.assertEqual(result["consensus"], big)
+        self.assertTrue(result["all_consistent"])
+
+    def test_median_exact_decimal_no_float_drift(self):
+        # 中位数全程 Decimal: 0.1/0.2/0.3 的中位数应恰为 Decimal('0.2')
+        result = quiet(fr.cross_validate, "eps",
+                       {"a": Decimal("0.1"), "b": Decimal("0.3"),
+                        "c": Decimal("0.2")})
+        self.assertEqual(result["consensus"], Decimal("0.2"))
+
+    def test_zero_median_rejected(self):
+        # 修复前: 中位数为 0 时偏差被静默置 0
+        with self.assertRaises(ValueError):
+            quiet(fr.cross_validate, "x", {"a": 0, "b": 0})
+
+
+class TestCLIFailClosed(unittest.TestCase):
+    """风险清单原始复现命令: exit code 2 且无裸 traceback。"""
+
+    TOOL = Path(__file__).resolve().parents[1] / "tools" / "financial_rigor.py"
+
+    def run_cli(self, *args):
+        return subprocess.run([sys.executable, str(self.TOOL), *args],
+                              capture_output=True, text=True)
+
+    def assert_clean_param_error(self, proc):
+        self.assertEqual(proc.returncode, 2, msg=proc.stderr)
+        self.assertNotIn("Traceback", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_market_cap_zero_reported(self):
+        self.assert_clean_param_error(self.run_cli(
+            "verify-market-cap", "--price", "1", "--shares", "1000",
+            "--reported", "0"))
+
+    def test_valuation_zero_price(self):
+        self.assert_clean_param_error(self.run_cli(
+            "verify-valuation", "--price", "0", "--eps", "5"))
+
+    def test_cross_validate_empty_dict(self):
+        self.assert_clean_param_error(self.run_cli(
+            "cross-validate", "--field", "revenue", "--values", "{}"))
+
+    def test_cross_validate_single_source(self):
+        self.assert_clean_param_error(self.run_cli(
+            "cross-validate", "--field", "revenue",
+            "--values", '{"年报": 7518}'))
+
+    def test_cross_validate_array_rejected(self):
+        # 非 dict JSON（数组）不允许裸 AttributeError traceback
+        self.assert_clean_param_error(self.run_cli(
+            "cross-validate", "--field", "revenue", "--values", "[100, 200]"))
+
+    def test_cross_validate_non_numeric_value_rejected(self):
+        # 字符串/bool 值不允许裸 InvalidOperation traceback；bool 是 int 子类需显式排除
+        self.assert_clean_param_error(self.run_cli(
+            "cross-validate", "--field", "revenue",
+            "--values", '{"a": "abc", "b": 100}'))
+        self.assert_clean_param_error(self.run_cli(
+            "cross-validate", "--field", "revenue",
+            "--values", '{"a": true, "b": 100}'))
 
 
 if __name__ == "__main__":

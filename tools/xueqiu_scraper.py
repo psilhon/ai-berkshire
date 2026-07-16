@@ -38,14 +38,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-try:
-    from playwright.async_api import async_playwright
-except ImportError:
-    sys.exit(
-        "缺少 playwright 依赖（本工具是 tools/ 零依赖原则的唯一例外）。安装：\n"
-        "  pip install playwright && playwright install chromium"
-    )
-
 
 def is_match(text, keywords):
     t = (text or '').lower()
@@ -384,6 +376,14 @@ def filter_from_cache(cache_path, keywords, user_id):
 
 async def main():
     args = parse_args()
+    # playwright 延迟导入：--help / 参数错误在未安装 playwright 时也能正常工作
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        sys.exit(
+            "缺少 playwright 依赖（本工具是 tools/ 零依赖原则的唯一例外）。安装：\n"
+            "  pip install playwright && playwright install chromium"
+        )
     keywords = [k.strip() for k in args.keywords.split(',') if k.strip()]
 
     # 离线过滤模式

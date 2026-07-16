@@ -144,11 +144,53 @@ class TestBareYearValueFilter(unittest.TestCase):
         self.assertEqual([p["reported_value"] for p in points], [2024.0])
 
 
+class TestYearContextNotDataPoint(unittest.TestCase):
+    # 缺陷回归: 表格单元格 "2023年约20.5亿美元" 把 2023 误抽成数据点，20.5亿反而丢失
+    MD = (
+        "| 市场 | 现状 | 预测 | 口径来源 |\n"
+        "|---|---|---|---|\n"
+        "| 全球数据中心液冷 | 2023年约20.5亿美元 | 2030年约80-232亿美元"
+        "（不同机构口径差异大，CAGR 20%+方向一致） | TrendForce/中商/格隆汇转引 |\n"
+    )
+
+    def test_year_before_nian_not_extracted(self):
+        points, _ = quiet(ra.extract_data_points, self.MD)
+        values = [p["reported_value"] for p in points]
+        self.assertNotIn(2023, values)
+        self.assertNotIn(2030, values)
+
+    def test_unit_value_in_same_cell_extracted(self):
+        points, _ = quiet(ra.extract_data_points, self.MD)
+        matched = [p for p in points if p["reported_value"] == 20.5]
+        self.assertEqual(len(matched), 1, points)
+        self.assertIn("亿", matched[0]["unit"])
+
+    def test_year_like_number_with_unit_not_killed(self):
+        # "营收2023亿元"：2023 后跟单位不是"年"，必须照抽
+        md = "| 指标 | 金额 |\n|---|---|\n| 营收 | 2023亿元 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        self.assertEqual([p["reported_value"] for p in points], [2023.0])
+
+
 class TestNegativeNumbers(unittest.TestCase):
     def test_negative_table_value_keeps_sign(self):
         md = "| 指标 | 数值 |\n|---|---|\n| 净利润 | -13.5亿 |\n"
         points, _ = quiet(ra.extract_data_points, md)
         self.assertEqual([p["reported_value"] for p in points], [-13.5])
+
+    def test_negative_wan_value_keeps_unit(self):
+        # 缺陷回归: "-3016万" 保留了负号但单位"万"丢失，数量级差 1e4
+        md = "| 指标 | 数值 | 说明 |\n|---|---|---|\n| 信用减值损失 | -3016万 | 坏账计提增加 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        self.assertEqual(len(points), 1, points)
+        self.assertEqual(points[0]["reported_value"], -3016.0)
+        self.assertEqual(points[0]["unit"], "万")
+
+    def test_negative_wan_kv_keeps_unit(self):
+        # 负数单位捕获与正数同一路径：KV 行同样成立
+        points, _ = quiet(ra.extract_data_points, "信用减值损失：-3016万\n")
+        self.assertEqual([(p["reported_value"], p["unit"]) for p in points],
+                         [(-3016.0, "万")])
 
     def test_negative_kv_value_extracted(self):
         points, _ = quiet(ra.extract_data_points, "经营现金流：-25.8亿元\n")
@@ -159,6 +201,39 @@ class TestNegativeNumbers(unittest.TestCase):
         points, _ = quiet(ra.extract_data_points, md)
         for p in points:
             self.assertGreater(p["reported_value"], 0)
+
+    def test_unicode_minus_sign_preserved(self):
+        # 缺陷回归: U+2212 负号被正则漏掉导致符号静默翻转（−3016 抽成 +3016）
+        md = "| 指标 | 数值 |\n|---|---|\n| 减值 | −3016万 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        self.assertEqual([(p["reported_value"], p["unit"]) for p in points],
+                         [(-3016.0, "万")])
+
+    def test_fullwidth_minus_sign_preserved(self):
+        points, _ = quiet(ra.extract_data_points, "经营现金流：－25.8亿元\n")
+        self.assertEqual([p["reported_value"] for p in points], [-25.8])
+
+
+class TestYearSkipCounted(unittest.TestCase):
+    """年份跳过不静默：整格仅年份/KV 年份行必须计入 stats['filtered_year']。"""
+
+    def test_year_only_table_cell_counted(self):
+        md = "| 指标 | 数值 |\n|---|---|\n| 成立年份 | 1999年 |\n"
+        points, stats = quiet(ra.extract_data_points, md)
+        self.assertEqual(points, [])
+        self.assertEqual(stats["filtered_year"], 1)
+
+    def test_year_kv_line_counted(self):
+        points, stats = quiet(ra.extract_data_points, "成立时间：1999年\n")
+        self.assertEqual(points, [])
+        self.assertEqual(stats["filtered_year"], 1)
+
+    def test_mixed_cell_not_double_counted(self):
+        # 同格既有年份又有真实量：真实量照抽，整格不算"仅年份"
+        md = "| 市场 | 现状 |\n|---|---|\n| 液冷 | 2023年约20.5亿美元 |\n"
+        points, stats = quiet(ra.extract_data_points, md)
+        self.assertEqual([p["reported_value"] for p in points], [20.5])
+        self.assertEqual(stats["filtered_year"], 0)
 
 
 class TestCodeFenceExcluded(unittest.TestCase):

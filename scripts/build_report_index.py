@@ -2,7 +2,8 @@
 """Build reports/INDEX.md — 报告索引，便于在 2000+ 份研究产出中检索。
 
 用法：
-    python3 scripts/build_report_index.py
+    python3 scripts/build_report_index.py            # 重建索引
+    python3 scripts/build_report_index.py --check    # 只比对不写文件，漂移则 exit 1
 
 零外部依赖（仅 stdlib）。按 reports/ 一级条目分组：
 公司/主题文件夹一组一节，根目录散文件（行业/漏斗/组合等）单独一节。
@@ -61,7 +62,8 @@ def _link(rel_to_reports: Path, text: str) -> str:
     return f'- [{text}]({href})'
 
 
-def main():
+def build_index():
+    """构建索引内容，返回 (content, total, folder_count)。"""
     all_md = [p for p in sorted(REPORTS.rglob('*.md')) if p != OUT]
     ignored = _gitignored(all_md)
     all_md = [p for p in all_md
@@ -102,8 +104,22 @@ def main():
         lines.append(_link(p.relative_to(REPORTS), p.name))
     lines.append('')
 
-    OUT.write_text('\n'.join(lines), encoding='utf-8')
-    print(f'Wrote {OUT.relative_to(ROOT)}: {total} reports in {len(groups)} folders')
+    return '\n'.join(lines), total, len(groups)
+
+
+def main():
+    content, total, folder_count = build_index()
+
+    if '--check' in sys.argv[1:]:
+        if OUT.exists() and OUT.read_text(encoding='utf-8') == content:
+            print(f'reports/INDEX.md 与当前 {total} 份报告一致')
+            return 0
+        print('索引已漂移，运行 python3 scripts/build_report_index.py 重建',
+              file=sys.stderr)
+        return 1
+
+    OUT.write_text(content, encoding='utf-8')
+    print(f'Wrote {OUT.relative_to(ROOT)}: {total} reports in {folder_count} folders')
     return 0
 
 

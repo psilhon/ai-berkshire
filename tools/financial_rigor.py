@@ -40,6 +40,9 @@ def exact(value) -> Decimal:
 
 def fmt_number(d: Decimal, unit: str = "") -> str:
     """Format large numbers in human-readable form (亿/万亿/B/T)."""
+    # 护栏: 超大有限 Decimal 过 float 会溢出成 inf, 直接输出科学计数法字符串
+    if abs(d) > Decimal("1e15"):
+        return f"{d.normalize()}{unit}"
     v = float(d)
     abs_v = abs(v)
     if unit in ("亿", "亿元", "亿港元", "亿美元"):
@@ -61,12 +64,19 @@ def fmt_number(d: Decimal, unit: str = "") -> str:
 
 def verify_market_cap(price, shares, reported_cap, currency=""):
     """Verify market cap = price × shares, compare with reported value."""
-    p = exact(price)
-    s = exact(shares)
-    r = exact(reported_cap)
+    p = _require_finite("股价", price)
+    if p <= 0:
+        raise ValueError(f"股价必须为正数, 收到 {price}")
+    s = _require_finite("总股本", shares)
+    if s <= 0:
+        raise ValueError(f"总股本必须为正数, 收到 {shares}")
+    r = _require_finite("报告市值", reported_cap)
+    if r <= 0:
+        raise ValueError(f"报告市值必须为正数, 收到 {reported_cap}")
 
     calculated = _CTX.multiply(p, s)
-    deviation = abs(float(calculated - r) / float(r)) * 100 if r != 0 else 0
+    # 偏差全程 Decimal 计算, 不经过 float
+    deviation = _CTX.divide(abs(calculated - r), r) * 100
 
     print("=" * 60)
     print("市值验算 (Market Cap Verification)")
@@ -78,13 +88,13 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
     print(f"  偏差:               {deviation:.2f}%")
     print()
 
-    if deviation > 5:
+    if deviation > Decimal("5"):
         print(f"  ❌ 警告: 偏差 {deviation:.1f}% > 5%, 请检查:")
         print(f"     - 股本是否为最新（回购/增发）?")
         print(f"     - 单位是否一致（港币 vs 人民币 vs 美元）?")
         print(f"     - 股价是否为最新?")
         return False
-    elif deviation > 1:
+    elif deviation > Decimal("1"):
         print(f"  ⚠️  偏差 {deviation:.1f}% 在可接受范围, 可能因股价波动/股本变化")
         return True
     else:
@@ -99,7 +109,9 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
 def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
                      dividend=None, revenue_per_share=None):
     """Calculate and verify key valuation ratios from raw inputs."""
-    p = exact(price)
+    p = _require_finite("股价", price)
+    if p <= 0:
+        raise ValueError(f"股价必须为正数, 收到 {price}")
 
     print("=" * 60)
     print("估值指标验算 (Valuation Verification)")
@@ -110,8 +122,8 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
     results = {}
 
     if eps is not None:
-        e = exact(eps)
-        if e != 0:
+        e = _require_finite("EPS", eps)
+        if e > 0:
             pe = _CTX.divide(p, e)
             print(f"  PE (TTM):  {p} / {e} = {pe:.2f}x")
             results["PE"] = float(pe)
@@ -119,21 +131,23 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
             ey = _CTX.divide(e, p) * 100
             print(f"  盈利收益率: {ey:.2f}%")
         else:
-            print(f"  PE: EPS为0, 无法计算")
+            print(f"  PE: EPS ≤ 0 (亏损/不适用), 跳过 PE 与盈利收益率")
 
     if bvps is not None:
-        b = exact(bvps)
+        b = _require_finite("每股净资产", bvps)
         if b != 0:
             pb = _CTX.divide(p, b)
             print(f"  PB:        {p} / {b} = {pb:.2f}x")
             results["PB"] = float(pb)
-            if eps is not None and float(exact(eps)) != 0:
+            if eps is not None and exact(eps) != 0:
                 roe = _CTX.divide(exact(eps), b) * 100
                 print(f"  ROE:       {exact(eps)} / {b} = {roe:.2f}%")
                 results["ROE"] = float(roe)
+        else:
+            print(f"  PB: 每股净资产为0, 无法计算, 跳过")
 
     if fcf_per_share is not None:
-        f = exact(fcf_per_share)
+        f = _require_finite("每股FCF", fcf_per_share)
         if f != 0:
             fcf_yield = _CTX.divide(f, p) * 100
             pfcf = _CTX.divide(p, f)
@@ -141,20 +155,23 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
             print(f"  FCF Yield: {fcf_yield:.2f}%")
             results["P_FCF"] = float(pfcf)
             results["FCF_Yield"] = float(fcf_yield)
+        else:
+            print(f"  P/FCF: FCF为0, 无法计算, 跳过")
 
     if dividend is not None:
-        d = exact(dividend)
-        if p != 0:
-            div_yield = _CTX.divide(d, p) * 100
-            print(f"  股息率:    {d} / {p} = {div_yield:.2f}%")
-            results["Dividend_Yield"] = float(div_yield)
+        d = _require_finite("每股股息", dividend)
+        div_yield = _CTX.divide(d, p) * 100
+        print(f"  股息率:    {d} / {p} = {div_yield:.2f}%")
+        results["Dividend_Yield"] = float(div_yield)
 
     if revenue_per_share is not None:
-        r = exact(revenue_per_share)
+        r = _require_finite("每股营收", revenue_per_share)
         if r != 0:
             ps = _CTX.divide(p, r)
             print(f"  PS:        {p} / {r} = {ps:.2f}x")
             results["PS"] = float(ps)
+        else:
+            print(f"  PS: 每股营收为0, 无法计算, 跳过")
 
     print()
     print("  ✅ 以上指标均使用精确十进制计算, 无浮点误差")
@@ -167,41 +184,54 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
 
 def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
     """Compare a data point across multiple sources, flag discrepancies."""
+    if len(source_values) < 2:
+        raise ValueError(
+            f"交叉验证至少需要 2 个独立来源, 收到 {len(source_values)} 个"
+            f"（项目规则: 关键数据至少 2 个独立来源交叉验证）")
+
+    values = {k: _require_finite(f"来源[{k}]", v) for k, v in source_values.items()}
+    tol = _require_finite("容差", tolerance_pct)
+
     print("=" * 60)
     print(f"交叉验证: {field_name} (Cross-Validation)")
     print("=" * 60)
 
-    values = {k: exact(v) for k, v in source_values.items()}
     sources = list(values.keys())
     nums = list(values.values())
 
-    # Find median as reference
-    sorted_vals = sorted(float(v) for v in nums)
+    # Find median as reference — 全程 Decimal, 不经过 float
+    sorted_vals = sorted(nums)
     n = len(sorted_vals)
-    median = sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n//2-1] + sorted_vals[n//2]) / 2
+    if n % 2 == 1:
+        median = sorted_vals[n // 2]
+    else:
+        median = _CTX.divide(_CTX.add(sorted_vals[n//2-1], sorted_vals[n//2]), Decimal("2"))
+
+    if median == 0:
+        raise ValueError(f"{field_name} 的中位数为 0, 无法计算相对偏差")
 
     print(f"  数据来源数: {len(sources)}")
-    print(f"  参考中位数: {fmt_number(exact(median))} {unit}")
+    print(f"  参考中位数: {fmt_number(median)} {unit}")
     print()
 
     all_ok = True
     for src, val in values.items():
-        dev = abs(float(val) - median) / median * 100 if median != 0 else 0
-        status = "✅" if dev <= tolerance_pct else "❌"
-        if dev > tolerance_pct:
+        dev = _CTX.divide(abs(val - median), abs(median)) * 100
+        status = "✅" if dev <= tol else "❌"
+        if dev > tol:
             all_ok = False
         print(f"  {status} {src:20s}: {fmt_number(val)} {unit}  (偏差 {dev:.2f}%)")
 
     print()
     if all_ok:
-        print(f"  ✅ 所有来源偏差 ≤ {tolerance_pct}%, 数据一致")
+        print(f"  ✅ 所有来源偏差 ≤ {tol}%, 数据一致")
     else:
-        print(f"  ⚠️  存在来源偏差 > {tolerance_pct}%, 请核实差异原因")
+        print(f"  ⚠️  存在来源偏差 > {tol}%, 请核实差异原因")
         print(f"     建议: 优先采用公司年报/交易所数据")
 
-    # Consensus value
+    # Consensus value (Decimal)
     consensus = median
-    print(f"\n  共识值 (加权中位数): {fmt_number(exact(consensus))} {unit}")
+    print(f"\n  共识值 (加权中位数): {fmt_number(consensus)} {unit}")
     return {"consensus": consensus, "all_consistent": all_ok}
 
 
@@ -465,7 +495,7 @@ Examples:
     cv.add_argument("--field", required=True, help="数据字段名")
     cv.add_argument("--values", required=True, help="JSON: {来源: 数值}")
     cv.add_argument("--unit", default="")
-    cv.add_argument("--tolerance", type=float, default=2.0, help="容差百分比")
+    cv.add_argument("--tolerance", type=decimal_arg, default=Decimal("2.0"), help="容差百分比")
 
     # benford
     bf = sub.add_parser("benford", help="Benford定律检测")
@@ -490,13 +520,40 @@ Examples:
     args = parser.parse_args()
 
     if args.command == "verify-market-cap":
-        verify_market_cap(args.price, args.shares, args.reported, args.currency)
+        try:
+            verify_market_cap(args.price, args.shares, args.reported, args.currency)
+        except ValueError as e:
+            print(f"❌ 参数错误: {e}")
+            sys.exit(2)
     elif args.command == "verify-valuation":
-        verify_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
-                        args.dividend, args.revenue_per_share)
+        try:
+            verify_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
+                             args.dividend, args.revenue_per_share)
+        except ValueError as e:
+            print(f"❌ 参数错误: {e}")
+            sys.exit(2)
     elif args.command == "cross-validate":
-        values = json.loads(args.values)
-        cross_validate(args.field, values, args.unit, args.tolerance)
+        try:
+            # parse_float=Decimal: JSON 浮点直接进 Decimal, 杜绝 1e999 → inf
+            values = json.loads(args.values, parse_float=Decimal)
+        except json.JSONDecodeError as e:
+            print(f"❌ 参数错误: --values 不是有效 JSON: {e}")
+            sys.exit(2)
+        if not isinstance(values, dict):
+            print(f"❌ 参数错误: --values 必须是 JSON 对象 {{来源: 数值}}, "
+                  f"收到 {type(values).__name__}")
+            sys.exit(2)
+        # bool 是 int 子类, 必须显式排除
+        bad = [k for k, v in values.items()
+               if isinstance(v, bool) or not isinstance(v, (int, Decimal))]
+        if bad:
+            print(f"❌ 参数错误: --values 中这些来源的值不是数值: {', '.join(bad)}")
+            sys.exit(2)
+        try:
+            cross_validate(args.field, values, args.unit, args.tolerance)
+        except ValueError as e:
+            print(f"❌ 参数错误: {e}")
+            sys.exit(2)
     elif args.command == "benford":
         values = json.loads(args.values)
         benford_check(values)
