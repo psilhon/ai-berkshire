@@ -52,6 +52,8 @@ class TestSecurityCode(unittest.TestCase):
         self.assertEqual(ashare_data._em_secu_code("600036"), "600036.SH")
         self.assertEqual(ashare_data._em_secu_code("000001.SZ"), "000001.SZ")
         self.assertEqual(ashare_data._em_secu_code("430047"), "430047.BJ")
+        self.assertEqual(ashare_data._em_secu_code("920002"), "920002.BJ")
+        self.assertEqual(ashare_data._em_secu_code("900901"), "900901.SH")
 
     def test_rejects_invalid_code(self):
         with self.assertRaises(ValueError):
@@ -309,6 +311,42 @@ class TestLegacyCommandExitSemantics(unittest.TestCase):
         with mock.patch.object(sys, "argv", [TOOL, "quote", "600036"]), \
                 mock.patch.object(ashare_data, "cmd_quote", return_value=True):
             ashare_data.main()
+
+
+class TestBeijingExchangeRouting(unittest.TestCase):
+    def test_qq_code_covers_bj_segments(self):
+        self.assertEqual(ashare_data._qq_code("430047"), "bj430047")
+        self.assertEqual(ashare_data._qq_code("920002"), "bj920002")
+        self.assertEqual(ashare_data._qq_code("900901"), "sh900901")
+
+    def test_em_secid_covers_bj_segments(self):
+        self.assertEqual(ashare_data._em_secid("430047"), "0.430047")
+        self.assertEqual(ashare_data._em_secid("920002"), "0.920002")
+        self.assertEqual(ashare_data._em_secid("900901"), "1.900901")
+
+    @mock.patch.object(ashare_data, "_curl_json")
+    @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
+    def test_financials_queries_bj_secucode(self, _curl, curl_json):
+        curl_json.return_value = {
+            "success": True,
+            "result": {"data": [{
+                "REPORT_DATE": "2025-12-31",
+                "REPORT_DATE_NAME": "2025年报",
+                "TOTALOPERATEREVE": 100000000,
+            }]},
+        }
+
+        with redirect_stdout(StringIO()):
+            ok = ashare_data.cmd_financials("430047")
+
+        self.assertTrue(ok)
+        self.assertIn('(SECUCODE="430047.BJ")',
+                      curl_json.call_args.args[1]["filter"])
+
+    def test_financials_rejects_invalid_code_exit_two(self):
+        proc = run_cli("financials", "600036.HK")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("参数错误", proc.stderr)
 
 
 class TestPluginCommands(unittest.TestCase):

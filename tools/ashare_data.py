@@ -59,10 +59,10 @@ def _em_secu_code(code: str) -> str:
         market = parts[1]
         if market not in {"SH", "SZ", "BJ"}:
             raise ValueError(f"无效市场后缀: {market}")
+    elif code_clean.startswith(("4", "8", "920")):
+        market = "BJ"
     elif code_clean.startswith(("6", "9", "5")):
         market = "SH"
-    elif code_clean.startswith(("4", "8")):
-        market = "BJ"
     elif code_clean.startswith(("0", "1", "2", "3")):
         market = "SZ"
     else:
@@ -117,12 +117,12 @@ def _fetch_datacenter_rows(report_type, secu_code, *, sort_column,
 def _qq_code(code: str) -> str:
     """将股票代码转为腾讯行情格式。"""
     code = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-    if code.startswith(("6", "9", "5")):
+    if code.startswith(("4", "8", "920")):
+        return f"bj{code}"
+    elif code.startswith(("6", "9", "5")):
         return f"sh{code}"
     elif code.startswith(("0", "3", "2", "1")):
         return f"sz{code}"
-    elif code.startswith(("4", "8")):
-        return f"bj{code}"
     return f"sh{code}"
 
 
@@ -164,6 +164,8 @@ def _parse_qq_quote(raw: str) -> dict:
 def _em_secid(code: str) -> str:
     """将股票代码转为东方财富 secid 格式：沪市前缀 1.，深市/北交所前缀 0.。"""
     code = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
+    if code.startswith("920"):
+        return f"0.{code}"
     if code.startswith(("6", "9", "5")):
         return f"1.{code}"
     return f"0.{code}"
@@ -305,6 +307,7 @@ def cmd_valuation(code: str):
 
 def cmd_financials(code: str):
     """近5年核心财务数据。"""
+    secu_code = _em_secu_code(code)
     qq_code = _qq_code(code)
     try:
         raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
@@ -313,15 +316,12 @@ def cmd_financials(code: str):
         d = {}
     name = d.get("name", code) if d else code
 
-    code_clean = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-    market = "SH" if code_clean.startswith(("6", "9", "5")) else "SZ"
-
     # 东方财富 datacenter API（年报数据）
     fin_url = "https://datacenter.eastmoney.com/securities/api/data/get"
     params = {
         "type": "RPT_F10_FINANCE_MAINFINADATA",
         "sty": "ALL",
-        "filter": f'(SECUCODE="{code_clean}.{market}")(REPORT_TYPE="年报")',
+        "filter": f'(SECUCODE="{secu_code}")(REPORT_TYPE="年报")',
         "p": "1",
         "ps": "5",
         "sr": "-1",
@@ -339,7 +339,7 @@ def cmd_financials(code: str):
 
     # 如果年报筛选无结果，去掉年报限制
     if not reports:
-        params["filter"] = f'(SECUCODE="{code_clean}.{market}")'
+        params["filter"] = f'(SECUCODE="{secu_code}")'
         try:
             data = _curl_json(fin_url, params)
             reports = (data.get("result") or {}).get("data") or []
@@ -348,7 +348,7 @@ def cmd_financials(code: str):
             reports = []
 
     print("=" * 60)
-    print(f"核心财务数据: {name} ({code_clean})")
+    print(f"核心财务数据: {name} ({secu_code})")
     print("=" * 60)
 
     if not reports:
