@@ -86,4 +86,3 @@ python3 tools/ashare_data.py equity-history 600036
 3. 测试断言历史财务命令不把 `TOTAL_SHARE` 当成历史股本。
 4. 雪球在线模式缺少 `--user-id` 的退出码为 2。
 5. `bash scripts/check.sh` 全部通过，且不改动用户现有报告和 `tools/star_history_chart.py`。
-
