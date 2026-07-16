@@ -30,6 +30,8 @@ python3 tools/ashare_data.py signals 600519 --date 2026-07-16
 
 插件提供数据证据，不替代本规范的双来源交叉验证，也不直接生成买入或卖出结论。主源或备用源失败时，必须把结果标记为数据不足。
 
+完整子命令清单、退出码语义与数据陷阱见 `skills/ashare-data.md`（slash 入口 `/ashare-data`）。
+
 ---
 
 ## 数据源优先级
