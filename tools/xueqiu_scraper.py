@@ -323,10 +323,12 @@ async def fetch_all_timeline(page, user_id, keywords, progress_path, dump_all_pa
 
 def format_md(collected, user_id, keywords):
     posts = sorted(collected.values(), key=lambda x: x.get('date', ''))
+    # user_id 缺省（离线缓存过滤）时不伪造 "用户 0" / xueqiu.com/u/0 链接
     lines = [
-        f"# 雪球发言整理：用户 {user_id}",
+        f"# 雪球发言整理：用户 {user_id}" if user_id else "# 雪球发言整理（离线缓存过滤）",
         "",
-        f"> **信息来源**：雪球 https://xueqiu.com/u/{user_id}",
+        f"> **信息来源**：雪球 https://xueqiu.com/u/{user_id}" if user_id
+        else "> **信息来源**：雪球（用户ID未提供，来源见各条链接）",
         f"> **整理时间**：{datetime.now().strftime('%Y-%m-%d')}",
         f"> **收录条数**：{len(posts)} 条",
         f"> **关键词筛选**：{', '.join(keywords)}",
@@ -376,21 +378,13 @@ def filter_from_cache(cache_path, keywords, user_id):
 
 async def main():
     args = parse_args()
-    # playwright 延迟导入：--help / 参数错误在未安装 playwright 时也能正常工作
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        sys.exit(
-            "缺少 playwright 依赖（本工具是 tools/ 零依赖原则的唯一例外）。安装：\n"
-            "  pip install playwright && playwright install chromium"
-        )
     keywords = [k.strip() for k in args.keywords.split(',') if k.strip()]
 
-    # 离线过滤模式
+    # 离线过滤模式：纯本地缓存过滤，不需要 playwright，必须在延迟导入之前
     if args.from_cache:
         if not (keywords and args.output):
-            print("--from-cache 需同时指定 --keywords 与 --output")
-            return
+            print("--from-cache 需同时指定 --keywords 与 --output", file=sys.stderr)
+            sys.exit(2)
         user_id = args.user_id or 0
         collected = filter_from_cache(args.from_cache, keywords, user_id)
         print(f"从缓存 {args.from_cache} 筛出 {len(collected)} 条（关键词: {keywords}）")
@@ -401,6 +395,15 @@ async def main():
             f.write(format_md(collected, user_id, keywords))
         print(f"Markdown → {args.output}")
         return
+
+    # playwright 延迟导入：--help / 参数错误 / --from-cache 离线模式在未安装时也能正常工作
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        sys.exit(
+            "缺少 playwright 依赖（本工具是 tools/ 零依赖原则的唯一例外）。安装：\n"
+            "  pip install playwright && playwright install chromium"
+        )
 
     if not args.user_id:
         print("需要 --user-id")

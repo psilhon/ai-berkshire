@@ -208,14 +208,15 @@ def extract_data_points(md_text: str):
     过滤不可核验的噪声（数量计入 stats，不静默丢弃）：
       - 年份/期间数值（如 2025、2030）
       - 定性字段数字（建议仓位/逻辑/评分等，无外部信源可比对）
+      - 增速/说明列数字（同比增速可推导；验算方式/来源/口径列是公式输入）
 
     返回 (points, stats)：
       points: list of dict {id, label, reported_value, unit, raw_text, line_number}
-      stats:  {'filtered_year': int, 'filtered_qualitative': int}
+      stats:  {'filtered_year': int, 'filtered_qualitative': int, 'filtered_column': int}
     """
     points = []
     seen = set()
-    stats = {'filtered_year': 0, 'filtered_qualitative': 0}
+    stats = {'filtered_year': 0, 'filtered_qualitative': 0, 'filtered_column': 0}
 
     def _add(label, val, unit, lineno, raw, num_str=''):
         label = re.sub(r'[\*_`]+', '', label).strip()
@@ -273,9 +274,14 @@ def extract_data_points(md_text: str):
         if _TIME_HEADER_RE.search(header_clean):
             stats['filtered_year'] += 1
             continue
-        # 跳过增速/说明类列标题（子串匹配，覆盖"营收同比/环比增速"等变体）
-        if 'YOY' in header_clean.upper() or any(
-                k in header_clean for k in ('同比', '环比', '增速', '涨跌', '变化', '趋势', '说明', '备注')):
+        # 跳过增速/说明类列标题：增速类子串匹配（覆盖"营收同比/环比增速"等变体）；
+        # 验算/来源/口径只匹配列标题开头——「指标名（XX口径）」是本仓库口径标注惯例，
+        # 属真实待核验指标列，子串匹配会整列误杀。跳过量计入 stats，不静默丢弃。
+        if ('YOY' in header_clean.upper()
+                or any(k in header_clean for k in ('同比', '环比', '增速', '涨跌',
+                                                   '变化', '趋势', '说明', '备注'))
+                or header_clean.startswith(('验算', '来源', '口径', '数据来源'))):
+            stats['filtered_column'] += 1
             continue
         if _YEAR_LABEL_RE.fullmatch(row_clean):
             # 年份作行标签的财务历史表：年份是期间上下文，数据在各列
@@ -593,9 +599,10 @@ def main():
         print(f'报告数据抽检清单')
         print(f'文件：{args.report}')
         print(f'总提取数据点：{len(all_points)}  |  抽样比例：{args.ratio:.0%}  |  抽检数量：{len(sampled)}')
-        n_filtered = stats['filtered_year'] + stats['filtered_qualitative']
+        n_filtered = stats['filtered_year'] + stats['filtered_qualitative'] + stats['filtered_column']
         if n_filtered:
-            print(f'已过滤 {n_filtered} 个不可核验数据点（年份/期间 {stats["filtered_year"]} 个，定性字段 {stats["filtered_qualitative"]} 个）')
+            print(f'已过滤 {n_filtered} 个不可核验数据点（年份/期间 {stats["filtered_year"]} 个，'
+                  f'定性字段 {stats["filtered_qualitative"]} 个，增速/说明列 {stats["filtered_column"]} 个）')
         print('覆盖范围说明：本工具主要提取表格与"标签：数值"行，正文散落数字覆盖有限；')
         print('　　　　　　　提取数过少时抽检不代表全文，verdict 会按证据不足处理。')
         if args.seed is not None:

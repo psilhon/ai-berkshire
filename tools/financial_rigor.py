@@ -13,6 +13,11 @@ Usage (called automatically by Skills, no manual execution needed):
     python3 tools/financial_rigor.py cross-validate --field revenue --values '{"年报": 7518, "Yahoo": 7500, "StockAnalysis": 7520}' --unit 亿
     python3 tools/financial_rigor.py benford --values '[1234, 2345, 3456, ...]'
     python3 tools/financial_rigor.py calc --expr '510 * 9.11e9'
+
+Exit codes (统一语义, 供脚本/CI/Agent 判断):
+    0 = 验证通过 / 计算成功
+    1 = 业务验证不通过或计算失败 (市值偏差>5% / 多源不一致 / Benford不符合 / 计算错误)
+    2 = 参数错误或证据不足 (非法输入 / Benford样本<50)
 """
 
 import argparse
@@ -248,15 +253,14 @@ def benford_check(values: list):
     print("Benford定律检测 (Financial Data Fabrication Check)")
     print("=" * 60)
 
-    # Extract leading digits
+    # Extract leading significant digits — Decimal 全程:
+    # 大数不过 float 不溢出; 也避免 int(10**log10(v)) 的浮点截位错误 (如 8 → 7)
     digits = []
     for v in values:
-        v = abs(float(v))
-        if v > 0:
-            sig = 10 ** (math.log10(v) - math.floor(math.log10(v)))
-            d = int(sig)
-            if 1 <= d <= 9:
-                digits.append(d)
+        d = v if isinstance(v, Decimal) else Decimal(str(v))
+        if not d.is_finite() or d == 0:
+            continue
+        digits.append(d.as_tuple().digits[0])
 
     n = len(digits)
     if n < 50:
@@ -519,12 +523,14 @@ Examples:
 
     args = parser.parse_args()
 
+    # 退出码统一语义: 0 验证通过 / 1 业务不通过或计算失败 / 2 参数错误或证据不足
     if args.command == "verify-market-cap":
         try:
-            verify_market_cap(args.price, args.shares, args.reported, args.currency)
+            ok = verify_market_cap(args.price, args.shares, args.reported, args.currency)
         except ValueError as e:
             print(f"❌ 参数错误: {e}")
             sys.exit(2)
+        sys.exit(0 if ok else 1)
     elif args.command == "verify-valuation":
         try:
             verify_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
@@ -550,15 +556,32 @@ Examples:
             print(f"❌ 参数错误: --values 中这些来源的值不是数值: {', '.join(bad)}")
             sys.exit(2)
         try:
-            cross_validate(args.field, values, args.unit, args.tolerance)
+            outcome = cross_validate(args.field, values, args.unit, args.tolerance)
         except ValueError as e:
             print(f"❌ 参数错误: {e}")
             sys.exit(2)
+        sys.exit(0 if outcome["all_consistent"] else 1)
     elif args.command == "benford":
-        values = json.loads(args.values)
-        benford_check(values)
+        try:
+            values = json.loads(args.values, parse_float=Decimal)
+        except json.JSONDecodeError as e:
+            print(f"❌ 参数错误: --values 不是有效 JSON: {e}")
+            sys.exit(2)
+        if not isinstance(values, list):
+            print(f"❌ 参数错误: --values 必须是 JSON 数组, 收到 {type(values).__name__}")
+            sys.exit(2)
+        bad = [str(v) for v in values
+               if isinstance(v, bool) or not isinstance(v, (int, Decimal))]
+        if bad:
+            print(f"❌ 参数错误: --values 含非数值元素: {', '.join(bad[:5])}")
+            sys.exit(2)
+        result = benford_check(values)
+        if result is None:
+            sys.exit(2)  # 样本不足 → 证据不足
+        sys.exit(0 if result["is_conforming"] else 1)
     elif args.command == "calc":
-        exact_calc(args.expr)
+        result = exact_calc(args.expr)
+        sys.exit(0 if result is not None else 1)
     elif args.command == "three-scenario":
         try:
             three_scenario_valuation(
@@ -570,7 +593,9 @@ Examples:
             print(f"❌ 参数错误: {e}")
             sys.exit(2)
     else:
-        parser.print_help()
+        # 零操作不能报"成功"——裸调用按参数错误处理
+        parser.print_help(sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,10 @@
 用 meta_path 钩子在子进程内屏蔽 playwright（raise ImportError），不真装/卸载任何依赖。
 """
 
+import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -62,6 +64,51 @@ class TestCliWithoutPlaywright(unittest.TestCase):
         self.assertIn("playwright", proc.stderr)
         self.assertIn("零依赖原则的唯一例外", proc.stderr)
         self.assertIn("pip install playwright && playwright install chromium", proc.stderr)
+
+
+def _write_cache(tmp):
+    cache = Path(tmp) / "cache.json"
+    cache.write_text(json.dumps([
+        {"id": "1", "date": "2024-01-01 10:00", "title": "",
+         "text": "聊聊拼多多的商业模式", "url": "https://xueqiu.com/1/1"},
+        {"id": "2", "date": "2024-01-02 10:00", "title": "",
+         "text": "茅台无关内容", "url": "https://xueqiu.com/1/2"},
+    ], ensure_ascii=False), encoding="utf-8")
+    return cache
+
+
+class TestFromCacheOffline(unittest.TestCase):
+    def test_from_cache_filters_without_playwright(self):
+        # 修复前: --from-cache 纯离线过滤也要求安装 playwright（导入位置高于离线分支）
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = _write_cache(tmp)
+            out = Path(tmp) / "out.md"
+            proc = run_cli("--from-cache", str(cache),
+                           "--keywords", "拼多多", "--output", str(out))
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            self.assertTrue(out.exists(), msg=proc.stdout + proc.stderr)
+            content = out.read_text(encoding="utf-8")
+            self.assertIn("拼多多", content)
+            self.assertNotIn("茅台", content)
+
+    def test_from_cache_missing_output_exits_nonzero(self):
+        # 修复前: 参数不全打印提示但退出码 0, 脚本会把误用当成功
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = _write_cache(tmp)
+            proc = run_cli("--from-cache", str(cache), "--keywords", "拼多多")
+            self.assertNotEqual(proc.returncode, 0, msg=proc.stdout)
+
+    def test_from_cache_without_user_id_no_fabricated_link(self):
+        # 修复前: 缺省 --user-id 时报告头写死"用户 0"并伪造来源链接 xueqiu.com/u/0
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = _write_cache(tmp)
+            out = Path(tmp) / "out.md"
+            proc = run_cli("--from-cache", str(cache),
+                           "--keywords", "拼多多", "--output", str(out))
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            content = out.read_text(encoding="utf-8")
+            self.assertNotIn("xueqiu.com/u/0", content)
+            self.assertNotIn("用户 0", content)
 
 
 if __name__ == "__main__":

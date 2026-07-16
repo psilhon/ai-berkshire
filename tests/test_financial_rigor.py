@@ -3,6 +3,7 @@
 
 import contextlib
 import io
+import json
 import subprocess
 import sys
 import unittest
@@ -242,14 +243,16 @@ class TestCrossValidateFailClosed(unittest.TestCase):
             quiet(fr.cross_validate, "x", {"a": 0, "b": 0})
 
 
-class TestCLIFailClosed(unittest.TestCase):
-    """风险清单原始复现命令: exit code 2 且无裸 traceback。"""
-
+class _CLICase(unittest.TestCase):
     TOOL = Path(__file__).resolve().parents[1] / "tools" / "financial_rigor.py"
 
     def run_cli(self, *args):
         return subprocess.run([sys.executable, str(self.TOOL), *args],
                               capture_output=True, text=True)
+
+
+class TestCLIFailClosed(_CLICase):
+    """风险清单原始复现命令: exit code 2 且无裸 traceback。"""
 
     def assert_clean_param_error(self, proc):
         self.assertEqual(proc.returncode, 2, msg=proc.stderr)
@@ -287,6 +290,111 @@ class TestCLIFailClosed(unittest.TestCase):
         self.assert_clean_param_error(self.run_cli(
             "cross-validate", "--field", "revenue",
             "--values", '{"a": true, "b": 100}'))
+
+
+def _benford_values(scale=1):
+    """构造精确符合 Benford 分布的 100 个值 (首位数字 d 出现 round(100*log10(1+1/d)) 次)。"""
+    counts = {1: 30, 2: 18, 3: 12, 4: 10, 5: 8, 6: 7, 7: 6, 8: 5, 9: 4}
+    return [d * scale for d, c in counts.items() for _ in range(c)]
+
+
+class TestBenfordRobustness(unittest.TestCase):
+    def test_huge_decimal_no_float_overflow(self):
+        # 修复前: 首位数字抽取过 float, 1e999 溢出 OverflowError 裸 traceback
+        result = quiet(fr.benford_check, [Decimal("1e999")] * 60)
+        self.assertIsNotNone(result)
+        self.assertFalse(result["is_conforming"])
+
+    def test_fractional_leading_digit_extraction(self):
+        # 首位有效数字须跳过前导零: 0.003 的首位是 3, 缩放不改变分布判定
+        result = quiet(fr.benford_check, [v / 1000 for v in _benford_values()])
+        self.assertTrue(result["is_conforming"])
+
+    def test_insufficient_sample_returns_none(self):
+        self.assertIsNone(quiet(fr.benford_check, [1, 2, 3]))
+
+
+class TestCLIExitCodeSemantics(_CLICase):
+    """统一退出码语义: 0 验证通过 / 1 业务不通过或计算失败 / 2 参数或证据不足。"""
+
+    def test_market_cap_pass_exits_zero(self):
+        proc = self.run_cli("verify-market-cap", "--price", "510",
+                            "--shares", "9.11e9", "--reported", "4646100000000")
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+    def test_market_cap_50pct_deviation_exits_one(self):
+        # 修复前: 输出❌警告但退出码 0, 脚本会把业务失败误认为成功
+        proc = self.run_cli("verify-market-cap", "--price", "1",
+                            "--shares", "100", "--reported", "200")
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout)
+
+    def test_cross_validate_consistent_exits_zero(self):
+        proc = self.run_cli("cross-validate", "--field", "revenue",
+                            "--values", '{"a": 100, "b": 100}')
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout)
+
+    def test_cross_validate_inconsistent_exits_one(self):
+        # 修复前: 两来源 100/200 输出数据不一致但退出码 0
+        proc = self.run_cli("cross-validate", "--field", "revenue",
+                            "--values", '{"a": 100, "b": 200}')
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout)
+
+    def test_calc_ok_exits_zero(self):
+        proc = self.run_cli("calc", "--expr", "1 + 2")
+        self.assertEqual(proc.returncode, 0)
+
+    def test_calc_division_by_zero_exits_one(self):
+        # 修复前: 输出"计算错误"但退出码 0
+        proc = self.run_cli("calc", "--expr", "1 / 0")
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_no_subcommand_exits_two_with_usage(self):
+        # 修复前: 裸调用打印 help 到 stdout 且退出码 0 — 零操作却报"成功"
+        proc = self.run_cli()
+        self.assertEqual(proc.returncode, 2, msg=proc.stdout)
+        self.assertIn("usage", proc.stderr)
+
+
+class TestCLIBenfordInput(_CLICase):
+    """benford 与其他子命令同口径: 输入校验干净报错 + 三态退出码。"""
+
+    def assert_clean_param_error(self, proc):
+        self.assertEqual(proc.returncode, 2, msg=proc.stdout + proc.stderr)
+        self.assertNotIn("Traceback", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_json_object_rejected(self):
+        # 修复前: 传 JSON 对象裸 ValueError traceback
+        self.assert_clean_param_error(self.run_cli(
+            "benford", "--values", '{"a": 1}'))
+
+    def test_non_numeric_element_rejected(self):
+        self.assert_clean_param_error(self.run_cli(
+            "benford", "--values", '[100, "abc", true]'))
+
+    def test_invalid_json_rejected(self):
+        self.assert_clean_param_error(self.run_cli(
+            "benford", "--values", "not json"))
+
+    def test_huge_number_no_overflow(self):
+        # 修复前: 1e999 过 float 溢出 OverflowError 裸 traceback
+        proc = self.run_cli("benford", "--values", "[1e999]")
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertEqual(proc.returncode, 2)  # 样本不足 → 证据不足
+
+    def test_insufficient_sample_exits_two(self):
+        # 修复前: 提示"不可靠"但退出码 0
+        proc = self.run_cli("benford", "--values", "[1, 2, 3]")
+        self.assertEqual(proc.returncode, 2, msg=proc.stdout)
+
+    def test_conforming_exits_zero(self):
+        proc = self.run_cli("benford", "--values", json.dumps(_benford_values()))
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout)
+
+    def test_nonconforming_exits_one(self):
+        proc = self.run_cli("benford", "--values", json.dumps([9] * 60))
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout)
 
 
 if __name__ == "__main__":

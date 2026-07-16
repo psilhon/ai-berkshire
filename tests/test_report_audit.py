@@ -236,6 +236,62 @@ class TestYearSkipCounted(unittest.TestCase):
         self.assertEqual(stats["filtered_year"], 0)
 
 
+class TestExplanationColumnFilter(unittest.TestCase):
+    # 缺陷回归: 说明列（验算方式/来源/口径）里的中间数被误抽为数据点，
+    # 如 "工具精确计算（TTM归母4.83亿）" 额外抽出 "PE · 验算方式 = 4.83亿"
+    MD = (
+        "| 指标 | 数值 | 验算方式 |\n|---|---|---|\n"
+        "| PE（TTM） | 195.56倍 | 工具精确计算（TTM归母4.83亿） |\n\n"
+        "| 指标 | 数值 | 口径 |\n|---|---|---|\n"
+        "| 营收 | 1500亿 | 2024财年合并报表口径 |\n\n"
+        "| 指标 | 数值 | 数据来源 |\n|---|---|---|\n"
+        "| 毛利率 | 56% | 年报第12页 |\n"
+    )
+
+    def test_explanation_columns_not_extracted(self):
+        points, _ = quiet(ra.extract_data_points, self.MD)
+        values = [p["reported_value"] for p in points]
+        self.assertNotIn(4.83, values)
+        self.assertNotIn(2024, values)
+        self.assertNotIn(12, values)
+
+    def test_metric_columns_survive(self):
+        points, _ = quiet(ra.extract_data_points, self.MD)
+        values = [p["reported_value"] for p in points]
+        self.assertIn(195.56, values)
+        self.assertIn(1500, values)
+        self.assertIn(56, values)
+
+    def test_koujing_suffix_metric_column_survives(self):
+        # 缺陷回归: 「指标名（XX口径）」是本仓库口径标注惯例, 是真实待核验指标列,
+        # 子串匹配会把整列数据（如快手审计口径 DAU/GMV）误杀出抽检池
+        md = ("| 指标 | 数值（审计口径） |\n|---|---|\n"
+              "| 广告收入 | 815亿元 |\n| 电商GMV | 1.6万亿 |\n")
+        points, _ = quiet(ra.extract_data_points, md)
+        values = [p["reported_value"] for p in points]
+        self.assertIn(815, values)
+        self.assertIn(1.6, values)
+
+    def test_prefix_explanation_header_still_killed(self):
+        # 前缀形态的真说明列（口径说明）仍要跳过
+        md = "| 指标 | 数值 | 口径说明 |\n|---|---|---|\n| 营收 | 1500亿 | 2024财年合并口径 |\n"
+        points, _ = quiet(ra.extract_data_points, md)
+        values = [p["reported_value"] for p in points]
+        self.assertIn(1500, values)
+        self.assertNotIn(2024, values)
+
+
+class TestColumnSkipCounted(unittest.TestCase):
+    """增速/说明列跳过不静默：数量计入 stats['filtered_column']（失败要大声）。"""
+
+    def test_skipped_columns_counted(self):
+        md = ("| 指标 | 数值 | 同比增速 | 数据来源 |\n|---|---|---|---|\n"
+              "| 营收 | 1500亿 | 12% | 年报第12页 |\n")
+        points, stats = quiet(ra.extract_data_points, md)
+        self.assertEqual([p["reported_value"] for p in points], [1500.0])
+        self.assertEqual(stats["filtered_column"], 2)
+
+
 class TestCodeFenceExcluded(unittest.TestCase):
     def test_fenced_table_not_extracted(self):
         md = "```\n| 示例指标 | 数值 |\n|---|---|\n| 模板营收 | 999亿 |\n```\n\n真实营收：1500亿元\n"
