@@ -51,11 +51,53 @@ class TestMarketSignals(unittest.TestCase):
     def test_lockup_and_margin_are_explicit_when_empty(self):
         client = FakeClient({
             "https://datacenter.eastmoney.com/api/data/v1/get": {
+                "success": True,
                 "result": {"data": []}
             }
         })
         self.assertEqual(fetch_lockup("600519", client=client)["error_type"], "empty_data")
         self.assertEqual(fetch_margin("600519", client=client)["error_type"], "empty_data")
+
+    def test_datacenter_error_response_is_not_masked_as_empty(self):
+        client = FakeClient({
+            "https://datacenter.eastmoney.com/api/data/v1/get": {
+                "success": False,
+                "result": None,
+                "message": "报表配置不存在,RPT_BAD",
+                "code": 9501,
+            }
+        })
+        for result in (fetch_lockup("600519", client=client), fetch_margin("600519", client=client)):
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error_type"], "http_error")
+            self.assertIn("报表配置不存在", result["message"])
+
+    def test_datacenter_no_record_code_means_empty_data(self):
+        client = FakeClient({
+            "https://datacenter.eastmoney.com/api/data/v1/get": {
+                "success": False,
+                "result": None,
+                "message": "返回数据为空",
+                "code": 9201,
+            }
+        })
+        self.assertEqual(fetch_lockup("600519", client=client)["error_type"], "empty_data")
+        self.assertEqual(fetch_margin("600519", client=client)["error_type"], "empty_data")
+
+    def test_margin_queries_real_report_with_scode_filter(self):
+        client = FakeClient({
+            "https://datacenter.eastmoney.com/api/data/v1/get": {
+                "success": True,
+                "result": {"data": [{"SCODE": "600519", "DATE": "2026-07-15 00:00:00", "RZYE": 1}]}
+            }
+        })
+        result = fetch_margin("600519", client=client)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["data"][0]["SCODE"], "600519")
+        _, params, _ = client.calls[0]
+        self.assertEqual(params["reportName"], "RPTA_WEB_RZRQ_GGMX")
+        self.assertEqual(params["filter"], '(SCODE="600519")')
+        self.assertEqual(params["sortColumns"], "DATE")
 
     def test_fetch_signals_returns_each_research_evidence_block(self):
         client = FakeClient({
@@ -63,6 +105,7 @@ class TestMarketSignals(unittest.TestCase):
                 "data": {"klines": ["2026-07-16,1,2,3,4,5"]}
             },
             "https://datacenter.eastmoney.com/api/data/v1/get": {
+                "success": True,
                 "result": {"data": [{"SECURITY_CODE": "600519"}]}
             },
         })

@@ -2,6 +2,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from . import DataResult, failure_result, success_result
+from .errors import TransportError
 from .identifiers import normalize_code
 from .transport import FallbackChain, TransportClient
 
@@ -9,21 +10,35 @@ from .transport import FallbackChain, TransportClient
 DATACENTER_URL = "https://datacenter.eastmoney.com/api/data/v1/get"
 FFLOW_URL = "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
 SZSE_LHB_URL = "https://www.szse.cn/api/report/ShowReport/data"
+MARGIN_REPORT = "RPTA_WEB_RZRQ_GGMX"
 
 
-def _datacenter_rows(report_name: str, identity, client: TransportClient, limit: int = 50):
+def _datacenter_rows(
+    report_name: str,
+    identity,
+    client: TransportClient,
+    limit: int = 50,
+    *,
+    filter_column: str = "SECURITY_CODE",
+    sort_columns: str = "",
+):
     payload = {
         "reportName": report_name,
         "columns": "ALL",
-        "filter": f'(SECURITY_CODE="{identity.code}")',
+        "filter": f'({filter_column}="{identity.code}")',
         "pageNumber": "1",
         "pageSize": str(limit),
-        "sortColumns": "",
+        "sortColumns": sort_columns,
         "sortTypes": "-1",
         "source": "WEB",
         "client": "WEB",
     }
     response = client.get_json(DATACENTER_URL, params=payload)
+    if not response.get("success"):
+        # code 9201 = 查询无记录（正常空结果）；其余（如 9501 报表/参数错误）必须显式失败
+        if response.get("code") == 9201:
+            return []
+        raise TransportError(response.get("message") or "东方财富接口返回失败", "http_error")
     result = response.get("result") or {}
     return result.get("data") or []
 
@@ -194,7 +209,13 @@ def fetch_lockup(
 def fetch_margin(code: str, *, client: Optional[TransportClient] = None) -> DataResult:
     try:
         identity = normalize_code(code)
-        rows = _datacenter_rows("RPT融资融券明细", identity, client or TransportClient())
+        rows = _datacenter_rows(
+            MARGIN_REPORT,
+            identity,
+            client or TransportClient(),
+            filter_column="SCODE",
+            sort_columns="DATE",
+        )
     except ValueError as exc:
         return failure_result("identifier", "invalid_code", str(exc))
     except Exception as exc:
