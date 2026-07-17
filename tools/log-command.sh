@@ -5,7 +5,6 @@
 # Resolve logs/ relative to this script so any checkout location works
 LOG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/logs"
 LOG_FILE="$LOG_DIR/command-log.jsonl"
-COUNTER_FILE="$LOG_DIR/.counter"
 
 mkdir -p "$LOG_DIR"
 
@@ -23,18 +22,3 @@ PROMPT_SHORT=$(echo "$PROMPT" | head -c 200 | tr '\n' ' ' | tr '"' "'")
 
 # 追加到日志（JSONL格式）
 echo "{\"time\":\"$TIMESTAMP\",\"prompt\":\"$PROMPT_SHORT\"}" >> "$LOG_FILE"
-
-# 计数器
-if [ -f "$COUNTER_FILE" ]; then
-    COUNT=$(cat "$COUNTER_FILE")
-else
-    COUNT=0
-fi
-COUNT=$((COUNT + 1))
-echo "$COUNT" > "$COUNTER_FILE"
-
-# 每10条输出提醒（hook stdout 会显示给 Claude）
-if [ $((COUNT % 10)) -eq 0 ]; then
-    TOTAL=$(wc -l < "$LOG_FILE" | tr -d ' ')
-    echo "[指令日志] 已累计记录 ${TOTAL} 条指令。建议运行 /command-log 补充近期指令的背景摘要。"
-fi
