@@ -56,7 +56,7 @@ python3 tools/ashare_data.py financials 600519
 python3 tools/ashare_data.py search 茅台
 ```
 
-其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。工具原则上零外部依赖（仅 Python stdlib）；**唯一例外** `xueqiu_scraper.py` 需 playwright（`pip install playwright && playwright install chromium`）。
+其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`momentum_backtest.py` / `momentum_backtest_v2.py`（动量+价值框架历史回测，NVDA/AMD/MU）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。工具原则上零外部依赖（仅 Python stdlib）；**唯一例外** `xueqiu_scraper.py` 需 playwright（`pip install playwright && playwright install chromium`）。
 
 新增/改名/移动报告后跑 `python3 scripts/build_report_index.py` 重建 `reports/INDEX.md`（check.sh 的 `--check` 会拦住索引不同步）。
 
