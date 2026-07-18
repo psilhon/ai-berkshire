@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "_comment": "冻结 financial_rigor.py --json 的 envelope 与六 operation 的 result 字段。gate 与测试共读此文件；文档/代码不得另造字段名 (v1.4 §6.5/§10.2)。零外部依赖：字段名集合 + 枚举 + decimal-string 标注，供 stdlib 校验，非 draft-07。",
+  "envelope": {
+    "required": ["schema_version", "operation", "inputs", "result", "outcome", "is_pass", "exit_code", "warnings", "errors"],
+    "outcome_enum": ["PASS", "FAIL", "INSUFFICIENT", "ERROR"],
+    "exit_codes": [0, 1, 2],
+    "issue_item_fields": ["code", "message"],
+    "rules": [
+      "所有金融 Decimal 用十进制字符串, 不允许 JSON float",
+      "is_pass 在 PASS/FAIL 时为 bool, 在 INSUFFICIENT/ERROR 时为 null",
+      "即使 exit 非 0, stdout 也必须只有一个合法 JSON 文档",
+      "warnings/errors 均为 {code, message} 数组, gate 只比较稳定 code",
+      "locale/emoji/颜色/展示文本不得进入 gate 比较字段"
+    ]
+  },
+  "operations": {
+    "verify-market-cap": {
+      "result_required": ["calculated_market_cap", "reported_market_cap", "deviation_pct", "band"],
+      "enums": {"band": ["PASS", "WARN", "FAIL"]},
+      "decimal_string_fields": ["calculated_market_cap", "reported_market_cap", "deviation_pct"],
+      "outcome_rule": "偏差 <=5% -> PASS/is_pass=true/exit 0; >5% -> FAIL/is_pass=false/exit 1",
+      "band_rule": "<=1% PASS; 1-5% WARN; >5% FAIL"
+    },
+    "verify-valuation": {
+      "result_required": ["metrics", "skipped"],
+      "metrics_allowed": ["pe", "earnings_yield_pct", "pb", "roe_pct", "p_fcf", "fcf_yield_pct", "dividend_yield_pct", "ps"],
+      "skipped_item_fields": ["metric", "reason_code"],
+      "metrics_values_are_decimal_string": true,
+      "outcome_rule": ">=1 指标 -> PASS/is_pass=true/exit 0; 无可计算指标 -> INSUFFICIENT/is_pass=null/exit 2"
+    },
+    "cross-validate": {
+      "result_required": ["consensus", "tolerance_pct", "sources", "all_consistent"],
+      "source_item_fields": ["source", "value", "deviation_pct", "within_tolerance"],
+      "decimal_string_fields": ["consensus", "tolerance_pct"],
+      "source_decimal_string_fields": ["value", "deviation_pct"],
+      "outcome_rule": "all_consistent -> PASS/is_pass=true/exit 0; 否则 FAIL/is_pass=false/exit 1"
+    },
+    "benford": {
+      "result_required": ["sample_size", "mad", "chi_square", "conformity", "is_conforming"],
+      "enums": {"conformity": ["CLOSE", "ACCEPTABLE", "MARGINAL", "NONCONFORMING", "INSUFFICIENT"]},
+      "quantize_decimal_places": {"mad": 6, "chi_square": 6},
+      "decimal_string_fields": ["mad", "chi_square"],
+      "outcome_rule": "样本>=50: is_conforming -> PASS/exit 0, 否则 FAIL/exit 1; 样本<50: INSUFFICIENT/is_pass=null/exit 2 且 mad/chi_square/is_conforming=null、conformity=INSUFFICIENT",
+      "conformity_rule": "用量化后 mad 判: <0.006 CLOSE; <0.012 ACCEPTABLE; <0.015 MARGINAL; else NONCONFORMING。前三 is_conforming=true"
+    },
+    "calc": {
+      "result_required": ["expression", "value"],
+      "decimal_string_fields": ["value"],
+      "outcome_rule": "成功 -> PASS/is_pass=true/exit 0; 非法/除零 -> ERROR/is_pass=null/exit 1, value=null"
+    },
+    "three-scenario": {
+      "result_required": ["years", "currency", "scenarios"],
+      "scenario_item_fields": ["id", "growth", "pe", "future_eps", "target_price", "implied_mcap", "change_pct"],
+      "scenario_id_enum": ["bull", "base", "bear"],
+      "scenario_decimal_string_fields": ["growth", "pe", "future_eps", "target_price", "implied_mcap", "change_pct"],
+      "outcome_rule": "三情景完整 -> PASS/is_pass=true/exit 0; 否则 ERROR/is_pass=null/exit 1"
+    }
+  }
+}
