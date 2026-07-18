@@ -238,7 +238,7 @@ def red_applicability_evidence(item):
 class TestFullAnalysisPhase2Contracts(unittest.TestCase):
     """真实 20 项契约参数化: 每项 1 GREEN + 3 RED。"""
 
-    def _drive(self, item, sections, evidence, begin_extra):
+    def _drive(self, item, sections, evidence, begin_extra, artifact_text=None):
         """init -> begin -> write artifact -> finish -> finalize。
 
         返回 (finalize_returncode, computed_status, combined_output)。
@@ -248,8 +248,9 @@ class TestFullAnalysisPhase2Contracts(unittest.TestCase):
             run_root, _ = ws.init_ok()
             name = item["name"]
             rule = artifact_rule(item)
-            ws.write_artifact(run_root, rule["path"],
-                              text=build_text(sections, rule["min_bytes"]))
+            text = (artifact_text if artifact_text is not None
+                    else build_text(sections, rule["min_bytes"]))
+            ws.write_artifact(run_root, rule["path"], text=text)
             cp_begin = ws.begin(run_root, name, extra=begin_extra)
             self.assertEqual(cp_begin.returncode, 0,
                              f"begin 应成功: {out(cp_begin)}")
@@ -293,6 +294,136 @@ class TestFullAnalysisPhase2Contracts(unittest.TestCase):
                 self.assertEqual(status, "FAIL",
                                  f"[{item['name']}] RED-section computed_status "
                                  f"应 FAIL, 实际 {status}\n{log}")
+
+    def test_investment_team_each_named_section_is_fail_closed(self):
+        item = next(skill for skill in REGISTRY["skills"]
+                    if skill["name"] == "investment-team")
+        required = [
+            "段永平视角",
+            "巴菲特视角",
+            "芒格视角",
+            "李录视角",
+            "四视角对照表",
+            "分歧仲裁",
+            "综合结论",
+        ]
+        all_sections = artifact_rule(item)["required_sections"]
+        for missing in required:
+            with self.subTest(missing=missing):
+                sections = [section for section in all_sections
+                            if section != missing]
+                rc, status, log = self._drive(
+                    item, sections, green_evidence(item),
+                    green_begin_extra(item))
+                self.assertEqual(
+                    (rc, status), (1, "FAIL"),
+                    f"investment-team 缺少“{missing}”时必须 fail-closed\n{log}",
+                )
+
+    def test_investment_team_body_mentions_do_not_count_as_named_sections(self):
+        item = next(skill for skill in REGISTRY["skills"]
+                    if skill["name"] == "investment-team")
+        named = {
+            "段永平视角", "巴菲特视角", "芒格视角", "李录视角",
+            "四视角对照表", "分歧仲裁", "综合结论",
+        }
+        generic_sections = [
+            section for section in artifact_rule(item)["required_sections"]
+            if section not in named
+        ]
+        text = build_text(generic_sections, artifact_rule(item)["min_bytes"])
+        text += ("\n待办清单：段永平视角、巴菲特视角、芒格视角、李录视角、"
+                 "四视角对照表、分歧仲裁、综合结论。\n")
+        rc, status, log = self._drive(
+            item, artifact_rule(item)["required_sections"],
+            green_evidence(item), green_begin_extra(item),
+            artifact_text=text)
+        self.assertEqual(
+            (rc, status), (1, "FAIL"),
+            f"正文提及章节名不得冒充真实 Markdown 章节\n{log}",
+        )
+
+    def test_investment_team_numbered_named_headings_pass(self):
+        item = next(skill for skill in REGISTRY["skills"]
+                    if skill["name"] == "investment-team")
+        named = item["artifact_rules"][0]["required_heading_sections"]
+        other_sections = [
+            section for section in artifact_rule(item)["required_sections"]
+            if section not in named
+        ]
+        text = build_text(other_sections, artifact_rule(item)["min_bytes"])
+        for number, section in enumerate(named, start=3):
+            text += f"\n#### {number}. {section}\n合规章节正文。\n"
+        rc, status, log = self._drive(
+            item, artifact_rule(item)["required_sections"],
+            green_evidence(item), green_begin_extra(item),
+            artifact_text=text)
+        self.assertEqual(
+            (rc, status), (0, "PASS"),
+            f"模板使用的编号 Markdown 标题应通过\n{log}",
+        )
+
+    def test_nested_list_fence_does_not_hide_following_named_headings(self):
+        item = next(skill for skill in REGISTRY["skills"]
+                    if skill["name"] == "investment-team")
+        named = item["artifact_rules"][0]["required_heading_sections"]
+        other_sections = [
+            section for section in artifact_rule(item)["required_sections"]
+            if section not in named
+        ]
+        text = build_text(other_sections, artifact_rule(item)["min_bytes"])
+        text += "\n- item\n  - ```text\n    example\n    ```\n\n"
+        for number, section in enumerate(named, start=3):
+            text += f"#### {number}. {section}\n合规章节正文。\n"
+        rc, status, log = self._drive(
+            item, artifact_rule(item)["required_sections"],
+            green_evidence(item), green_begin_extra(item),
+            artifact_text=text)
+        self.assertEqual(
+            (rc, status), (0, "PASS"),
+            f"嵌套列表 fence 收口后，真实根级章节应被识别\n{log}",
+        )
+
+    def test_investment_team_non_rendered_headings_do_not_count(self):
+        item = next(skill for skill in REGISTRY["skills"]
+                    if skill["name"] == "investment-team")
+        named = item["artifact_rules"][0]["required_heading_sections"]
+        other_sections = [
+            section for section in artifact_rule(item)["required_sections"]
+            if section not in named
+        ]
+        fake_headings = "\n".join(
+            f"#### {number}. {section}"
+            for number, section in enumerate(named, start=3))
+        cases = {
+            "fenced-code": f"```markdown\n{fake_headings}\n```\n",
+            "fenced-code-tilde": f"~~~markdown `literal`\n{fake_headings}\n~~~\n",
+            "list-fenced-code": (
+                "- ```markdown\n"
+                + "\n".join(f"  {line}" for line in fake_headings.splitlines())
+                + "\n  ```\n"),
+            "html-comment": f"<!--\n{fake_headings}\n-->\n",
+            "html-block": f"<div>\n{fake_headings}\n</div>\n",
+            "html-processing-instruction": (
+                f"<?hidden\n{fake_headings}\n?>\n"),
+            "html-cdata": f"<![CDATA[\n{fake_headings}\n]]>\n",
+            "html-declaration": f"<!HIDDEN\n{fake_headings}\n>\n",
+            "html-closed-before-blank": (
+                f"<div></div>\n{fake_headings}\n\n"),
+        }
+        for case, hidden_text in cases.items():
+            with self.subTest(case=case):
+                text = build_text(
+                    other_sections, artifact_rule(item)["min_bytes"])
+                text += "\n" + hidden_text
+                rc, status, log = self._drive(
+                    item, artifact_rule(item)["required_sections"],
+                    green_evidence(item), green_begin_extra(item),
+                    artifact_text=text)
+                self.assertEqual(
+                    (rc, status), (1, "FAIL"),
+                    f"{case} 中的标题不得冒充可渲染章节\n{log}",
+                )
 
     def test_red_missing_domain_evidence_fails(self):
         for item in REGISTRY["skills"]:

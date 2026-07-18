@@ -114,6 +114,7 @@ class TransportClient:
         url: str,
         data: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
+        json_body: bool = False,
     ) -> Any:
         args = [
             "/usr/bin/curl",
@@ -125,13 +126,27 @@ class TransportClient:
             "-X",
             "POST",
         ]
-        for name, value in (headers or {}).items():
+        request_headers = dict(headers or {})
+        if json_body:
+            request_headers.setdefault("Content-Type", "application/json")
+        for name, value in request_headers.items():
             args.extend(["-H", f"{name}: {value}"])
-        if data:
-            args.extend(["--data", urlencode(data)])
+        body_bytes = None
+        if data is not None:
+            body = (
+                json.dumps(data, ensure_ascii=False)
+                if json_body else urlencode(data)
+            )
+            body_bytes = body.encode("utf-8")
+            args.extend(["--data-binary", "@-"])
         args.append(url)
         try:
-            result = self.runner(args, capture_output=True, timeout=self.timeout)
+            result = self.runner(
+                args,
+                input=body_bytes,
+                capture_output=True,
+                timeout=self.timeout,
+            )
         except subprocess.TimeoutExpired as exc:
             raise TransportError("request timeout", "timeout") from exc
         except OSError as exc:

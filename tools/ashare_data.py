@@ -24,10 +24,18 @@ try:
     from tools.ashare_plugin.transport import TransportClient
     from tools.ashare_plugin.disclosures import fetch_announcements
     from tools.ashare_plugin.market_signals import fetch_signals
+    from tools.ashare_plugin.tushare_verification import (
+        apply_market_precedence,
+        verify_command,
+    )
 except ModuleNotFoundError:  # direct execution: tools/ is the script directory
     from ashare_plugin.transport import TransportClient
     from ashare_plugin.disclosures import fetch_announcements
     from ashare_plugin.market_signals import fetch_signals
+    from ashare_plugin.tushare_verification import (
+        apply_market_precedence,
+        verify_command,
+    )
 
 _DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
 _TRANSPORT = TransportClient()
@@ -148,6 +156,7 @@ def _parse_qq_quote(raw: str) -> dict:
         "low": fields[34] if len(fields) > 34 else fields[3],
         "change_pct": fields[32],
         "change_amt": fields[31],
+        "quote_time": fields[30] if len(fields) > 30 else "",
         "turnover_amt": fields[37] if len(fields) > 37 else "-",
         "turnover_rate": fields[38] if len(fields) > 38 else "-",
         "pe": fields[39] if len(fields) > 39 else "-",
@@ -222,6 +231,78 @@ def _fmt_times(value) -> str:
         return str(value)
 
 
+def _safe_verification(command, subject, primary_data, *, trade_date=None):
+    try:
+        return verify_command(
+            command, subject, primary_data, trade_date=trade_date
+        )
+    except Exception:
+        return {
+            "provider": "tushare",
+            "configured": True,
+            "status": "INSUFFICIENT",
+            "as_of": None,
+            "warnings": ["Tushare 验证发生未分类错误；主数据结果未受影响"],
+            "fields": [],
+            "endpoints": [],
+        }
+
+
+def _print_verification(verification):
+    print(f"  Tushare 验证: {verification['status']}")
+    counts = {"MATCH": 0, "CONFLICT": 0, "INSUFFICIENT": 0}
+    for field in verification.get("fields", []):
+        status = field.get("status")
+        if status in counts:
+            counts[status] += 1
+    if verification.get("configured"):
+        print(
+            "  验证字段:     "
+            f"MATCH={counts['MATCH']} "
+            f"CONFLICT={counts['CONFLICT']} "
+            f"INSUFFICIENT={counts['INSUFFICIENT']}"
+        )
+    for warning in verification.get("warnings", []):
+        print(f"  ⚠️ {warning}")
+
+
+def _apply_market_effective_values(data, verification):
+    """Apply already-audited Tushare market precedence to display data."""
+    resolved = dict(data)
+    data_keys = {
+        "close": "price",
+        "market_cap": "market_cap",
+        "float_cap": "float_cap",
+        "pe": "pe",
+        "pb": "pb",
+        "turnover_rate": "turnover_rate",
+    }
+    for field in verification.get("fields", []):
+        if not field.get("precedence_applied"):
+            continue
+        key = data_keys.get(field.get("field"))
+        if key is None:
+            continue
+        value = field.get("effective_value")
+        if field.get("field") in {"market_cap", "float_cap"}:
+            try:
+                value = str(Decimal(value) / Decimal("10000"))
+            except Exception:
+                continue
+        resolved[key] = value
+    return resolved
+
+
+def _print_precedence(verification):
+    for field in verification.get("fields", []):
+        if field.get("precedence_applied"):
+            print(
+                "  Tushare 覆盖: "
+                f"{field['field']} {field['primary_value']} -> "
+                f"{field['effective_value']}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # 命令实现
 # ---------------------------------------------------------------------------
@@ -238,6 +319,10 @@ def cmd_quote(code: str):
     if not d:
         print(f"❌ 未找到股票 {code}", file=sys.stderr)
         return False
+    verification = apply_market_precedence(
+        "quote", _safe_verification("quote", code, d)
+    )
+    d = _apply_market_effective_values(d, verification)
 
     print("=" * 60)
     print(f"实时行情: {d['name']} ({d['code']})")
@@ -259,6 +344,8 @@ def cmd_quote(code: str):
     high_52w, low_52w = _fetch_52w(code)
     print(f"  52周最高:   {high_52w}")
     print(f"  52周最低:   {low_52w}")
+    _print_precedence(verification)
+    _print_verification(verification)
     return True
 
 
@@ -274,6 +361,10 @@ def cmd_valuation(code: str):
     if not d:
         print(f"❌ 未找到股票 {code}", file=sys.stderr)
         return False
+    verification = apply_market_precedence(
+        "valuation", _safe_verification("valuation", code, d)
+    )
+    d = _apply_market_effective_values(d, verification)
 
     price = d["price"]
     market_cap_yi = d["market_cap"]
@@ -302,6 +393,8 @@ def cmd_valuation(code: str):
         print(f"  市值验算:   ✅ 一致（推算法，偏差 {float(diff):.1f}%）")
     except Exception:
         pass
+    _print_precedence(verification)
+    _print_verification(verification)
     return True
 
 
@@ -381,6 +474,7 @@ def cmd_financials(code: str):
             print(f"  每股净资产:     {bps:.2f}")
         if roe is not None:
             print(f"  ROE(加权):      {_fmt_pct(roe)}")
+    _print_verification(_safe_verification("financials", code, reports[:5]))
     return True
 
 
@@ -417,6 +511,7 @@ def cmd_history(code: str, years: int = 10):
         print(f"  经营现金流/净利润:  {_fmt_times(row.get('NCO_NETPROFIT'))}")
         print(f"  利息覆盖:           {_fmt_times(row.get('INTSTCOVRATE'))}")
         print(f"  经营现金流:         {_fmt_yi(row.get('NETCASH_OPERATE_PK'))}")
+    _print_verification(_safe_verification("history", code, reports))
     return True
 
 
@@ -451,6 +546,7 @@ def cmd_equity_history(code: str):
         print(f"  总股本:    {_fmt_yi(row.get('TOTAL_SHARES'))}")
         print(f"  变动股数:  {_fmt_yi(row.get('TOTAL_SHARES_CHANGE'))}")
         print(f"  变动原因:  {reason}")
+    _print_verification(_safe_verification("equity-history", code, rows))
     return True
 
 
@@ -486,6 +582,7 @@ def cmd_search(keyword: str):
         market = r.get("MktNum", "")
         mkt_label = {"1": "沪", "2": "深", "3": "北"}.get(str(market), "")
         print(f"  {code} {name} [{mkt_label}]")
+    _print_verification(_safe_verification("search", keyword, results))
     return True
 
 
@@ -514,6 +611,7 @@ def cmd_announcements(code: str, limit: int = 20):
         print(f"  {row.get('date', '-')} | {row.get('type', '-')}: {row.get('title', '-')}")
         if row.get("pdf"):
             print(f"    PDF: {row['pdf']}")
+    _print_verification(_safe_verification("announcements", code, result))
     return True
 
 
@@ -533,6 +631,9 @@ def cmd_signals(code: str, trade_date: str = None):
         status = "可用" if block.get("ok") else f"不可用({block.get('error_type', 'unknown')})"
         print(f"  {name}: {status} | source={block.get('source', '-')}")
     print("  注：市场信号仅作为研究证据，不替代基本面判断。")
+    _print_verification(
+        _safe_verification("signals", code, result["data"], trade_date=trade_date)
+    )
     return True
 
 

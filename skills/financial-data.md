@@ -43,6 +43,7 @@ python3 tools/ashare_data.py signals 600519 --date 2026-07-16
 |--------|------|-----|---------|
 | 1（主） | **东方财富** | eastmoney.com → 搜股票代码 → 财务报表 | 直接访问 |
 | 2（副） | **巨潮资讯** | cninfo.com.cn | 原始年报/季报PDF |
+| 可选验证 | **Tushare** | api.tushare.pro | 仅在本地配置 `TUSHARE_TOKEN` 后自动核验；不替代前两者 |
 
 ---
 
@@ -82,6 +83,12 @@ python3 tools/ashare_data.py signals 600519 --date 2026-07-16
   - stockanalysis: 278亿元（Non-GAAP）
   - 误差: 13.5% — 原因：会计口径不同（GAAP vs Non-GAAP）
 ```
+
+### A 股 Tushare 验证边界
+
+Tushare 可作为独立获取链验证结构化字段，但不能替代巨潮原始财报。对财务、公告和重大事项，只有 `MATCH` 字段可以计入双源事实；`CONFLICT` 必须保留两值并查第三源或原始披露；`INSUFFICIENT` 和 `NOT_CONFIGURED` 均不得计作第二来源。财务比较必须匹配主体、报告期、单位、合并口径与修订版。
+
+行情、估值、市值、换手率和可比较股本等市场结构化字段例外：若同主体、同交易日、同单位的 Tushare 字段为 `CONFLICT`，以 Tushare 作为有效值，并保留原值、偏差和覆盖原因；Tushare 不可用、期间/单位不一致时不得覆盖。
 
 ---
 

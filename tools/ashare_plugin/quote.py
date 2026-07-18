@@ -31,6 +31,7 @@ def parse_tencent_quote(raw: str) -> Dict[str, str]:
         "low": fields[34] if len(fields) > 34 else fields[3],
         "change_pct": fields[32],
         "change_amt": fields[31],
+        "quote_time": fields[30] if len(fields) > 30 else "",
         "turnover_amt": fields[37] if len(fields) > 37 else "-",
         "turnover_rate": fields[38] if len(fields) > 38 else "-",
         "pe": fields[39] if len(fields) > 39 else "-",

@@ -49,6 +49,32 @@ class TestTransportClient(unittest.TestCase):
         self.assertEqual(data, {"ok": True})
         self.assertEqual(len(calls), 2)
 
+    def test_post_json_sends_body_via_stdin_without_argv_leak(self):
+        calls = []
+        sentinel = "TUSHARE_SENTINEL_NEVER_EXPOSE"
+
+        def runner(args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(
+                args, 0, stdout=b'{"ok": true}', stderr=b"")
+
+        data = TransportClient(runner=runner).post_json(
+            "https://example.test/api",
+            data={"token": sentinel, "pageNum": 1},
+            json_body=True,
+        )
+
+        self.assertEqual(data, {"ok": True})
+        args, kwargs = calls[0]
+        self.assertIn("--data-binary", args)
+        self.assertEqual(args[args.index("--data-binary") + 1], "@-")
+        self.assertNotIn(sentinel, " ".join(args))
+        self.assertEqual(json.loads(kwargs["input"].decode("utf-8")), {
+            "token": sentinel,
+            "pageNum": 1,
+        })
+        self.assertIn("Content-Type: application/json", args)
+
 
 class TestFallbackChain(unittest.TestCase):
     def test_fallback_chain_returns_source_and_warning(self):

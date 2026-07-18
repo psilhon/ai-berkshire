@@ -1,6 +1,6 @@
 ---
 name: investment-team
-description: "AI Berkshire skill: 投研团队：四角色并行分析框架. Source: skills/investment-team.md."
+description: "AI Berkshire skill: 投研团队：四位投资方法并行分析框架. Source: skills/investment-team.md."
 ---
 
 ## Codex adapter note
@@ -13,7 +13,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
 - Before starting research, run the `date` command to confirm today's date; treat it as the baseline for "latest" data and state the data cutoff date in the report header. Never assume the current date from training data.
 - Preserve the research quality rules from `AGENTS.md`: cross-check financial data, use exact arithmetic tools for valuation/math, and clearly label uncertainty and source gaps.
 
-# 投研团队：四角色并行分析框架
+# 投研团队：四位投资方法并行分析框架
 
 对 $ARGUMENTS 进行团队化投资研究分析。使用 Team 工具创建真正的多Agent并行研究团队。
 
@@ -26,10 +26,10 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
 | 角色 | 职责 | 分析框架 |
 |------|------|----------|
 | **team-lead**（你自己） | 统筹协调、汇总研判、输出最终报告 | 四大师综合框架 |
-| **business-analyst** | 商业模式 & 护城河分析 | 段永平视角 |
-| **financial-analyst** | 财务报表 & 估值分析 | 巴菲特视角 |
-| **industry-researcher** | 行业格局 & 竞争态势 | 芒格视角 |
-| **risk-assessor** | 风险评估 & 管理层研判 | 李录视角 |
+| **interpreter-duan** | 以段永平方法研究商业模式、用户价值与“不懂不做”边界 | 段永平视角 |
+| **interpreter-buffett** | 以巴菲特方法研究财务质量、护城河与安全边际 | 巴菲特视角 |
+| **interpreter-munger** | 以芒格方法研究行业竞争、多元模型与反向风险 | 芒格视角 |
+| **interpreter-li** | 以李录方法研究管理层、下行风险与长期确定性 | 李录视角 |
 
 ### 第一步半：AI研究偏见评估
 
@@ -71,7 +71,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
 
 使用 TaskCreate 创建以下4个任务（每个都要有 subject、description、activeForm）：
 
-#### 任务1：商业模式分析
+#### 任务1：段永平视角（商业模式分析）
 - subject: `分析{公司名}商业模式、护城河与用户价值`
 - description 包含：
   1. 商业模式本质：核心生意定义、收入结构拆解
@@ -82,7 +82,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
   6. 段永平"好生意"标准评估：差异化、定价权、可持续竞争优势
   7. 要求搜索最新财报、行业报告等公开信息
 
-#### 任务2：财务与估值分析
+#### 任务2：巴菲特视角（财务与估值分析）
 - subject: `分析{公司名}财务数据、盈利能力与估值`
 - description 包含：
   1. 近3-5年营收、净利润、经营利润趋势
@@ -98,7 +98,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
      - 三情景估值：`python3 tools/financial_rigor.py three-scenario --price {价格} --eps {EPS} --shares {股本亿} --growth {乐观} {中性} {悲观} --pe {乐观PE} {中性PE} {悲观PE}`
      - 将工具输出结果直接嵌入报告中作为验证记录
 
-#### 任务3：行业与竞争分析
+#### 任务3：芒格视角（行业与竞争分析）
 - subject: `分析{行业}行业格局与{公司名}竞争态势`
 - description 包含：
   1. 行业规模与增长：市场规模、增速、渗透率
@@ -109,7 +109,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
   6. 产业链分析：上中下游价值分配
   7. 要求搜索最新行业数据和竞争动态
 
-#### 任务4：风险与管理层评估
+#### 任务4：李录视角（风险与管理层评估）
 - subject: `评估{公司名}投资风险与管理层质量`
 - description 包含：
   1. 管理层评估：CEO能力圈、诚信度、战略眼光、资本配置能力、历史决策质量
@@ -129,7 +129,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
 - `subagent_type`: `general-purpose`
 - `run_in_background`: `true`
 - `team_name`: 对应团队名
-- `name`: 对应角色名（business-analyst / financial-analyst / industry-researcher / risk-assessor）
+- `name`: 对应角色名（`interpreter-duan` / `interpreter-buffett` / `interpreter-munger` / `interpreter-li`）
 
 每个Agent的prompt模板：
 
@@ -152,6 +152,7 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
 - 报告要详尽，使用Markdown表格呈现关键数据
 - 每个分析维度要有明确结论和评分
 - 报告末尾要有该维度的总体结论
+- 报告标题和发送给 team-lead 的消息必须明确标注对应的命名视角，不得只写“商业/财务/行业/风险分析”
 
 **完成后**：
 1. 使用 TaskUpdate 将任务 #{任务编号} 标记为 completed
@@ -170,40 +171,47 @@ This skill is generated from `skills/investment-team.md` so Claude Code and Code
 
 ### 第七步：汇总最终报告
 
-综合4份分析报告，输出以下结构的最终报告：
+综合4份分析报告，输出以下结构的最终报告。以下四个命名视角、对照表、分歧仲裁和综合结论均为强制章节，任何一项缺失都不得视为完成：
 
 ---
 
 #### 1. 一句话结论
 > 用一段话（50-100字）概括是否值得投资及核心逻辑
 
-#### 2. 四维评分总表
-| 维度 | 框架 | 评分(1-5星) | 核心判断 |
-|------|------|------------|----------|
-
-综合评分：X / 5
-
-#### 3. 核心数据速览
+#### 2. 核心数据速览
 关键财务和经营指标表格（近2年对比）
 
-#### 4. 各维度分析摘要
-每个维度摘取3-5条最重要的发现
+#### 3. 段永平视角
+围绕商业模式、用户价值、差异化、定价权和“不懂不做”边界，列出支持证据、反面证据、结论与置信度。
 
-#### 5. 投资论点（Bull vs Bear）
-- 🟢 看多逻辑（5-7条）
-- 🔴 看空逻辑（5-7条）
+#### 4. 巴菲特视角
+围绕财务质量、护城河、资本配置、内在价值和安全边际，列出支持证据、反面证据、结论与置信度。
 
-#### 6. 巴菲特买入前Checklist
-| # | 检查项 | 通过? | 说明 |
-10个核心检查项，逐一评估
+#### 5. 芒格视角
+围绕行业竞争、多元思维模型、激励机制、反向思考和可能导致失败的因素，列出支持证据、反面证据、结论与置信度。
 
-#### 7. 最终投资建议
-- 定性判断表（生意质量/管理层/估值/时机）
-- 分层操作建议表（激进型/稳健型/保守型 → 建议+价格区间）
-- 关键催化剂（加仓信号/减仓信号各3-5条）
+#### 6. 李录视角
+围绕管理层诚信与能力、资本永久损失风险、长期确定性和下行保护，列出支持证据、反面证据、结论与置信度。
 
-#### 8. 总结段落
-100-200字的最终总结
+#### 7. 四视角对照表
+| 视角 | 核心问题 | 支持证据 | 反面证据 | 判断 | 置信度 |
+|------|----------|----------|----------|------|--------|
+| 段永平 | 这是不是一门好生意，是否在能力圈内？ | | | | |
+| 巴菲特 | 价值是否可估，价格是否有安全边际？ | | | | |
+| 芒格 | 哪些多元模型与反向因素可能改变结论？ | | | | |
+| 李录 | 如何避免资本永久损失，十年确定性多高？ | | | | |
+
+#### 8. 分歧仲裁
+逐项列出四个视角之间的实质分歧、各自证据、证据质量和 team-lead 的仲裁结果。不得以多数表决代替证据判断；无法仲裁时明确保留分歧及其对结论的影响。
+
+#### 9. 综合结论
+- 综合评分与一句话判断
+- Bull vs Bear 核心论点
+- 巴菲特买入前 Checklist
+- 生意质量、管理层、估值、时机的定性判断
+- 分层操作建议与价格区间（若证据不足则明确不提供）
+- 加仓/减仓信号及关键待验证问题
+- 100-200字最终总结
 
 ---
 
@@ -242,3 +250,4 @@ python3 tools/report_audit.py verdict \
 6. **耐心等待**——4个Agent研究需要几分钟，实时向用户更新进度
 7. **反偏见意识**——team-lead在汇总时必须评估：各Agent的分析是否受限于资料充裕度？是否与市场共识过度趋同？最终报告需包含"信息丰富度评级"和"AI研究局限性声明"
 8. **信息稀缺时的诚实原则**——宁可在报告中留白标注"数据不足"，也不要用推测填满框架伪装确定性
+9. **四视角不可合并**——商业、财务、行业、风险是分析维度，不是最终角色名；最终报告必须分别出现段永平、巴菲特、芒格、李录四个命名章节，并完成对照与仲裁

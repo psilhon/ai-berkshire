@@ -294,11 +294,22 @@
             "直接来源",
             "限制",
             "仅供学习研究",
-            "business视角",
-            "financial视角",
-            "industry视角",
-            "risk视角",
-            "整合结论"
+            "段永平视角",
+            "巴菲特视角",
+            "芒格视角",
+            "李录视角",
+            "四视角对照表",
+            "分歧仲裁",
+            "综合结论"
+          ],
+          "required_heading_sections": [
+            "段永平视角",
+            "巴菲特视角",
+            "芒格视角",
+            "李录视角",
+            "四视角对照表",
+            "分歧仲裁",
+            "综合结论"
           ],
           "audit_policy": "required"
         }
@@ -320,10 +331,10 @@
       },
       "role_rule": {
         "required_roles": [
-          "business",
-          "financial",
-          "industry",
-          "risk"
+          "interpreter-duan",
+          "interpreter-buffett",
+          "interpreter-munger",
+          "interpreter-li"
         ],
         "min_independent_contexts": 2,
         "sequential_cap": "NOT_APPLICABLE_PASS"

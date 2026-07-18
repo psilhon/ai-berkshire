@@ -255,6 +255,13 @@ class GateTestCase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class TestContractsCommand(GateTestCase):
 
+    def test_help_renders_literal_percent_without_traceback(self):
+        ws = self.make_ws()
+        cp = ws.gate("--help")
+        self.assertEqual(cp.returncode, 0, out(cp))
+        self.assertIn("50%/累计 80%", cp.stdout)
+        self.assertNotIn("Traceback", out(cp))
+
     def test_contracts_outputs_20_items_and_checker_agrees(self):
         ws = self.make_ws()
         cp = ws.gate("contracts", "--registry", ws.registry_path)
@@ -630,6 +637,73 @@ class TestCheckpoint(GateTestCase):
         self.assertIn("sk01", out(cp))
         self.assertIn("sk02", out(cp))
 
+    def test_checkpoint_accepts_valid_negative_acceptance_without_normal_artifact(self):
+        registry = make_registry()
+        registry["skills"][0]["applicability_rule"] = {
+            "predicate_id": "is_a_share",
+            "alternative": "negative-acceptance",
+        }
+        ws = self.make_ws(registry=registry)
+        run_root, _ = ws.init_ok()
+        self.assertEqual(ws.begin(run_root, "sk01").returncode, 0)
+        fact = _fact("f1", [_src("source-a", "chain-a", "0")], value="0")
+        evidence = {
+            "facts": [fact],
+            "limitations": [{
+                "code": "not_applicable",
+                "predicate_id": "is_a_share",
+                "input_facts": ["f1"],
+                "alternative": "negative-acceptance",
+            }],
+        }
+        cp = ws.finish(run_root, "sk01", evidence=evidence)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        neg = run_root / "06-负向验收" / "01-sk01.md"
+        neg.write_text(
+            "# 负向验收\n\npredicate_id: is_a_share\n"
+            "input_facts: f1\nalternative: negative-acceptance\n",
+            encoding="utf-8",
+        )
+
+        cp = ws.checkpoint(run_root)
+
+        self.assertEqual(cp.returncode, 0, out(cp))
+        self.assertIn("checkpoint 通过", cp.stdout)
+        ws.complete_all(run_root, skip=(1,))
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        self.assertEqual(
+            read_result(run_root)["matrix"][0]["computed_status"],
+            "NOT_APPLICABLE_PASS",
+        )
+
+    def test_checkpoint_rejects_negative_acceptance_without_negative_artifact(self):
+        registry = make_registry()
+        registry["skills"][0]["applicability_rule"] = {
+            "predicate_id": "is_a_share",
+            "alternative": "negative-acceptance",
+        }
+        ws = self.make_ws(registry=registry)
+        run_root, _ = ws.init_ok()
+        self.assertEqual(ws.begin(run_root, "sk01").returncode, 0)
+        fact = _fact("f1", [_src("source-a", "chain-a", "0")], value="0")
+        evidence = {
+            "facts": [fact],
+            "limitations": [{
+                "code": "not_applicable",
+                "predicate_id": "is_a_share",
+                "input_facts": ["f1"],
+                "alternative": "negative-acceptance",
+            }],
+        }
+        cp = ws.finish(run_root, "sk01", evidence=evidence)
+        self.assertEqual(cp.returncode, 0, out(cp))
+
+        cp = ws.checkpoint(run_root)
+
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("N/A 缺负向验收产物", cp.stdout)
+
 
 # ---------------------------------------------------------------------------
 # finalize 状态门 (#5 余下部分)
@@ -909,6 +983,33 @@ class TestFactClassification(unittest.TestCase):
     def test_period_mismatch_source_excluded(self):
         self.assertEqual(self.status("f_period_mismatch"), "SINGLE_SOURCE")
 
+    def test_tushare_match_is_an_independent_second_chain(self):
+        fact = _fact("f-tushare", [
+            _src("东方财富", "eastmoney-http", "100"),
+            _src("Tushare", "tushare-api", "100.5"),
+        ], value="100", tol="1")
+        self.assertEqual(gate_mod.classify_fact(fact), "DUAL_SOURCE")
+
+    def test_tushare_conflict_remains_fail_closed(self):
+        fact = _fact("f-tushare-conflict", [
+            _src("东方财富", "eastmoney-http", "100"),
+            _src("Tushare", "tushare-api", "102"),
+        ], value="100", tol="1")
+        self.assertEqual(gate_mod.classify_fact(fact), "CONFLICT")
+
+    def test_tushare_selected_market_fact_excludes_superseded_primary_from_conflict(self):
+        fact = _fact("f-tushare-market-precedence", [
+            _src("腾讯", "tencent-http", "0.87",
+                 source_type="market_data",
+                 precedence_status="superseded_by_tushare"),
+            _src("Tushare", "tushare-api", "0.8468",
+                 source_type="market_data"),
+        ], value="0.8468", tol="1")
+        fact["field"] = "pb"
+        fact["data_domain"] = "market_structured"
+
+        self.assertEqual(gate_mod.classify_fact(fact), "SINGLE_SOURCE")
+
     def test_missing_fact_scope_cannot_be_dual_source(self):
         fact = {
             "fact_id": "f-no-scope", "field": "revenue", "value": "100",
@@ -924,6 +1025,34 @@ class TestFactClassification(unittest.TestCase):
         res = read_result(self.run_root)
         row = [r for r in res["matrix"] if r["index"] == 1][0]
         self.assertEqual(row["computed_status"], "FAIL")
+
+
+# ---------------------------------------------------------------------------
+# #6a 市场字段 Tushare 优先的证据 schema
+# ---------------------------------------------------------------------------
+class TestMarketPrecedenceEvidenceSchema(GateTestCase):
+
+    def test_market_fact_accepts_explicit_tushare_supersession_metadata(self):
+        ws = self.make_ws()
+        run_root, _ = ws.init_ok()
+        cp = ws.begin(run_root, "sk01")
+        self.assertEqual(cp.returncode, 0, out(cp))
+        artifact = artifact_path(1)
+        ws.write_artifact(run_root, artifact)
+        fact = _fact("f-market-precedence", [
+            _src("腾讯", "tencent-http", "0.87",
+                 source_type="market_data",
+                 precedence_status="superseded_by_tushare"),
+            _src("Tushare", "tushare-api", "0.8468",
+                 source_type="market_data"),
+        ], value="0.8468", tol="1")
+        fact["field"] = "pb"
+        fact["data_domain"] = "market_structured"
+
+        cp = ws.finish(run_root, "sk01", artifacts=[artifact],
+                       evidence={"facts": [fact]})
+
+        self.assertEqual(cp.returncode, 0, out(cp))
 
 
 # ---------------------------------------------------------------------------

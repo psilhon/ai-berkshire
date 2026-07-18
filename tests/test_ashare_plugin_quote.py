@@ -11,6 +11,7 @@ def quote_raw():
     fields[4] = "9.90"
     fields[5] = "9.95"
     fields[6] = "100"
+    fields[30] = "20260718150000"
     fields[31] = "0.10"
     fields[32] = "1.01"
     fields[33] = "10.10"
@@ -45,6 +46,7 @@ class TestTencentQuote(unittest.TestCase):
         self.assertEqual(result["code"], "600036")
         self.assertEqual(result["price"], "10.00")
         self.assertEqual(result["market_cap"], "100.00")
+        self.assertEqual(result["quote_time"], "20260718150000")
 
     def test_fetch_quote_contains_source_and_52_week_range(self):
         client = FakeClient()

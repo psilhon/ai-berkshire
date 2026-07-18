@@ -312,6 +312,51 @@ class TestRealRegistry(unittest.TestCase):
         self.assertEqual(missing, [],
                          f"缺领域标识 evidence rule: {missing}")
 
+    def test_investment_team_requires_four_named_views_and_arbitration(self):
+        """最终综合报告必须保留四位投资人的独立观点与仲裁。"""
+        reg = json.loads((REPO / "tools" / "full_analysis_contract.json")
+                         .read_text(encoding="utf-8"))
+        item = next(skill for skill in reg["skills"]
+                    if skill["name"] == "investment-team")
+        sections = set(item["artifact_rules"][0]["required_sections"])
+
+        required_sections = {
+            "段永平视角",
+            "巴菲特视角",
+            "芒格视角",
+            "李录视角",
+            "四视角对照表",
+            "分歧仲裁",
+            "综合结论",
+        }
+        self.assertTrue(required_sections.issubset(sections),
+                        f"investment-team 缺少强制章节: "
+                        f"{sorted(required_sections - sections)}")
+        self.assertEqual(
+            set(item["artifact_rules"][0]["required_heading_sections"]),
+            required_sections,
+            "七项命名输出必须按 Markdown 标题验收，不能只做正文子串匹配",
+        )
+        self.assertEqual(
+            item["role_rule"]["required_roles"],
+            [
+                "interpreter-duan",
+                "interpreter-buffett",
+                "interpreter-munger",
+                "interpreter-li",
+            ],
+        )
+        legacy_sections = {
+            "business视角", "financial视角", "industry视角", "risk视角",
+        }
+        self.assertTrue(legacy_sections.isdisjoint(sections))
+
+        skill_names = {skill["name"] for skill in reg["skills"]}
+        self.assertTrue(
+            {"buffett-ask", "munger-ask", "li-lu-ask"}.isdisjoint(skill_names),
+            "四视角应由 investment-team 统一编排，不应新增三个独立 Skill",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

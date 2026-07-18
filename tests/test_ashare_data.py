@@ -2,6 +2,7 @@
 """Unit tests for tools/ashare_data.py."""
 
 import argparse
+import os
 import subprocess
 import sys
 import unittest
@@ -34,6 +35,7 @@ def _quote_raw():
     fields[4] = "9.90"
     fields[5] = "9.95"
     fields[6] = "100"
+    fields[30] = "20260718150000"
     fields[31] = "0.10"
     fields[32] = "1.01"
     fields[33] = "10.10"
@@ -47,7 +49,14 @@ def _quote_raw():
     return 'v_sh600036="' + "~".join(fields) + '";'
 
 
-class TestSecurityCode(unittest.TestCase):
+class OfflineAshareDataTestCase(unittest.TestCase):
+    def setUp(self):
+        environment = mock.patch.dict(os.environ, {}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+
+
+class TestSecurityCode(OfflineAshareDataTestCase):
     def test_normalizes_shenzhen_shanghai_and_beijing(self):
         self.assertEqual(ashare_data._em_secu_code("600036"), "600036.SH")
         self.assertEqual(ashare_data._em_secu_code("000001.SZ"), "000001.SZ")
@@ -62,7 +71,7 @@ class TestSecurityCode(unittest.TestCase):
             ashare_data._em_secu_code("600036.HK")
 
 
-class TestPositiveYears(unittest.TestCase):
+class TestPositiveYears(OfflineAshareDataTestCase):
     def test_accepts_range_boundaries(self):
         self.assertEqual(ashare_data._positive_years("1"), 1)
         self.assertEqual(ashare_data._positive_years("50"), 50)
@@ -74,7 +83,7 @@ class TestPositiveYears(unittest.TestCase):
             ashare_data._positive_years("51")
 
 
-class TestDatacenterPagination(unittest.TestCase):
+class TestDatacenterPagination(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_curl_json")
     def test_reads_all_pages_without_silent_truncation(self, curl_json):
         curl_json.side_effect = [
@@ -115,7 +124,7 @@ class TestDatacenterPagination(unittest.TestCase):
             )
 
 
-class TestHistoryCommand(unittest.TestCase):
+class TestHistoryCommand(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_fetch_datacenter_rows")
     def test_outputs_auditable_metrics_without_total_share(self, fetch):
         fetch.return_value = [{
@@ -166,7 +175,7 @@ class TestHistoryCommand(unittest.TestCase):
         self.assertIn("--years 必须在 1 到 50 之间", proc.stderr)
 
 
-class TestEquityHistoryCommand(unittest.TestCase):
+class TestEquityHistoryCommand(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_fetch_datacenter_rows")
     def test_outputs_date_shares_change_and_reason(self, fetch):
         fetch.return_value = [{
@@ -205,7 +214,7 @@ class TestEquityHistoryCommand(unittest.TestCase):
         self.assertIn("equity-history", proc.stdout)
 
 
-class TestLegacyCommandExitSemantics(unittest.TestCase):
+class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
     def test_quote_and_valuation_return_false_without_quote(self, _curl):
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
@@ -313,7 +322,7 @@ class TestLegacyCommandExitSemantics(unittest.TestCase):
             ashare_data.main()
 
 
-class TestBeijingExchangeRouting(unittest.TestCase):
+class TestBeijingExchangeRouting(OfflineAshareDataTestCase):
     def test_qq_code_covers_bj_segments(self):
         self.assertEqual(ashare_data._qq_code("430047"), "bj430047")
         self.assertEqual(ashare_data._qq_code("920002"), "bj920002")
@@ -349,7 +358,7 @@ class TestBeijingExchangeRouting(unittest.TestCase):
         self.assertIn("参数错误", proc.stderr)
 
 
-class TestPluginCommands(unittest.TestCase):
+class TestPluginCommands(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "fetch_signals")
     def test_signals_prints_source_and_returns_success(self, fetch):
         fetch.return_value = {
@@ -384,6 +393,92 @@ class TestPluginCommands(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("signals", proc.stdout)
         self.assertIn("announcements", proc.stdout)
+
+
+class TestTushareCliVerification(OfflineAshareDataTestCase):
+    @mock.patch.object(ashare_data, "verify_command")
+    def test_valuation_conflict_prints_tushare_effective_value(self, verify):
+        verify.return_value = {
+            "provider": "tushare",
+            "configured": True,
+            "status": "CONFLICT",
+            "as_of": None,
+            "warnings": [],
+            "endpoints": [],
+            "fields": [{
+                "field": "pb",
+                "status": "CONFLICT",
+                "primary_value": "0.87",
+                "verification_value": "0.8468",
+                "primary_source": "tencent",
+                "verification_source": "tushare.daily_basic",
+                "period": "20260717",
+                "unit": "multiple",
+                "deviation_pct": "2.67",
+            }],
+        }
+
+        with mock.patch.object(ashare_data, "_curl", return_value=_quote_raw()), \
+                mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8")), \
+                redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_valuation("600036")
+
+        self.assertTrue(ok)
+        self.assertIn("PB:         0.8468", output.getvalue())
+        self.assertIn("Tushare 覆盖: pb 0.87 -> 0.8468", output.getvalue())
+
+    @mock.patch.object(ashare_data, "verify_command")
+    def test_successful_quote_prints_verification_without_changing_success(self, verify):
+        verify.return_value = {
+            "provider": "tushare",
+            "configured": True,
+            "status": "MATCH",
+            "as_of": "2026-07-19T00:00:00+00:00",
+            "warnings": [],
+            "fields": [{"field": "pb", "status": "MATCH"}],
+            "endpoints": [],
+        }
+
+        with mock.patch.object(ashare_data, "_curl", return_value=_quote_raw()), \
+                mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8")), \
+                redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_quote("600036")
+
+        self.assertTrue(ok)
+        self.assertIn("Tushare 验证: MATCH", output.getvalue())
+
+    @mock.patch.object(
+        ashare_data, "verify_command", side_effect=RuntimeError("hidden")
+    )
+    def test_verification_exception_does_not_fail_primary(self, _verify):
+        with mock.patch.object(ashare_data, "_curl", return_value=_quote_raw()), \
+                mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8")), \
+                redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_quote("600036")
+
+        self.assertTrue(ok)
+        self.assertIn("Tushare 验证: INSUFFICIENT", output.getvalue())
+        self.assertNotIn("hidden", output.getvalue())
+
+    @mock.patch.object(ashare_data, "verify_command")
+    def test_not_configured_is_explicit(self, verify):
+        verify.return_value = {
+            "provider": "tushare",
+            "configured": False,
+            "status": "NOT_CONFIGURED",
+            "as_of": None,
+            "warnings": ["未配置 TUSHARE_TOKEN；未发起 Tushare 请求"],
+            "fields": [],
+            "endpoints": [],
+        }
+
+        with mock.patch.object(ashare_data, "_curl", return_value=_quote_raw()), \
+                mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8")), \
+                redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_quote("600036")
+
+        self.assertTrue(ok)
+        self.assertIn("NOT_CONFIGURED", output.getvalue())
 
 
 if __name__ == "__main__":

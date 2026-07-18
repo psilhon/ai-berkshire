@@ -8,6 +8,7 @@ from .transport import FallbackChain, TransportClient
 
 
 CNINFO_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+CNINFO_STOCK_URL = "https://www.cninfo.com.cn/new/data/szse_stock.json"
 SZSE_URL = "https://www.szse.cn/api/disc/announcement/annList"
 EM_ANN_URL = "https://np-anotice-stock.eastmoney.com/api/security/ann"
 
@@ -32,14 +33,30 @@ def _cninfo_rows(payload: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
     ]
 
 
-def _cninfo(code: str, limit: int, client: TransportClient) -> DataResult:
+def _cninfo(identity, limit: int, client: TransportClient) -> DataResult:
+    stocks = client.get_json(
+        CNINFO_STOCK_URL,
+        headers={"Referer": "https://www.cninfo.com.cn/"},
+    ).get("stockList") or []
+    org_id = next(
+        (row.get("orgId") for row in stocks
+         if str(row.get("code") or "") == identity.code),
+        None,
+    )
+    if not org_id:
+        return failure_result("cninfo", "empty_data", "巨潮证券标识为空")
+    column, plate = {
+        "SZ": ("szse", "sz"),
+        "SH": ("sse", "sh"),
+        "BJ": ("third", ""),
+    }[identity.market]
     payload = {
         "pageNum": 1,
         "pageSize": limit,
-        "column": "szse",
+        "column": column,
         "tabName": "fulltext",
-        "plate": "",
-        "stock": code,
+        "plate": plate,
+        "stock": f"{identity.code},{org_id}",
         "searchkey": "",
         "secid": "",
     }
@@ -56,7 +73,12 @@ def _cninfo(code: str, limit: int, client: TransportClient) -> DataResult:
 def _szse(code: str, limit: int, client: TransportClient) -> DataResult:
     payload = {"channelCode": ["listedNotice_disc"], "pageSize": limit, "pageNum": 1, "stock": [code]}
     if hasattr(client, "post_json"):
-        data = client.post_json(SZSE_URL, data=payload, headers={"Referer": "https://www.szse.cn/"})
+        data = client.post_json(
+            SZSE_URL,
+            data=payload,
+            headers={"Referer": "https://www.szse.cn/"},
+            json_body=True,
+        )
     else:
         data = client.get_json(SZSE_URL, params=payload)
     rows = data.get("data") or []
@@ -126,7 +148,7 @@ def fetch_announcements(
     client = client or TransportClient()
     backup = (lambda: _szse(identity.code, limit, client)) if identity.market == "SZ" else (lambda: _eastmoney(identity.code, limit, client))
     return FallbackChain([
-        lambda: _cninfo(identity.code, limit, client),
+        lambda: _cninfo(identity, limit, client),
         backup,
     ]).run()
 

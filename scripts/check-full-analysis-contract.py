@@ -212,6 +212,14 @@ def validate(registry_path: Path, repo_root: Path):
             if not isinstance(secs, list) or not secs \
                     or not all(isinstance(x, str) and x for x in secs):
                 _err(errors, f"{label} required_sections 必须为非空字符串列表")
+                secs = []
+            heading_secs = rule.get("required_heading_sections", [])
+            if not isinstance(heading_secs, list) \
+                    or not all(isinstance(x, str) and x for x in heading_secs):
+                _err(errors, f"{label} required_heading_sections 必须为字符串列表")
+            elif not set(heading_secs).issubset(set(secs)):
+                _err(errors, f"{label} required_heading_sections 必须是 "
+                             "required_sections 的子集")
 
         ar = item.get("applicability_rule", {})
         pid = ar.get("predicate_id")

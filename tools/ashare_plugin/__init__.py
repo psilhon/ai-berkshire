@@ -47,4 +47,11 @@ def failure_result(
     }
 
 
-__all__ = ["DataResult", "failure_result", "success_result"]
+def with_verification(result: DataResult, verification: Dict[str, Any]) -> DataResult:
+    """Return a result copy with an optional provider verification block."""
+    combined = dict(result)
+    combined["verification"] = verification
+    return combined
+
+
+__all__ = ["DataResult", "failure_result", "success_result", "with_verification"]

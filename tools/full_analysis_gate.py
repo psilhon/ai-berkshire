@@ -416,6 +416,139 @@ def release_lock(run_root):
 # ---------------------------------------------------------------------------
 # 产物校验 (checkpoint / finalize 共用)
 # ---------------------------------------------------------------------------
+MARKDOWN_HEADING_RE = re.compile(
+    r"^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$")
+MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+MARKDOWN_CONTAINER_RE = re.compile(
+    r"^ {0,3}(?:>\s?|(?:[-+*]|\d+[.)])(?:[ \t]+|$))")
+HTML_BLOCK_OPEN_RE = re.compile(
+    r"^\s{0,3}</?([A-Za-z][A-Za-z0-9-]*)(?:\s|>|/>)")
+HTML_RAW_TAG_RE = re.compile(
+    r"^\s{0,3}<(script|pre|style|textarea)(?:\s|>|$)", re.IGNORECASE)
+HEADING_NUMBER_RE = re.compile(
+    r"^(?:(?:\d+(?:\.\d+)*[.)、．]?)|"
+    r"(?:第?[一二三四五六七八九十百]+[章节部分]))"
+    r"\s*[:：.、\-—]?\s*")
+
+
+def strip_markdown_container_prefix(line):
+    """Remove nested blockquote/list markers for block-context detection."""
+    current = line
+    while True:
+        match = MARKDOWN_CONTAINER_RE.match(current)
+        if not match:
+            return current
+        current = current[match.end():]
+
+
+def markdown_headings(text):
+    """Return root ATX headings, excluding fenced code and HTML blocks."""
+    headings = []
+    fence_char = None
+    fence_length = 0
+    fence_container_width = 0
+    in_html_comment = False
+    html_special_end = None
+    html_block_until_blank = False
+    for line in text.splitlines():
+        container_line = strip_markdown_container_prefix(line)
+        if fence_char is not None:
+            close_re = re.compile(
+                rf"^ {{0,3}}{re.escape(fence_char)}"
+                rf"{{{fence_length},}}[ \t]*$")
+            raw_close_re = re.compile(
+                rf"^ {{0,{fence_container_width + 3}}}"
+                rf"{re.escape(fence_char)}{{{fence_length},}}[ \t]*$")
+            if close_re.match(container_line) or raw_close_re.match(line):
+                fence_char = None
+                fence_length = 0
+                fence_container_width = 0
+            continue
+
+        if html_special_end is not None:
+            if html_special_end.lower() in line.lower():
+                html_special_end = None
+            continue
+
+        if html_block_until_blank:
+            if not container_line.strip():
+                html_block_until_blank = False
+            continue
+
+        visible = ""
+        remainder = line
+        while remainder:
+            if in_html_comment:
+                end = remainder.find("-->")
+                if end < 0:
+                    remainder = ""
+                    break
+                remainder = remainder[end + 3:]
+                in_html_comment = False
+                continue
+            start = remainder.find("<!--")
+            if start < 0:
+                visible += remainder
+                break
+            visible += remainder[:start]
+            remainder = remainder[start + 4:]
+            in_html_comment = True
+        line = visible
+        if not line.strip():
+            continue
+
+        container_line = strip_markdown_container_prefix(line)
+        fence = MARKDOWN_FENCE_RE.match(container_line)
+        if fence and not (fence.group(1).startswith("`")
+                          and "`" in fence.group(2)):
+            marker = fence.group(1)
+            fence_char = marker[0]
+            fence_length = len(marker)
+            fence_container_width = len(line) - len(container_line)
+            continue
+
+        stripped = (container_line.lstrip(" ")
+                    if len(container_line) - len(container_line.lstrip(" ")) <= 3
+                    else container_line)
+        special = None
+        if stripped.startswith("<?"):
+            special = "?>"
+        elif stripped.startswith("<![CDATA["):
+            special = "]]" + ">"
+        elif re.match(r"<![A-Z]", stripped):
+            special = ">"
+        else:
+            raw_tag = HTML_RAW_TAG_RE.match(container_line)
+            if raw_tag:
+                special = f"</{raw_tag.group(1)}>"
+        if special is not None:
+            start_at = container_line.find(stripped[:2])
+            remainder_after_start = container_line[start_at + 2:]
+            if special.lower() not in remainder_after_start.lower():
+                html_special_end = special
+            continue
+
+        html_open = HTML_BLOCK_OPEN_RE.match(container_line)
+        if html_open:
+            html_block_until_blank = True
+            continue
+
+        match = MARKDOWN_HEADING_RE.match(line)
+        if not match:
+            continue
+        title = match.group(1).strip()
+        title = HEADING_NUMBER_RE.sub("", title, count=1).strip()
+        headings.append(title)
+    return headings
+
+
+def heading_section_present(headings, section):
+    """Accept an exact title or a title followed by a descriptive suffix."""
+    suffix = re.compile(
+        rf"^{re.escape(section)}(?:\s*[:：\-—]\s*.+|\s*[（(].+[）)]\s*)$")
+    return any(title == section or suffix.match(title) for title in headings)
+
+
 def check_artifact(run_root, rel_path, rule, assigned_paths):
     errors = path_gate(run_root, rel_path, assigned_paths)
     target = Path(run_root) / unicodedata.normalize("NFC", str(rel_path))
@@ -432,6 +565,11 @@ def check_artifact(run_root, rel_path, rule, assigned_paths):
     for section in rule.get("required_sections", []):
         if section not in text:
             errors.append(f"产物 {rel_path} 缺 required_section 子串: {section!r}")
+    headings = markdown_headings(text)
+    for section in rule.get("required_heading_sections", []):
+        if not heading_section_present(headings, section):
+            errors.append(
+                f"产物 {rel_path} 缺 required_heading_section 标题: {section!r}")
     return errors
 
 
@@ -731,15 +869,22 @@ def validate_evidence_payload(payload):
             raise GateExit(EXIT_USAGE, f"evidence-file {key} 必须为数组")
     fact_required = {"fact_id", "field", "subject", "period", "unit",
                      "value", "tolerance_pct", "sources"}
+    fact_allowed = fact_required | {"data_domain"}
     source_required = {"publisher_id", "acquisition_chain_id", "source_type",
                        "observed_value", "accessed_at"}
     source_allowed = source_required | {"document_id", "url", "subject",
-                                        "period", "unit"}
+                                        "period", "unit", "precedence_status"}
     seen_fact_ids = set()
     for i, fact in enumerate(payload.get("facts", [])):
-        if not isinstance(fact, dict) or set(fact) != fact_required:
+        if not isinstance(fact, dict) \
+                or not fact_required.issubset(fact) \
+                or not set(fact).issubset(fact_allowed):
             raise GateExit(EXIT_USAGE,
-                           f"facts[{i}] 必须且只能含 {sorted(fact_required)}")
+                           f"facts[{i}] 字段不符合封闭 schema")
+        if "data_domain" in fact \
+                and fact["data_domain"] != "market_structured":
+            raise GateExit(EXIT_USAGE,
+                           f"facts[{i}].data_domain 仅允许 market_structured")
         for key in ("fact_id", "field", "subject", "period", "unit"):
             if not isinstance(fact[key], str) or not fact[key].strip():
                 raise GateExit(EXIT_USAGE, f"facts[{i}].{key} 必须为非空字符串")
@@ -752,6 +897,7 @@ def validate_evidence_payload(payload):
                            f"facts[{i}] value/tolerance_pct 必须为有限十进制字符串")
         if not isinstance(fact["sources"], list):
             raise GateExit(EXIT_USAGE, f"facts[{i}].sources 必须为数组")
+        has_tushare_market_source = False
         for j, source in enumerate(fact["sources"]):
             if not isinstance(source, dict) \
                     or not source_required.issubset(source) \
@@ -770,6 +916,23 @@ def validate_evidence_payload(payload):
             if not source.get("document_id") and not source.get("url"):
                 raise GateExit(EXIT_USAGE,
                                f"facts[{i}].sources[{j}] 必须含 document_id 或 url")
+            if source.get("precedence_status"):
+                if source["precedence_status"] != "superseded_by_tushare" \
+                        or fact.get("data_domain") != "market_structured" \
+                        or source.get("source_type") != "market_data":
+                    raise GateExit(
+                        EXIT_USAGE,
+                        f"facts[{i}].sources[{j}].precedence_status 不适用",
+                    )
+            if source.get("publisher_id") == "Tushare" \
+                    and source.get("acquisition_chain_id") == "tushare-api" \
+                    and source.get("source_type") == "market_data" \
+                    and not source.get("precedence_status"):
+                has_tushare_market_source = True
+        if any(src.get("precedence_status") == "superseded_by_tushare"
+               for src in fact["sources"]) and not has_tushare_market_source:
+            raise GateExit(EXIT_USAGE,
+                           f"facts[{i}] 缺少可采用的 Tushare 市场来源")
 
     for i, calc in enumerate(payload.get("calculations", [])):
         if not isinstance(calc, dict) or set(calc) != {
@@ -1099,6 +1262,12 @@ def cmd_checkpoint(args):
         if item is None:
             problems.append(f"[{sk['name']}] 不在注册表")
             continue
+        na, na_errors = evaluate_not_applicable(
+            sk, item, registry, run_root, manifest)
+        if na is not None:
+            for err in na_errors:
+                problems.append(f"[{sk['name']}] {err}")
+            continue
         rules = rules_by_path(item)
         declared = sk["artifacts"] or []
         for art in declared:
@@ -1149,6 +1318,9 @@ def classify_fact(fact):
     comparable = []
     for src in fact.get("sources", []):
         if not isinstance(src, dict):
+            continue
+        if fact.get("data_domain") == "market_structured" \
+                and src.get("precedence_status") == "superseded_by_tushare":
             continue
         mismatch = any(
             key in src and src[key] != fact.get(key)
@@ -2058,7 +2230,7 @@ def build_parser():
     p_review.set_defaults(func=cmd_set_review_mode)
 
     p_industry = sub.add_parser(
-        "set-industry", help="按 50%/累计 80% 规则写入公司行业 scope")
+        "set-industry", help="按 50%%/累计 80%% 规则写入公司行业 scope")
     add_run_root(p_industry)
     p_industry.add_argument("--industry-file", type=Path, required=True)
     p_industry.set_defaults(func=cmd_set_industry)
