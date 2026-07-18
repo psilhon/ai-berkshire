@@ -1,0 +1,8 @@
+{
+  "verify-market-cap": 0,
+  "verify-valuation": 0,
+  "cross-validate": 0,
+  "benford": 0,
+  "calc": 0,
+  "three-scenario": 0
+}

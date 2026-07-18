@@ -446,6 +446,297 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
 
 
 # ---------------------------------------------------------------------------
+# JSON 语义重放协议 (opt-in --json) — v1.4 §10.2
+#
+# 旧 public 函数、默认 stdout 和退出码全部保持不变; 下列构造器只服务 --json。
+# 输出 envelope 与 result 字段冻结于 tools/financial_rigor_result_schema.json。
+# Decimal 一律序列化为十进制字符串(禁 JSON float)。构造器与旧函数的数值等价
+# 由 test_financial_rigor 的交叉核对测试锁定, 防止两条路径漂移。
+# ---------------------------------------------------------------------------
+
+_JSON_SCHEMA_VERSION = 1
+
+
+def _dstr(d) -> str:
+    """Decimal -> 规范化十进制字符串 (用 'f' 避免科学计数法, 不丢精度)。"""
+    d = d if isinstance(d, Decimal) else exact(d)
+    return format(d.normalize(), "f")
+
+
+def _capture(fn, *args, **kwargs):
+    """Run fn with stdout suppressed, return its value (复用 public 函数取结构化值)。"""
+    import contextlib
+    import io as _io
+    with contextlib.redirect_stdout(_io.StringIO()):
+        return fn(*args, **kwargs)
+
+
+def _envelope(operation, inputs, result, outcome, exit_code, warnings=None, errors=None):
+    is_pass = True if outcome == "PASS" else False if outcome == "FAIL" else None
+    return {
+        "schema_version": _JSON_SCHEMA_VERSION,
+        "operation": operation,
+        "inputs": inputs,
+        "result": result,
+        "outcome": outcome,
+        "is_pass": is_pass,
+        "exit_code": exit_code,
+        "warnings": warnings or [],
+        "errors": errors or [],
+    }
+
+
+def _json_market_cap(price, shares, reported_cap, currency=""):
+    p = _require_finite("股价", price)
+    if p <= 0:
+        raise ValueError(f"股价必须为正数, 收到 {price}")
+    s = _require_finite("总股本", shares)
+    if s <= 0:
+        raise ValueError(f"总股本必须为正数, 收到 {shares}")
+    r = _require_finite("报告市值", reported_cap)
+    if r <= 0:
+        raise ValueError(f"报告市值必须为正数, 收到 {reported_cap}")
+    calculated = _CTX.multiply(p, s)
+    deviation = _CTX.divide(abs(calculated - r), r) * 100
+    if deviation > Decimal("5"):
+        band, outcome, exit_code = "FAIL", "FAIL", 1
+    elif deviation > Decimal("1"):
+        band, outcome, exit_code = "WARN", "PASS", 0
+    else:
+        band, outcome, exit_code = "PASS", "PASS", 0
+    result = {
+        "calculated_market_cap": _dstr(calculated),
+        "reported_market_cap": _dstr(r),
+        "deviation_pct": _dstr(deviation),
+        "band": band,
+    }
+    inputs = {"price": _dstr(p), "shares": _dstr(s),
+              "reported": _dstr(r), "currency": currency}
+    return _envelope("verify-market-cap", inputs, result, outcome, exit_code)
+
+
+def _json_valuation(price, eps=None, bvps=None, fcf_per_share=None,
+                    dividend=None, revenue_per_share=None):
+    p = _require_finite("股价", price)
+    if p <= 0:
+        raise ValueError(f"股价必须为正数, 收到 {price}")
+    metrics = {}
+    skipped = []
+    if eps is not None:
+        e = _require_finite("EPS", eps)
+        if e > 0:
+            metrics["pe"] = _dstr(_CTX.divide(p, e))
+            metrics["earnings_yield_pct"] = _dstr(_CTX.divide(e, p) * 100)
+        else:
+            skipped.append({"metric": "pe", "reason_code": "eps_non_positive"})
+    if bvps is not None:
+        b = _require_finite("每股净资产", bvps)
+        if b != 0:
+            metrics["pb"] = _dstr(_CTX.divide(p, b))
+            if eps is not None and exact(eps) != 0:
+                metrics["roe_pct"] = _dstr(_CTX.divide(exact(eps), b) * 100)
+        else:
+            skipped.append({"metric": "pb", "reason_code": "bvps_zero"})
+    if fcf_per_share is not None:
+        f = _require_finite("每股FCF", fcf_per_share)
+        if f != 0:
+            metrics["p_fcf"] = _dstr(_CTX.divide(p, f))
+            metrics["fcf_yield_pct"] = _dstr(_CTX.divide(f, p) * 100)
+        else:
+            skipped.append({"metric": "p_fcf", "reason_code": "fcf_zero"})
+    if dividend is not None:
+        d = _require_finite("每股股息", dividend)
+        metrics["dividend_yield_pct"] = _dstr(_CTX.divide(d, p) * 100)
+    if revenue_per_share is not None:
+        rv = _require_finite("每股营收", revenue_per_share)
+        if rv != 0:
+            metrics["ps"] = _dstr(_CTX.divide(p, rv))
+        else:
+            skipped.append({"metric": "ps", "reason_code": "revenue_zero"})
+    outcome, exit_code = ("PASS", 0) if metrics else ("INSUFFICIENT", 2)
+    result = {"metrics": metrics, "skipped": skipped}
+    given = [("price", price), ("eps", eps), ("bvps", bvps),
+             ("fcf_per_share", fcf_per_share), ("dividend", dividend),
+             ("revenue_per_share", revenue_per_share)]
+    inputs = {k: _dstr(exact(v)) for k, v in given if v is not None}
+    return _envelope("verify-valuation", inputs, result, outcome, exit_code)
+
+
+def _json_cross_validate(field_name, source_values, unit="", tolerance_pct=Decimal("2.0")):
+    if len(source_values) < 2:
+        raise ValueError(
+            f"交叉验证至少需要 2 个独立来源, 收到 {len(source_values)} 个"
+            f"（项目规则: 关键数据至少 2 个独立来源交叉验证）")
+    values = {k: _require_finite(f"来源[{k}]", v) for k, v in source_values.items()}
+    tol = _require_finite("容差", tolerance_pct)
+    sorted_vals = sorted(values.values())
+    n = len(sorted_vals)
+    if n % 2 == 1:
+        median = sorted_vals[n // 2]
+    else:
+        median = _CTX.divide(_CTX.add(sorted_vals[n//2-1], sorted_vals[n//2]), Decimal("2"))
+    if median == 0:
+        raise ValueError(f"{field_name} 的中位数为 0, 无法计算相对偏差")
+    sources = []
+    all_ok = True
+    for src, val in values.items():
+        dev = _CTX.divide(abs(val - median), abs(median)) * 100
+        within = dev <= tol
+        if not within:
+            all_ok = False
+        sources.append({"source": src, "value": _dstr(val),
+                        "deviation_pct": _dstr(dev), "within_tolerance": bool(within)})
+    result = {"consensus": _dstr(median), "tolerance_pct": _dstr(tol),
+              "sources": sources, "all_consistent": all_ok}
+    outcome, exit_code = ("PASS", 0) if all_ok else ("FAIL", 1)
+    inputs = {"field": field_name, "unit": unit,
+              "values": {k: _dstr(v) for k, v in values.items()}}
+    return _envelope("cross-validate", inputs, result, outcome, exit_code)
+
+
+def _json_benford(values):
+    digits = []
+    for v in values:
+        d = v if isinstance(v, Decimal) else Decimal(str(v))
+        if not d.is_finite() or d == 0:
+            continue
+        digits.append(d.as_tuple().digits[0])
+    n = len(digits)
+    if n < 50:
+        result = {"sample_size": n, "mad": None, "chi_square": None,
+                  "conformity": "INSUFFICIENT", "is_conforming": None}
+        return _envelope("benford", {"count": len(values)}, result, "INSUFFICIENT", 2)
+    counts = {}
+    for d in digits:
+        counts[d] = counts.get(d, 0) + 1
+    observed = {d: counts.get(d, 0) / n for d in range(1, 10)}
+    mad = sum(abs(observed.get(d, 0) - _BENFORD[d]) for d in range(1, 10)) / 9
+    chi2 = sum((counts.get(d, 0) - _BENFORD[d] * n) ** 2 / (_BENFORD[d] * n)
+               for d in range(1, 10))
+    # 量化到 6 位, 消除跨平台 libm ULP 边界翻转 (v1.4 §10.2)
+    mad_q = Decimal(str(mad)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
+    chi2_q = Decimal(str(chi2)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
+    if mad_q < Decimal("0.006"):
+        conformity = "CLOSE"
+    elif mad_q < Decimal("0.012"):
+        conformity = "ACCEPTABLE"
+    elif mad_q < Decimal("0.015"):
+        conformity = "MARGINAL"
+    else:
+        conformity = "NONCONFORMING"
+    is_conforming = mad_q < Decimal("0.015")
+    result = {"sample_size": n, "mad": _dstr(mad_q), "chi_square": _dstr(chi2_q),
+              "conformity": conformity, "is_conforming": is_conforming}
+    outcome, exit_code = ("PASS", 0) if is_conforming else ("FAIL", 1)
+    return _envelope("benford", {"count": len(values)}, result, outcome, exit_code)
+
+
+def _json_calc(expr):
+    allowed = set("0123456789.+-*/() eE")
+    if not all(c in allowed for c in expr.replace(" ", "")):
+        result = {"expression": expr, "value": None}
+        return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
+                         errors=[{"code": "unsafe_expression", "message": "表达式含非法字符"}])
+    try:
+        dec_expr = _NUMBER_RE.sub(r"Decimal('\g<0>')", expr)
+        value = exact(eval(dec_expr, {"__builtins__": {}}, {"Decimal": Decimal}))
+        result = {"expression": expr, "value": _dstr(value)}
+        return _envelope("calc", {"expr": expr}, result, "PASS", 0)
+    except Exception as e:  # noqa: BLE001 — 计算错误一律降级为 ERROR
+        result = {"expression": expr, "value": None}
+        return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
+                         errors=[{"code": "calc_error", "message": str(e)}])
+
+
+def _json_three_scenario(price, eps, shares, growth, pe, years=3, currency=""):
+    rows = _capture(three_scenario_valuation, price, eps, shares,
+                    growth[0], growth[1], growth[2], pe[0], pe[1], pe[2], years, currency)
+    p = _require_finite("当前股价", price)
+    id_map = {"乐观 (Bull)": "bull", "中性 (Base)": "base", "悲观 (Bear)": "bear"}
+    scenarios = []
+    for row in rows:
+        change = _CTX.divide(row["target_price"] - p, p) * 100  # Decimal, 非 float
+        scenarios.append({
+            "id": id_map[row["name"]],
+            "growth": _dstr(row["growth"]),
+            "pe": _dstr(row["pe"]),
+            "future_eps": _dstr(row["future_eps"]),
+            "target_price": _dstr(row["target_price"]),
+            "implied_mcap": _dstr(row["implied_mcap"]),
+            "change_pct": _dstr(change),
+        })
+    result = {"years": years, "currency": currency, "scenarios": scenarios}
+    inputs = {"price": _dstr(exact(price)), "eps": _dstr(exact(eps)),
+              "shares": _dstr(exact(shares)),
+              "growth": [_dstr(exact(g)) for g in growth],
+              "pe": [_dstr(exact(x)) for x in pe],
+              "years": years, "currency": currency}
+    return _envelope("three-scenario", inputs, result, "PASS", 0)
+
+
+def _parse_values_dict(text):
+    """--json 路径: 解析 cross-validate 的 --values, 非法即 ValueError (由调用方转 ERROR)。"""
+    try:
+        values = json.loads(text, parse_float=Decimal)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--values 不是有效 JSON: {e}")
+    if not isinstance(values, dict):
+        raise ValueError(f"--values 必须是 JSON 对象 {{来源: 数值}}, 收到 {type(values).__name__}")
+    bad = [k for k, v in values.items()
+           if isinstance(v, bool) or not isinstance(v, (int, Decimal))]
+    if bad:
+        raise ValueError(f"--values 中这些来源的值不是数值: {', '.join(bad)}")
+    return values
+
+
+def _parse_values_list(text):
+    """--json 路径: 解析 benford 的 --values 数组。"""
+    try:
+        values = json.loads(text, parse_float=Decimal)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--values 不是有效 JSON: {e}")
+    if not isinstance(values, list):
+        raise ValueError(f"--values 必须是 JSON 数组, 收到 {type(values).__name__}")
+    bad = [str(v) for v in values
+           if isinstance(v, bool) or not isinstance(v, (int, Decimal))]
+    if bad:
+        raise ValueError(f"--values 含非数值元素: {', '.join(bad[:5])}")
+    return values
+
+
+def _emit_json(args):
+    """--json 分发: 构造 envelope, 打印唯一 JSON 文档, 按 exit_code 退出。
+
+    即使参数/证据错误也输出一个合法 JSON (outcome=ERROR/exit 2), 绝不裸 traceback。
+    """
+    cmd = args.command
+    try:
+        if cmd == "verify-market-cap":
+            env = _json_market_cap(args.price, args.shares, args.reported, args.currency)
+        elif cmd == "verify-valuation":
+            env = _json_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
+                                  args.dividend, args.revenue_per_share)
+        elif cmd == "cross-validate":
+            env = _json_cross_validate(args.field, _parse_values_dict(args.values),
+                                       args.unit, args.tolerance)
+        elif cmd == "benford":
+            env = _json_benford(_parse_values_list(args.values))
+        elif cmd == "calc":
+            env = _json_calc(args.expr)
+        elif cmd == "three-scenario":
+            env = _json_three_scenario(args.price, args.eps, args.shares,
+                                       args.growth, args.pe, args.years, args.currency)
+        else:
+            env = _envelope(cmd or "", {}, {}, "ERROR", 2,
+                            errors=[{"code": "no_command", "message": "缺少子命令"}])
+    except ValueError as e:
+        env = _envelope(cmd or "", {}, {}, "ERROR", 2,
+                        errors=[{"code": "param_error", "message": str(e)}])
+    print(json.dumps(env, ensure_ascii=False))
+    sys.exit(env["exit_code"])
+
+
+# ---------------------------------------------------------------------------
 # CLI Entry Point
 # ---------------------------------------------------------------------------
 
@@ -463,8 +754,29 @@ def decimal_arg(text: str) -> Decimal:
     return d
 
 
+_JSON_OPERATIONS = {
+    "verify-market-cap", "verify-valuation", "cross-validate",
+    "benford", "calc", "three-scenario",
+}
+
+
+class JsonAwareArgumentParser(argparse.ArgumentParser):
+    """让 argparse 自身的参数错误也遵守 --json 唯一文档协议。"""
+
+    def error(self, message):
+        argv = sys.argv[1:]
+        if "--json" in argv:
+            operation = next((arg for arg in argv if arg in _JSON_OPERATIONS), "")
+            env = _envelope(
+                operation, {}, {}, "ERROR", 2,
+                errors=[{"code": "argparse_error", "message": message}])
+            print(json.dumps(env, ensure_ascii=False))
+            raise SystemExit(2)
+        super().error(message)
+
+
 def main():
-    parser = argparse.ArgumentParser(
+    parser = JsonAwareArgumentParser(
         description="Financial Rigor Toolkit — 金融数据严谨性验证工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -476,7 +788,8 @@ Examples:
   %(prog)s calc --expr '510 * 9.11e9'
         """)
 
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command",
+                                parser_class=JsonAwareArgumentParser)
 
     # verify-market-cap
     mc = sub.add_parser("verify-market-cap", help="验算市值 = 股价 × 总股本")
@@ -521,7 +834,15 @@ Examples:
     ts.add_argument("--years", type=int, default=3)
     ts.add_argument("--currency", default="")
 
+    for _p in (mc, val, cv, bf, ca, ts):
+        _p.add_argument("--json", action="store_true",
+                        help="输出结构化 JSON envelope (供 gate 语义重放, 见 §10.2)")
+
     args = parser.parse_args()
+
+    # --json: 结构化重放协议, 早于默认分发; 默认(非 --json)路径逐字节不变
+    if getattr(args, "json", False):
+        _emit_json(args)
 
     # 退出码统一语义: 0 验证通过 / 1 业务不通过或计算失败 / 2 参数错误或证据不足
     if args.command == "verify-market-cap":

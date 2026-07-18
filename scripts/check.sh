@@ -19,4 +19,7 @@ python3 "$ROOT/scripts/sync-codex-prompts.py" --check
 echo "== 报告索引同步检查 =="
 python3 "$ROOT/scripts/build_report_index.py" --check
 
+echo "== 全量分析注册表校验 =="
+python3 "$ROOT/scripts/check-full-analysis-contract.py"
+
 echo "✅ 全部检查通过"

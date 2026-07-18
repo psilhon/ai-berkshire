@@ -397,5 +397,359 @@ class TestCLIBenfordInput(_CLICase):
         self.assertEqual(proc.returncode, 1, msg=proc.stdout)
 
 
+class TestDefaultCLIGolden(_CLICase):
+    """A2 兼容基线: 默认(非 --json) CLI 的 stdout 与退出码逐字节冻结,
+    保护后续 --json 改动不污染既有人类输出路径 (§10.2.1 step2)。"""
+
+    GOLDEN = Path(__file__).resolve().parent / "golden" / "financial_rigor"
+
+    CASES = {
+        "verify-market-cap": ["verify-market-cap", "--price", "41.20", "--shares",
+                              "25219845601", "--reported", "1039057636761.20",
+                              "--currency", "CNY"],
+        "verify-valuation": ["verify-valuation", "--price", "100", "--eps", "5",
+                             "--bvps", "40", "--fcf-per-share", "8",
+                             "--dividend", "2", "--revenue-per-share", "50"],
+        "cross-validate": ["cross-validate", "--field", "revenue", "--values",
+                           '{"公司财报":108300000000,"第二来源":107900000000}',
+                           "--unit", "CNY"],
+        "benford": ["benford", "--values", json.dumps(_benford_values())],
+        "calc": ["calc", "--expr", "510 * 9.11e9"],
+        "three-scenario": ["three-scenario", "--price", "100", "--eps", "5",
+                           "--shares", "10", "--growth", "0.10", "0.05", "0.0",
+                           "--pe", "20", "15", "10", "--years", "3"],
+    }
+
+    def test_default_stdout_and_exit_byte_stable(self):
+        exit_codes = json.loads(
+            (self.GOLDEN / "exit_codes.json").read_text(encoding="utf-8"))
+        for name, args in self.CASES.items():
+            with self.subTest(command=name):
+                proc = self.run_cli(*args)
+                golden = (self.GOLDEN / f"{name}.stdout.txt").read_text(
+                    encoding="utf-8")
+                self.assertEqual(proc.stdout, golden,
+                                 msg=f"{name} 默认 stdout 漂移")
+                self.assertEqual(proc.returncode, exit_codes[name],
+                                 msg=f"{name} 退出码漂移")
+                self.assertEqual(proc.stderr, "", msg=f"{name} 写了 stderr")
+
+
+class TestJSONReplayProtocol(_CLICase):
+    """B: --json 语义重放协议 (v1.4 §10.2)。envelope + 六 operation result schema;
+    字段名逐项相等 schema; Decimal 走十进制字符串; 即使非 0 退出也只有一个合法 JSON。"""
+
+    SCHEMA = json.loads(
+        (Path(__file__).resolve().parents[1] / "tools"
+         / "financial_rigor_result_schema.json").read_text(encoding="utf-8"))
+
+    def run_json(self, *args):
+        proc = self.run_cli(*args, "--json")
+        try:
+            env = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            self.fail(f"--json 未产出合法 JSON (功能缺失?): rc={proc.returncode} "
+                      f"stdout={proc.stdout[:200]!r} stderr={proc.stderr[:200]!r}")
+        return env, proc.returncode
+
+    def assert_envelope(self, env, operation, proc_rc):
+        env_s = self.SCHEMA["envelope"]
+        for f in env_s["required"]:
+            self.assertIn(f, env, msg=f"{operation} envelope 缺字段 {f}")
+        self.assertEqual(env["operation"], operation)
+        self.assertEqual(env["schema_version"], self.SCHEMA["schema_version"])
+        self.assertIn(env["outcome"], env_s["outcome_enum"])
+        self.assertIn(env["exit_code"], env_s["exit_codes"])
+        self.assertEqual(env["exit_code"], proc_rc, msg="JSON exit_code 应与进程退出码一致")
+        self.assertIsInstance(env["warnings"], list)
+        self.assertIsInstance(env["errors"], list)
+        # is_pass 规则
+        if env["outcome"] in ("PASS", "FAIL"):
+            self.assertIsInstance(env["is_pass"], bool)
+        else:
+            self.assertIsNone(env["is_pass"])
+        # 字段名逐项相等 schema (B5 防漂移)
+        op_s = self.SCHEMA["operations"][operation]
+        self.assertEqual(set(env["result"].keys()), set(op_s["result_required"]),
+                         msg=f"{operation} result 字段名与 schema 不符")
+        # decimal 字段为十进制字符串 (非 null 时)
+        for f in op_s.get("decimal_string_fields", []):
+            if env["result"][f] is not None:
+                self.assertIsInstance(env["result"][f], str,
+                                      msg=f"{operation}.{f} 应为十进制字符串")
+
+    # ---- verify-market-cap ----
+    def test_market_cap_pass(self):
+        # 41.20 × 25219845601 = 1039057638761.2 (设计 §10.2 示例误写为 ...636761.20)
+        env, rc = self.run_json("verify-market-cap", "--price", "41.20", "--shares",
+                                "25219845601", "--reported", "1039057638761.2",
+                                "--currency", "CNY")
+        self.assert_envelope(env, "verify-market-cap", rc)
+        self.assertEqual(env["outcome"], "PASS")
+        self.assertTrue(env["is_pass"])
+        self.assertEqual(rc, 0)
+        r = env["result"]
+        self.assertEqual(Decimal(r["calculated_market_cap"]), Decimal("1039057638761.2"))
+        self.assertEqual(Decimal(r["reported_market_cap"]), Decimal("1039057638761.2"))
+        self.assertEqual(Decimal(r["deviation_pct"]), Decimal("0"))
+        self.assertEqual(r["band"], "PASS")
+
+    def test_market_cap_over_5pct_fails(self):
+        env, rc = self.run_json("verify-market-cap", "--price", "1",
+                                "--shares", "100", "--reported", "200")
+        self.assert_envelope(env, "verify-market-cap", rc)
+        self.assertEqual(env["outcome"], "FAIL")
+        self.assertFalse(env["is_pass"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(env["result"]["band"], "FAIL")
+
+    def test_market_cap_band_warn(self):
+        # 偏差 2% (1-5%) -> band WARN, 仍 is_pass true
+        env, rc = self.run_json("verify-market-cap", "--price", "102",
+                                "--shares", "100", "--reported", "10000")
+        self.assertEqual(env["result"]["band"], "WARN")
+        self.assertTrue(env["is_pass"])
+        self.assertEqual(rc, 0)
+
+    # ---- verify-valuation ----
+    def test_valuation_metrics(self):
+        env, rc = self.run_json("verify-valuation", "--price", "100", "--eps", "5",
+                                "--bvps", "40", "--dividend", "2")
+        self.assert_envelope(env, "verify-valuation", rc)
+        self.assertEqual(env["outcome"], "PASS")
+        self.assertEqual(rc, 0)
+        m = env["result"]["metrics"]
+        self.assertEqual(Decimal(m["pe"]), Decimal("20"))
+        self.assertEqual(Decimal(m["earnings_yield_pct"]), Decimal("5"))
+        self.assertEqual(Decimal(m["pb"]), Decimal("2.5"))
+        self.assertEqual(Decimal(m["roe_pct"]), Decimal("12.5"))
+        self.assertEqual(Decimal(m["dividend_yield_pct"]), Decimal("2"))
+        self.assertEqual(set(m.keys()) - set(self.SCHEMA["operations"]
+                         ["verify-valuation"]["metrics_allowed"]), set())
+        self.assertEqual(env["result"]["skipped"], [])
+
+    def test_valuation_no_metric_insufficient(self):
+        env, rc = self.run_json("verify-valuation", "--price", "100")
+        self.assert_envelope(env, "verify-valuation", rc)
+        self.assertEqual(env["outcome"], "INSUFFICIENT")
+        self.assertIsNone(env["is_pass"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(env["result"]["metrics"], {})
+        self.assertEqual(env["result"]["skipped"], [])
+
+    def test_valuation_negative_eps_skipped(self):
+        env, rc = self.run_json("verify-valuation", "--price", "100", "--eps", "-5")
+        self.assertEqual(env["outcome"], "INSUFFICIENT")
+        self.assertEqual(env["result"]["metrics"], {})
+        skipped = {s["metric"] for s in env["result"]["skipped"]}
+        self.assertIn("pe", skipped)
+
+    # ---- cross-validate ----
+    def test_cross_validate_consistent(self):
+        env, rc = self.run_json("cross-validate", "--field", "revenue",
+                                "--values", '{"a": 100, "b": 100}')
+        self.assert_envelope(env, "cross-validate", rc)
+        self.assertEqual(env["outcome"], "PASS")
+        self.assertTrue(env["result"]["all_consistent"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(Decimal(env["result"]["consensus"]), Decimal("100"))
+        self.assertEqual(Decimal(env["result"]["tolerance_pct"]), Decimal("2.0"))
+        srcs = env["result"]["sources"]
+        self.assertEqual({s["source"] for s in srcs}, {"a", "b"})
+        for s in srcs:
+            self.assertEqual(set(s.keys()), set(self.SCHEMA["operations"]
+                             ["cross-validate"]["source_item_fields"]))
+            self.assertIsInstance(s["value"], str)
+            self.assertIsInstance(s["deviation_pct"], str)
+            self.assertIsInstance(s["within_tolerance"], bool)
+
+    def test_cross_validate_inconsistent(self):
+        env, rc = self.run_json("cross-validate", "--field", "revenue",
+                                "--values", '{"a": 100, "b": 200}')
+        self.assert_envelope(env, "cross-validate", rc)
+        self.assertEqual(env["outcome"], "FAIL")
+        self.assertFalse(env["result"]["all_consistent"])
+        self.assertEqual(rc, 1)
+
+    # ---- benford ----
+    def test_benford_conforming(self):
+        env, rc = self.run_json("benford", "--values", json.dumps(_benford_values()))
+        self.assert_envelope(env, "benford", rc)
+        self.assertEqual(env["outcome"], "PASS")
+        self.assertTrue(env["result"]["is_conforming"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(env["result"]["sample_size"], 100)
+        self.assertIn(env["result"]["conformity"], ["CLOSE", "ACCEPTABLE", "MARGINAL"])
+        mad = env["result"]["mad"]
+        self.assertEqual(Decimal(mad), Decimal(mad).quantize(Decimal("0.000001")),
+                         msg="mad 必须量化到 6 位")
+
+    def test_benford_nonconforming(self):
+        env, rc = self.run_json("benford", "--values", json.dumps([9] * 60))
+        self.assert_envelope(env, "benford", rc)
+        self.assertEqual(env["outcome"], "FAIL")
+        self.assertFalse(env["result"]["is_conforming"])
+        self.assertEqual(env["result"]["conformity"], "NONCONFORMING")
+        self.assertEqual(rc, 1)
+
+    def test_benford_insufficient(self):
+        env, rc = self.run_json("benford", "--values", "[1, 2, 3]")
+        self.assert_envelope(env, "benford", rc)
+        self.assertEqual(env["outcome"], "INSUFFICIENT")
+        self.assertIsNone(env["is_pass"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(env["result"]["sample_size"], 3)
+        self.assertIsNone(env["result"]["mad"])
+        self.assertIsNone(env["result"]["chi_square"])
+        self.assertIsNone(env["result"]["is_conforming"])
+        self.assertEqual(env["result"]["conformity"], "INSUFFICIENT")
+
+    # ---- calc ----
+    def test_calc_ok(self):
+        env, rc = self.run_json("calc", "--expr", "510 * 9.11e9")
+        self.assert_envelope(env, "calc", rc)
+        self.assertEqual(env["outcome"], "PASS")
+        self.assertEqual(rc, 0)
+        self.assertEqual(env["result"]["expression"], "510 * 9.11e9")
+        self.assertEqual(Decimal(env["result"]["value"]), Decimal("4646100000000"))
+
+    def test_calc_divzero_error(self):
+        env, rc = self.run_json("calc", "--expr", "1 / 0")
+        self.assert_envelope(env, "calc", rc)
+        self.assertEqual(env["outcome"], "ERROR")
+        self.assertIsNone(env["is_pass"])
+        self.assertEqual(rc, 1)
+        self.assertIsNone(env["result"]["value"])
+
+    # ---- three-scenario ----
+    def test_three_scenario(self):
+        env, rc = self.run_json("three-scenario", "--price", "100", "--eps", "5",
+                                "--shares", "10", "--growth", "0.10", "0.05", "0.0",
+                                "--pe", "20", "15", "10", "--years", "3")
+        self.assert_envelope(env, "three-scenario", rc)
+        self.assertEqual(env["outcome"], "PASS")
+        self.assertEqual(rc, 0)
+        self.assertEqual(env["result"]["years"], 3)
+        scen = env["result"]["scenarios"]
+        self.assertEqual([s["id"] for s in scen], ["bull", "base", "bear"])
+        bull = scen[0]
+        self.assertEqual(set(bull.keys()), set(self.SCHEMA["operations"]
+                         ["three-scenario"]["scenario_item_fields"]))
+        self.assertEqual(Decimal(bull["future_eps"]), Decimal("6.655"))
+        self.assertEqual(Decimal(bull["target_price"]), Decimal("133.1"))
+        self.assertEqual(Decimal(bull["implied_mcap"]), Decimal("1331"))
+        for f in self.SCHEMA["operations"]["three-scenario"]["scenario_decimal_string_fields"]:
+            self.assertIsInstance(bull[f], str, msg=f"scenario.{f} 应为十进制字符串")
+
+    # ---- 跨环境确定性 (B6) ----
+    def test_decimal_ops_semantics_stable_across_locale(self):
+        # ASCII locale 下 --json 语义字段必须一致 (gate 不比 stdout 字节)
+        env_utf8 = json.loads(subprocess.run(
+            [sys.executable, str(self.TOOL), "verify-market-cap", "--price", "41.20",
+             "--shares", "25219845601", "--reported", "1039057636761.20", "--json"],
+            capture_output=True, text=True,
+            env={"PYTHONUTF8": "1", "LC_ALL": "C.UTF-8", "PATH": "/usr/bin:/bin"}).stdout)
+        env_ascii = json.loads(subprocess.run(
+            [sys.executable, str(self.TOOL), "verify-market-cap", "--price", "41.20",
+             "--shares", "25219845601", "--reported", "1039057636761.20", "--json"],
+            capture_output=True, text=True,
+            env={"PYTHONUTF8": "0", "LC_ALL": "C", "PATH": "/usr/bin:/bin"}).stdout)
+        self.assertEqual(env_utf8["result"], env_ascii["result"])
+        self.assertEqual(env_utf8["outcome"], env_ascii["outcome"])
+
+
+class TestJSONCrossCheck(_CLICase):
+    """交叉核对: --json 构造器与旧 public 函数在重叠字段上数值一致,
+    机械锁死"单一真值", 防两条计算路径漂移 (design 的构造器等价性)。"""
+
+    def test_market_cap_is_pass_matches_public_bool(self):
+        for price, shares, reported in [("41.20", "25219845601", "1039057638761.2"),
+                                        ("1", "100", "200")]:
+            env = fr._json_market_cap(Decimal(price), Decimal(shares), Decimal(reported))
+            pub = quiet(fr.verify_market_cap, Decimal(price), Decimal(shares),
+                        Decimal(reported))
+            self.assertEqual(env["is_pass"], pub, msg=f"{price}/{shares}/{reported}")
+
+    def test_valuation_metrics_match_public(self):
+        kw = dict(eps=Decimal("5"), bvps=Decimal("40"), fcf_per_share=Decimal("8"),
+                  dividend=Decimal("2"), revenue_per_share=Decimal("50"))
+        env = fr._json_valuation(Decimal("100"), **kw)
+        pub = quiet(fr.verify_valuation, Decimal("100"), **kw)
+        key_map = {"pe": "PE", "pb": "PB", "roe_pct": "ROE", "p_fcf": "P_FCF",
+                   "fcf_yield_pct": "FCF_Yield",
+                   "dividend_yield_pct": "Dividend_Yield", "ps": "PS"}
+        for jk, pk in key_map.items():
+            self.assertAlmostEqual(float(Decimal(env["result"]["metrics"][jk])),
+                                   pub[pk], places=6, msg=f"{jk} 漂移")
+
+    def test_cross_validate_matches_public(self):
+        sv = {"a": Decimal("100"), "b": Decimal("101"), "c": Decimal("100")}
+        env = fr._json_cross_validate("x", sv)
+        pub = quiet(fr.cross_validate, "x", sv)
+        self.assertEqual(Decimal(env["result"]["consensus"]), pub["consensus"])
+        self.assertEqual(env["result"]["all_consistent"], pub["all_consistent"])
+
+    def test_benford_matches_public(self):
+        vals = _benford_values()
+        env = fr._json_benford(vals)
+        pub = quiet(fr.benford_check, vals)
+        self.assertEqual(env["result"]["is_conforming"], pub["is_conforming"])
+        self.assertEqual(Decimal(env["result"]["mad"]),
+                         Decimal(str(pub["mad"])).quantize(Decimal("0.000001")))
+
+    def test_calc_matches_public(self):
+        env = fr._json_calc("510 * 9.11e9")
+        self.assertEqual(Decimal(env["result"]["value"]),
+                         quiet(fr.exact_calc, "510 * 9.11e9"))
+
+    def test_three_scenario_matches_public(self):
+        env = fr._json_three_scenario(
+            Decimal("100"), Decimal("5"), Decimal("10"),
+            [Decimal("0.10"), Decimal("0.05"), Decimal("0.0")],
+            [Decimal("20"), Decimal("15"), Decimal("10")], years=3)
+        pub = quiet(fr.three_scenario_valuation, Decimal("100"), Decimal("5"),
+                    Decimal("10"), Decimal("0.10"), Decimal("0.05"), Decimal("0.0"),
+                    Decimal("20"), Decimal("15"), Decimal("10"), 3, "")
+        for jrow, prow in zip(env["result"]["scenarios"], pub):
+            self.assertEqual(Decimal(jrow["future_eps"]), prow["future_eps"])
+            self.assertEqual(Decimal(jrow["target_price"]), prow["target_price"])
+            self.assertEqual(Decimal(jrow["implied_mcap"]), prow["implied_mcap"])
+
+    def test_json_param_error_emits_one_error_json(self):
+        # 参数错误也必须只输出一个合法 JSON (outcome=ERROR/exit 2), 不裸 traceback
+        proc = self.run_cli("verify-market-cap", "--price", "1", "--shares", "0",
+                            "--reported", "100", "--json")
+        env = json.loads(proc.stdout)
+        self.assertEqual(env["outcome"], "ERROR")
+        self.assertIsNone(env["is_pass"])
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(env["exit_code"], 2)
+        self.assertTrue(env["errors"])
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_json_argparse_type_error_emits_one_error_json(self):
+        proc = self.run_cli(
+            "verify-market-cap", "--price", "bad-decimal", "--shares", "10",
+            "--reported", "100", "--json")
+        env = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(env["operation"], "verify-market-cap")
+        self.assertEqual(env["outcome"], "ERROR")
+        self.assertEqual(env["exit_code"], 2)
+        self.assertTrue(env["errors"])
+        self.assertEqual(proc.stderr, "")
+
+    def test_json_missing_required_arg_emits_one_error_json(self):
+        proc = self.run_cli(
+            "verify-market-cap", "--price", "10", "--shares", "10", "--json")
+        env = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(env["operation"], "verify-market-cap")
+        self.assertEqual(env["outcome"], "ERROR")
+        self.assertEqual(env["exit_code"], 2)
+        self.assertTrue(env["errors"])
+        self.assertEqual(proc.stderr, "")
+
+
 if __name__ == "__main__":
     unittest.main()

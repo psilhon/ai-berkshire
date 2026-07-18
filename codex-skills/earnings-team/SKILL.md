@@ -124,7 +124,7 @@ This skill is generated from `skills/earnings-team.md` so Claude Code and Codex 
 
    ```bash
    python3 tools/financial_rigor.py cross-validate \
-     --metric "revenue" --values {值1} {值2} --sources "来源1" "来源2"
+     --field {字段} --values '{"来源1": {值1}, "来源2": {值2}}'
    ```
 
 2. **现金流分析（最重要）**
