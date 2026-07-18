@@ -1,0 +1,905 @@
+{
+  "registry_schema_version": 1,
+  "manifest_schema_version": 1,
+  "annotations_schema_version": 1,
+  "_comment": "全量公司分析 20 项业务工作契约的唯一机器真源 (v1.4 §6.2/§6.3)。Skill/gate/测试不得再硬编码 20 清单, 必须读本文件。Phase 1 只落结构与通用反空壳基线; 各项领域专属硬证据 (§6.4) 由 domain_evidence_status=PHASE2_PENDING 诚实标记, 不伪装已实现。legacy_output_patterns 是模板字符串 (占位符 {company}/{date}/{period}/{industry}), 禁止 glob 通配; init 时按公司名/as_of 实例化为精确 watchlist 候选 (§8.3)。",
+  "stage_dirs": {
+    "01-data-screen": "01-数据与快筛",
+    "02-company-earnings": "02-公司与财报",
+    "03-industry-opportunity": "03-行业与机会",
+    "04-thesis-boundary": "04-论文与组合",
+    "05-content": "05-内容生产"
+  },
+  "negative_acceptance_dir": "06-负向验收",
+  "generic_required_sections": [
+    "数据截止日",
+    "直接来源",
+    "限制",
+    "仅供学习研究"
+  ],
+  "predicates": [
+    "is_a_share",
+    "always_applicable",
+    "has_comparable_financial_history",
+    "has_investable_price",
+    "min_independent_contexts_2",
+    "identifiable_key_managers",
+    "has_primary_filing_for_period",
+    "earnings_review_complete_and_min_2_contexts",
+    "main_business_definable",
+    "listed_and_main_industry_definable",
+    "physical_bottleneck_exists",
+    "has_two_pairable_snapshots",
+    "private_run_with_portfolio_input",
+    "is_unlisted",
+    "core_research_passed_min_3_questions",
+    "has_fact_base",
+    "core_research_passed_draft_allowed"
+  ],
+  "skills": [
+    {
+      "index": 1,
+      "name": "ashare-data",
+      "stage": "01-data-screen",
+      "spec_source": "skills/ashare-data.md",
+      "artifact_rules": [
+        {
+          "path": "01-数据与快筛/01-ashare-data.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "标的与口径",
+            "命令执行记录",
+            "来源与数据时间",
+            "警告与缺口"
+          ],
+          "audit_policy": "advisory"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "is_a_share",
+        "alternative": "financial-data"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": []
+    },
+    {
+      "index": 2,
+      "name": "financial-data",
+      "stage": "01-data-screen",
+      "spec_source": "skills/financial-data.md",
+      "artifact_rules": [
+        {
+          "path": "01-数据与快筛/02-financial-data.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "关键财务字段双源表",
+            "主体期间单位口径",
+            "独立来源判定",
+            "误差分级",
+            "计算重放表"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_dual_source_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "always_applicable",
+        "alternative": null
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": []
+    },
+    {
+      "index": 3,
+      "name": "quality-screen",
+      "stage": "01-data-screen",
+      "spec_source": "skills/quality-screen.md",
+      "artifact_rules": [
+        {
+          "path": "01-数据与快筛/03-quality-screen.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "七指标筛选表",
+            "豁免证据",
+            "金融行业口径",
+            "逐项结论"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "has_comparable_financial_history",
+        "alternative": "private-company-research"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": []
+    },
+    {
+      "index": 4,
+      "name": "investment-checklist",
+      "stage": "01-data-screen",
+      "spec_source": "skills/investment-checklist.md",
+      "artifact_rules": [
+        {
+          "path": "01-数据与快筛/04-investment-checklist.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "六关评分",
+            "镜子测试",
+            "快速否决清单",
+            "估值工具记录",
+            "最终结论",
+            "证伪条件"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_calculations",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "has_investable_price",
+        "alternative": "private-company-research"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/{company}-checklist-{date}.md",
+        "~/巴菲特Checklist-{company}.md"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "investment-research",
+      "stage": "02-company-earnings",
+      "spec_source": "skills/investment-research.md",
+      "artifact_rules": [
+        {
+          "path": "02-公司与财报/05-investment-research.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "信息丰富度评级",
+            "八步框架",
+            "估值区间",
+            "反面检验",
+            "AI置信度",
+            "投资确定性"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_dual_source_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "always_applicable",
+        "alternative": null
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "~/{company}投资研究报告.md",
+        "reports/{company}/{company}-research-{date}.md"
+      ]
+    },
+    {
+      "index": 6,
+      "name": "investment-team",
+      "stage": "02-company-earnings",
+      "spec_source": "skills/investment-team.md",
+      "artifact_rules": [
+        {
+          "path": "02-公司与财报/06-investment-team.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "business视角",
+            "financial视角",
+            "industry视角",
+            "risk视角",
+            "整合结论"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_role_runs",
+          "n": 4
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "min_independent_contexts_2",
+        "alternative": "investment-research"
+      },
+      "role_rule": {
+        "required_roles": [
+          "business",
+          "financial",
+          "industry",
+          "risk"
+        ],
+        "min_independent_contexts": 2,
+        "sequential_cap": "NOT_APPLICABLE_PASS"
+      },
+      "legacy_output_patterns": [
+        "~/{company}投资研究报告_{date}.md"
+      ]
+    },
+    {
+      "index": 7,
+      "name": "management-deep-dive",
+      "stage": "02-company-earnings",
+      "spec_source": "skills/management-deep-dive.md",
+      "artifact_rules": [
+        {
+          "path": "02-公司与财报/07-management-deep-dive.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "战略眼光",
+            "兑现记录",
+            "诚信评估",
+            "资本配置",
+            "治理结构",
+            "侧面验证",
+            "离任情景"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "identifiable_key_managers",
+        "alternative": "governance-gap-record"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/{company}-management-{date}.md",
+        "reports/{company}-management-{date}.md"
+      ]
+    },
+    {
+      "index": 8,
+      "name": "earnings-review",
+      "stage": "02-company-earnings",
+      "spec_source": "skills/earnings-review.md",
+      "artifact_rules": [
+        {
+          "path": "02-公司与财报/08-earnings-review.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "资料可得性",
+            "三表分析",
+            "MD&A",
+            "附注",
+            "历史与指引对比",
+            "抽检结果"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "has_primary_filing_for_period",
+        "alternative": "financial-summary-fallback"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}-earnings-{period}.md",
+        "reports/{company}/{company}-earnings-{period}.md"
+      ]
+    },
+    {
+      "index": 9,
+      "name": "earnings-team",
+      "stage": "02-company-earnings",
+      "spec_source": "skills/earnings-team.md",
+      "artifact_rules": [
+        {
+          "path": "02-公司与财报/09-earnings-team.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "四大师解读",
+            "编辑意见",
+            "读者评审",
+            "定稿",
+            "硬伤修订",
+            "差异记录"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_role_runs",
+          "n": 6
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "earnings_review_complete_and_min_2_contexts",
+        "alternative": "earnings-review"
+      },
+      "role_rule": {
+        "required_roles": [
+          "interpreter-duan",
+          "interpreter-buffett",
+          "interpreter-munger",
+          "interpreter-li",
+          "editor",
+          "reader"
+        ],
+        "min_independent_contexts": 2,
+        "sequential_cap": "NOT_APPLICABLE_PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/{company}-earnings-{period}.md",
+        "reports/{company}/"
+      ]
+    },
+    {
+      "index": 10,
+      "name": "industry-research",
+      "stage": "03-industry-opportunity",
+      "spec_source": "skills/industry-research.md",
+      "artifact_rules": [
+        {
+          "path": "03-行业与机会/10-industry-research.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "主业界定",
+            "产业链全景",
+            "全球公司扫描",
+            "头部四大师分析",
+            "行业风险",
+            "文明趋势"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "main_business_definable",
+        "alternative": null
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{industry}-industry-{date}.md",
+        "~/{industry}产业链投资研究报告.md"
+      ]
+    },
+    {
+      "index": 11,
+      "name": "industry-funnel",
+      "stage": "03-industry-opportunity",
+      "spec_source": "skills/industry-funnel.md",
+      "artifact_rules": [
+        {
+          "path": "03-行业与机会/11-industry-funnel.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "相关标的池",
+            "五硬指标粗筛",
+            "终选三家",
+            "目标去留记录"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "listed_and_main_industry_definable",
+        "alternative": "industry-research"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{industry}-funnel-{date}.md"
+      ]
+    },
+    {
+      "index": 12,
+      "name": "bottleneck-hunter",
+      "stage": "03-industry-opportunity",
+      "spec_source": "skills/bottleneck-hunter.md",
+      "artifact_rules": [
+        {
+          "path": "03-行业与机会/12-bottleneck-hunter.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "趋势验证",
+            "物理性",
+            "规模性",
+            "加速性",
+            "分层地图",
+            "瓶颈机会表",
+            "估值红黄绿灯",
+            "正反验证"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "physical_bottleneck_exists",
+        "alternative": "negative-acceptance"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/bottleneck-map/{company}-bottleneck-{date}.md",
+        "reports/bottleneck-map/{date}/",
+        "reports/bottleneck-map/{date}/HH-MM-标的代码1-标的代码2.md",
+        "reports/bottleneck-map/{date}/09-00-FORM-IBDN.md",
+        "reports/bottleneck-map/{date}/HH-MM-信号扫描.md",
+        "reports/bottleneck-map/{date}/14-00-信号扫描.md",
+        "reports/bottleneck-map/daily/{date}.md",
+        "reports/bottleneck-map/master-map.md",
+        "reports/bottleneck-map/watchlist.md"
+      ]
+    },
+    {
+      "index": 13,
+      "name": "news-pulse",
+      "stage": "03-industry-opportunity",
+      "spec_source": "skills/news-pulse.md",
+      "artifact_rules": [
+        {
+          "path": "03-行业与机会/13-news-pulse.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "公司侦察",
+            "监管侦察",
+            "行业侦察",
+            "情绪侦察",
+            "统一时间线",
+            "异动主因",
+            "事实与推断分离",
+            "论文重审触发"
+          ],
+          "audit_policy": "advisory"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "always_applicable",
+        "alternative": null
+      },
+      "role_rule": {
+        "required_roles": [
+          "company-scout",
+          "regulatory-scout",
+          "industry-scout",
+          "sentiment-scout"
+        ],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/{company}-news-{date}.md",
+        "reports/{company}/"
+      ]
+    },
+    {
+      "index": 14,
+      "name": "thesis-tracker",
+      "stage": "04-thesis-boundary",
+      "spec_source": "skills/thesis-tracker.md",
+      "artifact_rules": [
+        {
+          "path": "04-论文与组合/14-thesis-tracker.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "五问核心论文",
+            "关键假设",
+            "红线",
+            "估值锚",
+            "健康度评分",
+            "更新记录"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "always_applicable",
+        "alternative": null
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/{company}-thesis.md",
+        "reports/{company}-thesis.md"
+      ]
+    },
+    {
+      "index": 15,
+      "name": "thesis-drift",
+      "stage": "04-thesis-boundary",
+      "spec_source": "skills/thesis-drift.md",
+      "artifact_rules": [
+        {
+          "path": "04-论文与组合/15-thesis-drift.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "快照配对",
+            "证据归一",
+            "数值重放",
+            "漂移逐项判定"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_calculations",
+          "n": 1
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "has_two_pairable_snapshots",
+        "alternative": "thesis-tracker"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": []
+    },
+    {
+      "index": 16,
+      "name": "portfolio-review",
+      "stage": "04-thesis-boundary",
+      "spec_source": "skills/portfolio-review.md",
+      "artifact_rules": [
+        {
+          "path": "04-论文与组合/16-portfolio-review.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "集中度",
+            "相关性",
+            "机会成本",
+            "压力测试",
+            "调仓建议"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "private_run_with_portfolio_input",
+        "alternative": "negative-acceptance"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/portfolio-latest.md"
+      ]
+    },
+    {
+      "index": 17,
+      "name": "private-company-research",
+      "stage": "04-thesis-boundary",
+      "spec_source": "skills/private-company-research.md",
+      "artifact_rules": [
+        {
+          "path": "04-论文与组合/17-private-company-research.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "商业维度",
+            "财务维度",
+            "行业维度",
+            "治理维度",
+            "技术维度",
+            "替代数据维度",
+            "数据来源与置信度",
+            "推算方法"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_role_runs",
+          "n": 6
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "is_unlisted",
+        "alternative": "investment-research"
+      },
+      "role_rule": {
+        "required_roles": [
+          "business",
+          "financial",
+          "industry",
+          "governance",
+          "technology",
+          "alternative-data"
+        ],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/{company}-private-{date}.md"
+      ]
+    },
+    {
+      "index": 18,
+      "name": "deep-company-series",
+      "stage": "05-content",
+      "spec_source": "skills/deep-company-series.md",
+      "artifact_rules": [
+        {
+          "path": "05-内容生产/18-deep-company-series.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "系列篇目清单",
+            "跨篇一致性核查",
+            "七项事实核查"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "core_research_passed_min_3_questions",
+        "alternative": "negative-acceptance"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/{company}/《看懂{company}》-{date}/",
+        "reports/{company}/《看懂{company}》/0X-XX.md",
+        "reports/{company}/《看懂{company}》/"
+      ]
+    },
+    {
+      "index": 19,
+      "name": "dyp-ask",
+      "stage": "05-content",
+      "spec_source": "skills/dyp-ask.md",
+      "artifact_rules": [
+        {
+          "path": "05-内容生产/19-dyp-ask.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "方法模拟声明",
+            "生意",
+            "能力圈",
+            "管理层",
+            "价格",
+            "不为清单"
+          ],
+          "audit_policy": "advisory"
+        }
+      ],
+      "evidence_rules": [],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "has_fact_base",
+        "alternative": "negative-acceptance"
+      },
+      "role_rule": {
+        "required_roles": [],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": []
+    },
+    {
+      "index": 20,
+      "name": "wechat-article",
+      "stage": "05-content",
+      "spec_source": "skills/wechat-article.md",
+      "artifact_rules": [
+        {
+          "path": "05-内容生产/20-wechat-article.md",
+          "min_bytes": 800,
+          "required_sections": [
+            "数据截止日",
+            "直接来源",
+            "限制",
+            "仅供学习研究",
+            "初稿",
+            "编辑意见",
+            "读者意见",
+            "定稿",
+            "硬伤修订闭环"
+          ],
+          "audit_policy": "required"
+        }
+      ],
+      "evidence_rules": [
+        {
+          "kind": "min_role_runs",
+          "n": 3
+        }
+      ],
+      "domain_evidence_status": "IMPLEMENTED",
+      "applicability_rule": {
+        "predicate_id": "core_research_passed_draft_allowed",
+        "alternative": "negative-acceptance"
+      },
+      "role_rule": {
+        "required_roles": [
+          "author",
+          "editor",
+          "reader"
+        ],
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "legacy_output_patterns": [
+        "reports/",
+        "reports/AI产业研究/",
+        "reports/AI产业研究/公众号-{industry}-{date}.md",
+        "reports/{company}/",
+        "reports/{company}/{company}-公众号-{date}.md"
+      ]
+    }
+  ]
+}
