@@ -727,6 +727,29 @@ class TestJSONCrossCheck(_CLICase):
         self.assertTrue(env["errors"])
         self.assertNotIn("Traceback", proc.stderr)
 
+    def test_json_argparse_type_error_emits_one_error_json(self):
+        proc = self.run_cli(
+            "verify-market-cap", "--price", "bad-decimal", "--shares", "10",
+            "--reported", "100", "--json")
+        env = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(env["operation"], "verify-market-cap")
+        self.assertEqual(env["outcome"], "ERROR")
+        self.assertEqual(env["exit_code"], 2)
+        self.assertTrue(env["errors"])
+        self.assertEqual(proc.stderr, "")
+
+    def test_json_missing_required_arg_emits_one_error_json(self):
+        proc = self.run_cli(
+            "verify-market-cap", "--price", "10", "--shares", "10", "--json")
+        env = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(env["operation"], "verify-market-cap")
+        self.assertEqual(env["outcome"], "ERROR")
+        self.assertEqual(env["exit_code"], 2)
+        self.assertTrue(env["errors"])
+        self.assertEqual(proc.stderr, "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
   "registry_schema_version": 1,
   "manifest_schema_version": 1,
   "annotations_schema_version": 1,
-  "_comment": "全量公司分析 20 项业务工作契约的唯一机器真源 (v1.4 §6.2/§6.3)。Skill/gate/测试不得再硬编码 20 清单, 必须读本文件。Phase 1 只落结构与通用反空壳基线; 各项领域专属硬证据 (§6.4) 由 domain_evidence_status=PHASE2_PENDING 诚实标记, 不伪装已实现。legacy_output_patterns 是模板字符串 (占位符 {company}/{date}/{period}/{industry}), 禁止 glob 通配; init 时按公司名/as_of 实例化为精确 watchlist 候选 (§8.3)。",
+  "_comment": "全量公司分析 20 项业务工作契约的唯一机器真源 (v1.4 §6.2/§6.4)。Skill/gate/测试不得再硬编码 20 清单, 必须读本文件。domain_evidence_status=IMPLEMENTED 的每项都必须含至少一条 gate 可执行 evidence_rule；领域标题不能代替机器证据。legacy_output_patterns 是模板字符串 (占位符 {company}/{date}/{period}/{industry}), 禁止 glob 通配; init 时按公司名/as_of 实例化为精确 watchlist 候选 (§8.3)。",
   "stage_dirs": {
     "01-data-screen": "01-数据与快筛",
     "02-company-earnings": "02-公司与财报",
@@ -59,7 +59,16 @@
           "audit_policy": "advisory"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_command_operations",
+          "values": ["overview", "financials", "valuation", "history", "equity-history", "announcements", "signals"]
+        },
+        {
+          "kind": "min_command_receipts",
+          "n": 7
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "is_a_share",
@@ -96,6 +105,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": ["revenue"]
+        },
         {
           "kind": "min_dual_source_facts",
           "n": 1
@@ -139,7 +152,16 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": ["quality_metric_1", "quality_metric_2", "quality_metric_3", "quality_metric_4", "quality_metric_5", "quality_metric_6", "quality_metric_7"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 7
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "has_comparable_financial_history",
@@ -177,6 +199,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["checklist_final_decision"]
+        },
         {
           "kind": "min_calculations",
           "n": 1
@@ -227,6 +253,10 @@
       ],
       "evidence_rules": [
         {
+          "kind": "required_judgment_rule_ids",
+          "values": ["investment_thesis"]
+        },
+        {
           "kind": "min_dual_source_facts",
           "n": 1
         },
@@ -274,6 +304,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["contrarian_synthesis"]
+        },
         {
           "kind": "min_role_runs",
           "n": 4
@@ -323,7 +357,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["management_integrity"]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 4
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "identifiable_key_managers",
@@ -363,7 +410,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": ["income_statement", "balance_sheet", "cash_flow"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 3
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "has_primary_filing_for_period",
@@ -404,6 +464,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["earnings_editorial_review"]
+        },
         {
           "kind": "min_role_runs",
           "n": 6
@@ -455,7 +519,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["industry_scope"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "main_business_definable",
@@ -493,7 +570,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": ["funnel_universe", "funnel_top10", "funnel_final3"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 3
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "listed_and_main_industry_definable",
@@ -534,7 +624,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["physical_bottleneck"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "physical_bottleneck_exists",
@@ -583,7 +686,20 @@
           "audit_policy": "advisory"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["price_move_attribution"]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 4
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "always_applicable",
@@ -628,7 +744,16 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["core_thesis"]
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 5
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "always_applicable",
@@ -667,6 +792,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["snapshot_drift"]
+        },
         {
           "kind": "min_calculations",
           "n": 1
@@ -707,7 +836,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["portfolio_action"]
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "private_run_with_portfolio_input",
@@ -749,6 +891,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["private_company_conclusion"]
+        },
         {
           "kind": "min_role_runs",
           "n": 6
@@ -796,7 +942,20 @@
           "audit_policy": "required"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["series_question_1", "series_question_2", "series_question_3"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 7
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 3
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "core_research_passed_min_3_questions",
@@ -837,7 +996,20 @@
           "audit_policy": "advisory"
         }
       ],
-      "evidence_rules": [],
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["dyp_method_simulation"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
       "domain_evidence_status": "IMPLEMENTED",
       "applicability_rule": {
         "predicate_id": "has_fact_base",
@@ -874,6 +1046,10 @@
         }
       ],
       "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": ["publication_revision_closure"]
+        },
         {
           "kind": "min_role_runs",
           "n": 3

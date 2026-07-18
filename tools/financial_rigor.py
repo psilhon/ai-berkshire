@@ -754,8 +754,29 @@ def decimal_arg(text: str) -> Decimal:
     return d
 
 
+_JSON_OPERATIONS = {
+    "verify-market-cap", "verify-valuation", "cross-validate",
+    "benford", "calc", "three-scenario",
+}
+
+
+class JsonAwareArgumentParser(argparse.ArgumentParser):
+    """让 argparse 自身的参数错误也遵守 --json 唯一文档协议。"""
+
+    def error(self, message):
+        argv = sys.argv[1:]
+        if "--json" in argv:
+            operation = next((arg for arg in argv if arg in _JSON_OPERATIONS), "")
+            env = _envelope(
+                operation, {}, {}, "ERROR", 2,
+                errors=[{"code": "argparse_error", "message": message}])
+            print(json.dumps(env, ensure_ascii=False))
+            raise SystemExit(2)
+        super().error(message)
+
+
 def main():
-    parser = argparse.ArgumentParser(
+    parser = JsonAwareArgumentParser(
         description="Financial Rigor Toolkit — 金融数据严谨性验证工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -767,7 +788,8 @@ Examples:
   %(prog)s calc --expr '510 * 9.11e9'
         """)
 
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command",
+                                parser_class=JsonAwareArgumentParser)
 
     # verify-market-cap
     mc = sub.add_parser("verify-market-cap", help="验算市值 = 股价 × 总股本")

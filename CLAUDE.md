@@ -28,10 +28,20 @@ skills/*.md（Claude Code slash command 源文件，权威）
 - **不要手改生成的 `codex-skills/*/SKILL.md`**；仅 Codex-only 手写包例外（需明确标注，且不得存在同名 `skills/*.md`）
 - Codex 侧行为规则见 `AGENTS.md`（本文件管 Claude Code，AGENTS.md 管 Codex，改流程时两边同步）
 
+## 架构：全量公司分析管线（full-company-analysis）
+
+单一公司端到端投研的编排 + 验收体系，三个文件各司其职：
+
+- `tools/full_analysis_contract.json` — 20 项业务契约注册表，是契约集合/产物路径/谓词/角色要求的**唯一机器真源**；任何文档（含编排 skill 本身）都不维护第二份清单
+- `skills/full-company-analysis.md` — 总控编排层，只调度现有业务 skill 不自己做研究；**Phase 2 完成前仅限内部开发调用**，不得对用户宣称"全量分析可用"
+- `tools/full_analysis_gate.py` — 确定性验收器，生命周期：`init` → 每项 `begin-skill`/`finish-skill` → 每层 `checkpoint` → `set-industry`/`set-review-mode` → `finalize`/`summary`；`contracts` 子命令输出 20 项概览
+
+运行产物按可见性落盘：private（默认）→ `local/筛选公司/<公司>/全量分析/<run_id>/`；public → `筛选公司/<公司>/全量分析/<run_id>/`。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
+
 ## 常用命令
 
 ```bash
-# 统一本地检查（单测 + 生成物同步校验 + 报告索引校验）——改 tools/ 或 skills/ 后必跑
+# 统一本地检查（单测 + 生成物同步校验 + 报告索引校验 + 全量分析注册表校验）——改 tools/ 或 skills/ 后必跑
 # CI（.github/workflows/check.yml）跑的就是同一个脚本，本地过 = CI 过
 bash scripts/check.sh
 
@@ -41,6 +51,7 @@ python3 -m unittest tests.test_financial_rigor
 python3 -m unittest tests.test_report_audit.TestVerdictFailClosed -v
 
 # 精确金融计算（Decimal 无浮点漂移；市值/估值/多源交叉/Benford）
+# 各子命令支持 --json 结构化输出（语义重放协议，字段见 tools/financial_rigor_result_schema.json）
 python3 tools/financial_rigor.py verify-market-cap --price 510 --shares 9.11e9 --reported 4.65e12 --currency HKD
 python3 tools/financial_rigor.py calc --expr '510 * 9.11e9'
 
@@ -97,6 +108,7 @@ docs/            — ROADMAP 与专题文档
 | /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
 | /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `reports/bottleneck-map/` |
 | /portfolio-review | `portfolio-latest.md`（持续更新） | 根目录 |
+| /full-company-analysis | `全量分析/<run_id>/` 运行目录（路径由 gate 生成，不接受自定义） | private→`local/筛选公司/{公司名}/`；public→`筛选公司/{公司名}/` |
 
 ## 投研分析核心原则（最高优先级）
 

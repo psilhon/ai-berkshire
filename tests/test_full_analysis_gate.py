@@ -36,11 +36,34 @@ SECTIONS = ["数据截止日", "直接来源", "限制", "仅供学习研究"]
 
 ARTIFACT_TEXT = (
     "# 合成报告\n\n"
-    "数据截止日: 2026-07-17\n"
+    "数据截止日: synthetic-cutoff\n"
     "直接来源: 合成测试数据源A; 合成测试数据源B\n"
     "限制: 本文件为单测合成产物\n"
     "仅供学习研究, 不构成投资建议。\n"
+    "营业收入: 100\n"
+    "净利润: 20\n"
+    "总资产: 300\n"
 )
+
+
+def audit_record(artifact, verdict="PASS"):
+    reported = {1: "100", 2: "20", 3: "300"}
+    results = []
+    for point_id, value in reported.items():
+        if verdict == "FAIL":
+            first = second = str(int(value) * 2)
+        else:
+            first = value
+            second = value if verdict == "PASS" else None
+        results.append({
+            "id": point_id,
+            "fetched_value": first,
+            "fetched_source": "source-a",
+            "fetched_value2": second,
+            "fetched_source2": "source-b" if second is not None else "",
+        })
+    return {"artifact": artifact, "ratio": 0.15, "seed": 42,
+            "results": results}
 
 
 def artifact_path(i):
@@ -207,6 +230,14 @@ class GateWorkspace:
     def summary(self, run_root):
         return self.gate("summary", "--run-root", run_root)
 
+    def set_review_mode(self, run_root, mode):
+        return self.gate("set-review-mode", "--run-root", run_root,
+                         "--mode", mode)
+
+    def set_industry(self, run_root, data):
+        return self.gate("set-industry", "--run-root", run_root,
+                         "--industry-file", self.write_evidence(data))
+
 
 def out(cp):
     return (cp.stdout or "") + (cp.stderr or "")
@@ -258,22 +289,38 @@ class TestContractsCommand(GateTestCase):
 # ---------------------------------------------------------------------------
 class TestInit(GateTestCase):
 
-    def test_outside_git_exit_2(self):
+    def test_non_git_workspace_defaults_to_private_and_succeeds(self):
         ws = self.make_ws(git=False)
-        cp = ws.init()
-        self.assertEqual(cp.returncode, 2, out(cp))
+        cp = ws.gate("init", "--registry", ws.registry_path,
+                     "--company", "评测公司", "--platform", "claude_code",
+                     "--as-of", "2026-07-17", "--repo-root", ws.repo)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        data = json.loads(cp.stdout)
+        run_root = Path(data["run_root"])
+        rel = run_root.resolve().relative_to(ws.repo.resolve())
+        self.assertEqual(rel.parts[:2], ("local", "筛选公司"))
+        run = ws.manifest(run_root)["run"]
+        self.assertEqual(run["visibility"], "private")
+        self.assertEqual(run["workspace_audit_mode"], "none")
 
-    def test_missing_visibility_exit_2(self):
+    def test_missing_visibility_defaults_to_private(self):
         ws = self.make_ws()
         cp = ws.gate("init", "--registry", ws.registry_path,
                      "--company", "评测公司", "--platform", "claude_code",
                      "--as-of", "2026-07-17", "--repo-root", ws.repo)
-        self.assertEqual(cp.returncode, 2, out(cp))
+        self.assertEqual(cp.returncode, 0, out(cp))
+        data = json.loads(cp.stdout)
+        run = ws.manifest(data["run_root"])["run"]
+        self.assertEqual(run["visibility"], "private")
+        self.assertEqual(run["workspace_audit_mode"], "git")
 
-    def test_private_not_ignored_exit_1(self):
+    def test_private_output_does_not_require_gitignore(self):
         ws = self.make_ws(gitignore="")  # /local/ 未被忽略
         cp = ws.init()
-        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertEqual(cp.returncode, 0, out(cp))
+        data = json.loads(cp.stdout)
+        self.assertEqual(
+            ws.manifest(data["run_root"])["run"]["visibility"], "private")
 
     def test_public_local_path_shape_rejected(self):
         ws = self.make_ws()
@@ -336,7 +383,7 @@ class TestInit(GateTestCase):
         self.assertIsNone(run["completion_status"])
         self.assertIsNone(run["validation_result"])
         self.assertEqual(run["assurance_level"], "SINGLE_CONTEXT")
-        self.assertIsNone(run["review_mode"])
+        self.assertEqual(run["review_mode"], "self_review")
         self.assertEqual(run["run_root"], rel.as_posix())
         comp = m["company"]
         self.assertEqual(comp["name"], "评测公司")
@@ -355,7 +402,7 @@ class TestInit(GateTestCase):
                 (ws.repo / f"skills/sk{i:02d}.md").read_bytes()).hexdigest()
             self.assertEqual(sk["spec_sha256"], spec_sha)
             for lst in ("artifacts", "facts", "calculations", "judgments",
-                        "role_runs", "limitations", "audit", "attempts",
+                        "role_runs", "command_receipts", "limitations", "audit", "attempts",
                         "violations"):
                 self.assertEqual(sk[lst], [])
         self.assertEqual(m["annotations"], {})
@@ -540,7 +587,7 @@ class TestSkillStateMachine(GateTestCase):
         self.assertEqual(self.ws.begin(self.run_root, "sk01").returncode, 0)
         art = artifact_path(1)
         self.ws.write_artifact(self.run_root, art)
-        ev = {"judgments": [{"judgment_id": "j1", "text": "观点: 合成判断"}],
+        ev = {"judgments": [_judgment("j1")],
               "limitations": [{"code": "synthetic_note", "note": "测试"}]}
         cp = self.ws.finish(self.run_root, "sk01", artifacts=[art],
                             evidence=ev)
@@ -637,6 +684,8 @@ class TestFullFlow(GateTestCase):
         self.assertEqual(res["completion_status"], "COMPLETE")
         self.assertEqual(res["validation_result"], "PASS")
         self.assertEqual(res["assurance_level"], "SINGLE_CONTEXT")
+        self.assertEqual(res["review_mode"], "self_review")
+        self.assertIsNone(res["industry"])
         self.assertEqual(len(res["matrix"]), 20)
         self.assertTrue(all(r["computed_status"] == "PASS"
                             for r in res["matrix"]))
@@ -658,14 +707,113 @@ class TestFullFlow(GateTestCase):
         self.assertIn("completion_status=COMPLETE", cp.stdout)
         self.assertIn("validation_result=PASS\n", cp.stdout + "\n")
         self.assertIn("assurance_level=SINGLE_CONTEXT", cp.stdout)
+        self.assertIn("review_mode=self_review", cp.stdout)
+        self.assertIn("industry=null", cp.stdout)
         rows = re.findall(r"(?m)^\s*\d{2}\s+sk\d{2}\s+", cp.stdout)
         self.assertEqual(len(rows), 20)
+
+    def test_non_git_full_flow_completes_with_explicit_audit_limitation(self):
+        ws = self.make_ws(git=False)
+        cp = ws.gate("init", "--registry", ws.registry_path,
+                     "--company", "评测公司", "--platform", "claude_code",
+                     "--as-of", "2026-07-17", "--repo-root", ws.repo)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        run_root = Path(json.loads(cp.stdout)["run_root"])
+        ws.complete_all(run_root)
+
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        result = read_result(run_root)
+        self.assertEqual(result["completion_status"], "COMPLETE")
+        self.assertEqual(result["validation_result"],
+                         "PASS_WITH_LIMITATIONS")
+        self.assertEqual(result["workspace_audit_mode"], "none")
+        self.assertTrue(any("Git" in cap for cap in result["run_caps"]),
+                        result["run_caps"])
+
+        cp = ws.summary(run_root)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        self.assertIn("workspace_audit_mode=none", cp.stdout)
+        self.assertIn("运行级限制", cp.stdout)
 
     def test_summary_without_result_file_exit_2(self):
         ws = self.make_ws()
         run_root, _ = ws.init_ok()
         cp = ws.summary(run_root)
         self.assertEqual(cp.returncode, 2, out(cp))
+
+
+class TestRunContextCommands(GateTestCase):
+
+    def test_independent_review_mode_requires_recorded_independent_context(self):
+        ws = self.make_ws()
+        run_root, _ = ws.init_ok()
+        cp = ws.set_review_mode(run_root, "independent_context")
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertEqual(ws.manifest(run_root)["run"]["review_mode"],
+                         "self_review")
+
+    def test_user_review_mode_is_recorded_by_gate(self):
+        ws = self.make_ws()
+        run_root, _ = ws.init_ok()
+        cp = ws.set_review_mode(run_root, "user")
+        self.assertEqual(cp.returncode, 0, out(cp))
+        self.assertEqual(ws.manifest(run_root)["run"]["review_mode"], "user")
+
+    def _run_with_industry_fact(self):
+        ws = self.make_ws()
+        run_root, _ = ws.init_ok()
+        ws.complete_skill(
+            run_root, 1,
+            evidence={"facts": [_fact(
+                "f-industry", [_src("年报", "filing-chain", "100")])]})
+        return ws, run_root
+
+    def test_set_industry_computes_primary_scope_at_50_percent(self):
+        ws, run_root = self._run_with_industry_fact()
+        cp = ws.set_industry(run_root, {
+            "basis": "latest_fy_revenue_or_operating_income",
+            "period": "2025FY",
+            "source_fact_ids": ["f-industry"],
+            "segments": [
+                {"label": "银行", "revenue_share_pct": "60"},
+                {"label": "财富管理", "revenue_share_pct": "40"},
+            ],
+        })
+        self.assertEqual(cp.returncode, 0, out(cp))
+        industry = ws.manifest(run_root)["company"]["industry"]
+        self.assertEqual(industry["scope_type"], "primary")
+        self.assertEqual(industry["labels"], ["银行"])
+        self.assertEqual(industry["source_fact_ids"], ["f-industry"])
+
+    def test_set_industry_computes_multi_segment_to_80_percent(self):
+        ws, run_root = self._run_with_industry_fact()
+        cp = ws.set_industry(run_root, {
+            "basis": "latest_fy_revenue_or_operating_income",
+            "period": "2025FY",
+            "source_fact_ids": ["f-industry"],
+            "segments": [
+                {"label": "板块A", "revenue_share_pct": "45"},
+                {"label": "板块B", "revenue_share_pct": "35"},
+                {"label": "板块C", "revenue_share_pct": "20"},
+            ],
+        })
+        self.assertEqual(cp.returncode, 0, out(cp))
+        industry = ws.manifest(run_root)["company"]["industry"]
+        self.assertEqual(industry["scope_type"], "multi_segment")
+        self.assertEqual(industry["labels"], ["板块A", "板块B"])
+
+    def test_set_industry_rejects_dangling_source_fact(self):
+        ws = self.make_ws()
+        run_root, _ = ws.init_ok()
+        cp = ws.set_industry(run_root, {
+            "basis": "latest_fy_revenue_or_operating_income",
+            "period": "2025FY",
+            "source_fact_ids": ["missing-fact"],
+            "segments": [{"label": "银行", "revenue_share_pct": "100"}],
+        })
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIsNone(ws.manifest(run_root)["company"]["industry"])
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +831,30 @@ def _fact(fid, sources, value="100", tol="2"):
     return {"fact_id": fid, "field": "revenue", "subject": "评测公司",
             "period": "2025FY", "unit": "CNY", "value": value,
             "tolerance_pct": tol, "sources": sources}
+
+
+def _judgment(jid, rule_id="synthetic-rule"):
+    return {
+        "judgment_id": jid,
+        "rule_id": rule_id,
+        "conclusion": "合成判断",
+        "confidence": "medium",
+        "falsification_condition": "若关键指标恶化则证伪",
+        "fact_ids": [],
+        "calculation_ids": [],
+        "artifact_sections": ["合成章节"],
+    }
+
+
+def _role(role, artifact=None, context_id="ctx-1"):
+    return {
+        "role": role,
+        "context_id": context_id,
+        "execution_mode": "synthetic_context",
+        "artifact_paths": [artifact or artifact_path(1)],
+        "started_at": "2026-07-17T12:00:00+08:00",
+        "finished_at": "2026-07-17T12:00:01+08:00",
+    }
 
 
 class TestFactClassification(unittest.TestCase):
@@ -737,6 +909,15 @@ class TestFactClassification(unittest.TestCase):
     def test_period_mismatch_source_excluded(self):
         self.assertEqual(self.status("f_period_mismatch"), "SINGLE_SOURCE")
 
+    def test_missing_fact_scope_cannot_be_dual_source(self):
+        fact = {
+            "fact_id": "f-no-scope", "field": "revenue", "value": "100",
+            "tolerance_pct": "2",
+            "sources": [_src("巨潮", "chain-a", "100"),
+                        _src("东财", "chain-b", "100")],
+        }
+        self.assertNotEqual(gate_mod.classify_fact(fact), "DUAL_SOURCE")
+
     def test_conflict_fact_fails_skill(self):
         self.assertEqual(self.finalize_cp.returncode, 1,
                          out(self.finalize_cp))
@@ -761,12 +942,14 @@ class TestCalcReplay(GateTestCase):
             {"calculation_id": "c-calc", "type": "calc",
              "args": {"expr": "3*4+1"},
              "expected": {"outcome": "PASS", "is_pass": True, "exit_code": 0,
-                          "result": {"value": "13"}}},
+                          "result": {"expression": "3*4+1", "value": "13"}}},
             {"calculation_id": "c-mcap", "type": "verify-market-cap",
              "args": {"price": "10", "shares": "100", "reported": "1000",
                       "currency": "CNY"},
              "expected": {"outcome": "PASS", "is_pass": True, "exit_code": 0,
-                          "result": {"band": "PASS", "deviation_pct": "0"}}},
+                          "result": {"calculated_market_cap": "1000",
+                                     "reported_market_cap": "1000",
+                                     "band": "PASS", "deviation_pct": "0"}}},
         ]
         ws, run_root, cp = self._flow(calcs)
         self.assertEqual(cp.returncode, 0, out(cp))
@@ -777,7 +960,8 @@ class TestCalcReplay(GateTestCase):
         calcs = [{"calculation_id": "c-bad", "type": "calc",
                   "args": {"expr": "1+1"},
                   "expected": {"outcome": "PASS", "is_pass": True,
-                               "exit_code": 0, "result": {"value": "3"}}}]
+                               "exit_code": 0,
+                               "result": {"expression": "1+1", "value": "3"}}}]
         ws, run_root, cp = self._flow(calcs)
         self.assertEqual(cp.returncode, 1, out(cp))
         res = read_result(run_root)
@@ -796,6 +980,30 @@ class TestCalcReplay(GateTestCase):
         res = read_result(run_root)
         self.assertEqual(res["matrix"][0]["computed_status"], "FAIL")
 
+    def test_empty_expected_cannot_validate_replay(self):
+        calcs = [{"calculation_id": "c-empty", "type": "calc",
+                  "args": {"expr": "1/0"}, "expected": {}}]
+        ws, run_root, cp = self._flow(calcs)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        row = read_result(run_root)["matrix"][0]
+        self.assertEqual(row["computed_status"], "FAIL")
+        self.assertTrue(any("expected" in e for e in row["errors"]),
+                        row["errors"])
+
+    def test_error_outcome_cannot_count_as_successful_replay(self):
+        calcs = [{
+            "calculation_id": "c-divzero", "type": "calc",
+            "args": {"expr": "1/0"},
+            "expected": {"outcome": "ERROR", "is_pass": None,
+                         "exit_code": 1,
+                         "result": {"expression": "1/0", "value": None}},
+        }]
+        ws, run_root, cp = self._flow(calcs)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        row = read_result(run_root)["matrix"][0]
+        self.assertEqual(row["computed_status"], "FAIL")
+        self.assertTrue(any("PASS" in e for e in row["errors"]), row["errors"])
+
 
 # ---------------------------------------------------------------------------
 # #11 git 越界侦测 + watchlist 即时比对
@@ -810,6 +1018,18 @@ class TestBoundaryDetection(GateTestCase):
         ws.complete_all(run_root)
         cp = ws.finalize(run_root)
         self.assertEqual(cp.returncode, 0, out(cp))
+
+    def test_preexisting_untracked_file_content_change_is_boundary_failure(self):
+        ws = self.make_ws()
+        dirty = ws.repo / "既有脏文件.md"
+        dirty.write_text("init 之前的内容\n", encoding="utf-8")
+        run_root, _ = ws.init_ok()
+        ws.complete_all(run_root)
+        dirty.write_text("init 之后被改写\n", encoding="utf-8")
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("既有脏文件.md", out(cp))
+        self.assertIn("内容", out(cp))
 
     def test_new_repo_file_and_index_change_boundary_fail(self):
         ws = self.make_ws()
@@ -846,6 +1066,57 @@ class TestBoundaryDetection(GateTestCase):
         self.assertTrue(sk02["violations"])
         self.assertEqual(sk02["violations"][0]["type"], "watchlist_change")
 
+    def test_parameterized_home_watch_ignores_unrelated_activity(self):
+        # 真跑回归: 参数化 legacy 模式 (占位符在首段) 退化到监视 HOME 根时,
+        # 不得因无关文件 (缓存/会话/历史) 触碰 HOME 改变目录 mtime 而误 BLOCK;
+        # 只有新增匹配该 skill 输出正则的文件才算越界。活机器上 HOME 一直在变。
+        legacy = {1: ["~/{industry}产业链投资研究报告.md"]}
+        ws = self.make_ws(registry=make_registry(legacy=legacy))
+        run_root, _ = ws.init_ok()
+        # 无关活动: HOME 下新建不匹配正则的文件 (模拟缓存/会话写)
+        (ws.home / ".unrelated_cache_20260718").write_text(
+            "x\n", encoding="utf-8")
+        (ws.home / "随手草稿.txt").write_text("y\n", encoding="utf-8")
+        cp = ws.begin(run_root, "sk02")
+        self.assertEqual(cp.returncode, 0, out(cp))
+        m = ws.manifest(run_root)
+        self.assertEqual(m["skills"][1]["execution_state"], "RUNNING")
+        self.assertEqual(m["skills"][1]["violations"], [])
+
+    def test_parameterized_home_watch_blocks_matching_legacy_write(self):
+        # 回归对偶: 真正写出匹配 skill 输出正则的文件 → 必须侦测并 BLOCK。
+        legacy = {1: ["~/{industry}产业链投资研究报告.md"]}
+        ws = self.make_ws(registry=make_registry(legacy=legacy))
+        run_root, _ = ws.init_ok()
+        (ws.home / "新能源产业链投资研究报告.md").write_text(
+            "越界的行业研究旧习惯输出\n", encoding="utf-8")
+        cp = ws.begin(run_root, "sk02")
+        self.assertEqual(cp.returncode, 1, out(cp))
+        m = ws.manifest(run_root)
+        self.assertEqual(m["skills"][1]["execution_state"], "BLOCKED")
+        self.assertTrue(m["skills"][1]["violations"])
+        self.assertEqual(m["skills"][1]["violations"][0]["type"],
+                         "watchlist_change")
+
+    def test_parameterized_reports_watch_ignores_index_rebuild(self):
+        # 回归: reports/ 参数化项不得因 INDEX.md / 无关报告变化误报
+        # (build_report_index --check 场景); 只有匹配 {industry}-industry 才算。
+        legacy = {1: ["reports/{industry}-industry-{date}.md"]}
+        ws = self.make_ws(registry=make_registry(legacy=legacy))
+        run_root, _ = ws.init_ok()
+        reports = ws.repo / "reports"
+        reports.mkdir(exist_ok=True)
+        (reports / "INDEX.md").write_text("# 索引\n无关重建\n", encoding="utf-8")
+        (reports / "别的公司-research-20260718.md").write_text(
+            "无关报告\n", encoding="utf-8")
+        cp = ws.begin(run_root, "sk02")
+        self.assertEqual(cp.returncode, 0, out(cp))
+        # 写出匹配 {industry}-industry-{date} 的文件 → 应 BLOCK
+        (reports / "证券-industry-20260717.md").write_text(
+            "越界行业报告\n", encoding="utf-8")
+        cp2 = ws.begin(run_root, "sk03")
+        self.assertEqual(cp2.returncode, 1, out(cp2))
+
 
 # ---------------------------------------------------------------------------
 # #14 审计策略 + 隐私扫描
@@ -862,8 +1133,7 @@ class TestAuditAndPrivacy(GateTestCase):
 
     def test_required_insufficient_fail(self):
         ws, run_root, cp = self._flow(
-            "required", [{"artifact": artifact_path(1),
-                          "verdict": "INSUFFICIENT", "sample_count": 3}])
+            "required", [audit_record(artifact_path(1), "INSUFFICIENT")])
         self.assertEqual(cp.returncode, 1, out(cp))
         self.assertEqual(read_result(run_root)["matrix"][0]["computed_status"],
                          "FAIL")
@@ -876,21 +1146,43 @@ class TestAuditAndPrivacy(GateTestCase):
 
     def test_advisory_insufficient_caps_pwl(self):
         ws, run_root, cp = self._flow(
-            "advisory", [{"artifact": artifact_path(1),
-                          "verdict": "INSUFFICIENT", "sample_count": 3}])
+            "advisory", [audit_record(artifact_path(1), "INSUFFICIENT")])
         self.assertEqual(cp.returncode, 0, out(cp))
         res = read_result(run_root)
         self.assertEqual(res["matrix"][0]["computed_status"],
                          "PASS_WITH_LIMITATIONS")
         self.assertEqual(res["validation_result"], "PASS_WITH_LIMITATIONS")
 
-    def test_zero_sample_pass_verdict_fail(self):
+    def test_missing_sample_results_fail(self):
+        record = audit_record(artifact_path(1))
+        record["results"] = []
         ws, run_root, cp = self._flow(
-            "advisory", [{"artifact": artifact_path(1),
-                          "verdict": "PASS", "sample_count": 0}])
+            "advisory", [record])
         self.assertEqual(cp.returncode, 1, out(cp))
         self.assertEqual(read_result(run_root)["matrix"][0]["computed_status"],
                          "FAIL")
+
+    def test_required_audit_is_recomputed_from_artifact_and_passes(self):
+        ws, run_root, cp = self._flow(
+            "required", [audit_record(artifact_path(1), "PASS")])
+        self.assertEqual(cp.returncode, 0, out(cp))
+        manifest = ws.manifest(run_root)
+        record = manifest["skills"][0]["audit"][0]
+        self.assertEqual(record["computed_verdict"], "PASS")
+        self.assertEqual(record["computed_sample_count"], 3)
+
+    def test_caller_self_reported_required_pass_is_rejected(self):
+        ws = self.make_ws(registry=make_registry(audit_policies={1: "required"}))
+        run_root, _ = ws.init_ok()
+        ws.complete_all(run_root, skip=(1,))
+        self.assertEqual(ws.begin(run_root, "sk01").returncode, 0)
+        art = artifact_path(1)
+        ws.write_artifact(run_root, art)
+        cp = ws.finish(
+            run_root, "sk01", artifacts=[art],
+            evidence={"audit": [{"artifact": art, "verdict": "PASS",
+                                  "sample_count": 1}]})
+        self.assertEqual(cp.returncode, 2, out(cp))
 
     def test_privacy_secret_fail_without_leaking_value(self):
         ws = self.make_ws()
@@ -948,6 +1240,7 @@ class TestEvidenceRules(GateTestCase):
                                 {"facts": facts})
         self.assertEqual(cp.returncode, 0, out(cp))
 
+
     def test_min_dual_source_facts_unmet_fails(self):
         # 单源事实不满足 min_dual_source_facts
         ws, rr, cp = self._flow(
@@ -970,15 +1263,54 @@ class TestEvidenceRules(GateTestCase):
         # 有判断但无证伪条件
         ws, rr, cp = self._flow(
             [{"kind": "min_judgments_with_falsification", "n": 1}],
-            {"judgments": [{"judgment_id": "j1", "text": "观点"}]})
+            {"judgments": [{**_judgment("j1"),
+                             "falsification_condition": ""}]})
         self.assertEqual(cp.returncode, 1, out(cp))
 
     def test_min_judgments_with_falsification_met_passes(self):
         ws, rr, cp = self._flow(
             [{"kind": "min_judgments_with_falsification", "n": 1}],
-            {"judgments": [{"judgment_id": "j1",
-                            "falsification_condition": "若 ROE < 15% 则证伪"}]})
+            {"judgments": [_judgment("j1")]})
         self.assertEqual(cp.returncode, 0, out(cp))
+
+
+class TestNotApplicableEvidence(GateTestCase):
+
+    def _finish_fake_na(self, *, fact_ids):
+        ws = self.make_ws()
+        run_root, _ = ws.init_ok()
+        ws.complete_all(run_root, skip=(1,))
+        self.assertEqual(ws.begin(run_root, "sk01").returncode, 0)
+        fact = _fact("f1", [_src("巨潮", "chain-a", "100")])
+        evidence = {
+            "facts": [fact],
+            "limitations": [{
+                "code": "not_applicable",
+                "predicate_id": "always_applicable",
+                "input_facts": fact_ids,
+                "alternative": None,
+            }],
+        }
+        cp = ws.finish(run_root, "sk01", evidence=evidence)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        neg = run_root / "06-负向验收" / "01-sk01.md"
+        neg.write_text(
+            "# 负向验收\n\npredicate_id: always_applicable\n"
+            f"input_facts: {', '.join(fact_ids)}\n",
+            encoding="utf-8")
+        return ws, run_root, ws.finalize(run_root)
+
+    def test_always_applicable_cannot_be_marked_not_applicable(self):
+        ws, run_root, cp = self._finish_fake_na(fact_ids=["f1"])
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertEqual(read_result(run_root)["matrix"][0]["computed_status"],
+                         "FAIL")
+
+    def test_not_applicable_rejects_dangling_input_fact_id(self):
+        ws, run_root, cp = self._finish_fake_na(fact_ids=["missing-fact"])
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertEqual(read_result(run_root)["matrix"][0]["computed_status"],
+                         "FAIL")
 
 
 # ---------------------------------------------------------------------------
@@ -1066,4 +1398,3 @@ class TestLocksAndResume(GateTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

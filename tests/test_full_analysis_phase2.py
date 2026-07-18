@@ -25,7 +25,8 @@ REPO = Path(__file__).resolve().parents[1]
 # 复用同目录 gate 单测的 fixtures (GateWorkspace / _fact / _src / out / read_result)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_full_analysis_gate import (  # noqa: E402
-    GateWorkspace, _fact, _src, out, read_result)
+    GateWorkspace, _fact, _judgment, _role, _src, audit_record, out,
+    read_result)
 
 CONTRACT = REPO / "tools" / "full_analysis_contract.json"
 REGISTRY = json.loads(CONTRACT.read_text(encoding="utf-8"))
@@ -38,6 +39,10 @@ KIND_KEY = {
     "min_calculations": "calculations",
     "min_judgments_with_falsification": "judgments",
     "min_role_runs": "role_runs",
+    "min_command_receipts": "command_receipts",
+    "required_fact_fields": "facts",
+    "required_judgment_rule_ids": "judgments",
+    "required_command_operations": "command_receipts",
 }
 
 
@@ -79,6 +84,7 @@ def build_text(sections, min_bytes):
     for s in sections:
         lines.append(f"## {s}")
         lines.append("placeholder body line for section presence, ascii only.")
+    lines.extend(["营业收入: 100", "净利润: 20", "总资产: 300"])
     body = "\n".join(lines) + "\n"
     # min_bytes 是字节数, 用纯 ASCII 填充补足 (中文章节字符串是文本中唯一的多字节内容)
     while len(body.encode("utf-8")) < min_bytes:
@@ -90,7 +96,7 @@ def build_text(sections, min_bytes):
 # GREEN evidence: 逐条满足 evidence_rules + 必需角色 + 审计策略
 # ---------------------------------------------------------------------------
 def green_evidence(item):
-    facts, calcs, judgments, role_runs = [], [], [], []
+    facts, calcs, judgments, role_runs, command_receipts = [], [], [], [], []
     for i, rule in enumerate(item.get("evidence_rules", [])):
         kind = rule["kind"]
         n = rule.get("n", 1)
@@ -107,15 +113,50 @@ def green_evidence(item):
                     "calculation_id": f"c{i}_{k}", "type": "calc",
                     "args": {"expr": "1+1"},
                     "expected": {"outcome": "PASS", "is_pass": True,
-                                 "exit_code": 0, "result": {"value": "2"}}})
+                                 "exit_code": 0,
+                                 "result": {"expression": "1+1", "value": "2"}}})
             elif kind == "min_judgments_with_falsification":
-                judgments.append({"judgment_id": f"j{i}_{k}",
-                                  "falsification_condition": "若指标恶化则证伪"})
+                judgments.append(_judgment(f"j{i}_{k}"))
             elif kind == "min_role_runs":
-                role_runs.append({"role": f"r{i}_{k}"})
+                role_runs.append(_role(
+                    f"r{i}_{k}", artifact_rule(item)["path"],
+                    context_id=f"ctx-{i}-{k}"))
+            elif kind == "min_command_receipts":
+                command_receipts.append({
+                    "command_id": f"cmd{i}_{k}",
+                    "operation": f"synthetic-operation-{k}",
+                    "argv": ["synthetic-tool", f"operation-{k}"],
+                    "exit_code": 0,
+                    "started_at": "2026-07-17T12:00:00+08:00",
+                    "finished_at": "2026-07-17T12:00:01+08:00",
+                    "sources": ["synthetic-source-a", "synthetic-source-b"],
+                    "warnings": [],
+                })
+        if kind == "required_fact_fields":
+            for k, field in enumerate(rule["values"]):
+                fact = _fact(f"fr{i}_{k}",
+                             [_src("巨潮", f"field-chain-{i}-{k}", "100")])
+                fact["field"] = field
+                facts.append(fact)
+        elif kind == "required_judgment_rule_ids":
+            for k, rule_id in enumerate(rule["values"]):
+                judgments.append(_judgment(f"jr{i}_{k}", rule_id=rule_id))
+        elif kind == "required_command_operations":
+            for k, operation in enumerate(rule["values"]):
+                command_receipts.append({
+                    "command_id": f"required-cmd{i}_{k}",
+                    "operation": operation,
+                    "argv": ["synthetic-tool", operation],
+                    "exit_code": 0,
+                    "started_at": "2026-07-17T12:00:00+08:00",
+                    "finished_at": "2026-07-17T12:00:01+08:00",
+                    "sources": ["synthetic-source-a", "synthetic-source-b"],
+                    "warnings": [],
+                })
     # 必需角色必须按名字出现
     for role in item.get("role_rule", {}).get("required_roles", []):
-        role_runs.append({"role": role})
+        role_runs.append(_role(role, artifact_rule(item)["path"],
+                               context_id=f"required-{role}"))
     ev = {}
     if facts:
         ev["facts"] = facts
@@ -125,10 +166,11 @@ def green_evidence(item):
         ev["judgments"] = judgments
     if role_runs:
         ev["role_runs"] = role_runs
+    if command_receipts:
+        ev["command_receipts"] = command_receipts
     policy = artifact_rule(item).get("audit_policy", "none")
     if policy in ("required", "advisory"):
-        ev["audit"] = [{"artifact": artifact_rule(item)["path"],
-                        "verdict": "PASS", "sample_count": 5}]
+        ev["audit"] = [audit_record(artifact_rule(item)["path"])]
     return ev
 
 

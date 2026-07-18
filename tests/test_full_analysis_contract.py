@@ -14,6 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 VALIDATOR = REPO / "scripts" / "check-full-analysis-contract.py"
+ORCHESTRATOR_SKILL = REPO / "skills" / "full-company-analysis.md"
 
 STAGE_DIRS = {
     "01-data-screen": "01-数据与快筛",
@@ -23,6 +24,17 @@ STAGE_DIRS = {
     "05-content": "05-内容生产",
 }
 STAGES = list(STAGE_DIRS)
+
+
+class TestOrchestratorUsageContract(unittest.TestCase):
+    def test_defaults_to_private_local_output_without_requiring_git(self):
+        text = ORCHESTRATOR_SKILL.read_text(encoding="utf-8")
+        self.assertIn("`visibility` | 否", text)
+        self.assertIn("默认 `private`", text)
+        self.assertIn("Git 不是运行前提", text)
+        self.assertNotIn("不得静默默认", text)
+        self.assertNotIn("无非 Git fallback", text)
+        self.assertNotIn("private 根目录必须被 Git 忽略", text)
 
 
 def make_skill_item(i, name=None, **overrides):
@@ -224,22 +236,31 @@ class TestPhase2EvidenceRules(_ValidatorCase):
             reg["skills"][0]["domain_evidence_status"] = "IMPLEMENTED"
             # 只有通用 required_sections, 无 evidence_rules → §15.3 失败
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
-                               "纯通用契约")
+                               "evidence_rules")
 
-    def test_implemented_with_domain_section_passes(self):
+    def test_implemented_with_domain_section_but_no_evidence_rule_fails(self):
         def mutate(reg):
             reg["skills"][0]["domain_evidence_status"] = "IMPLEMENTED"
             reg["skills"][0]["artifact_rules"][0]["required_sections"] = \
                 ["数据截止日", "直接来源", "限制", "仅供学习研究", "命令执行记录"]
         proc = self.run_validator(make_registry(mutate=mutate))
-        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assert_fails_with(proc, "evidence_rules")
 
     def test_implemented_with_evidence_rules_passes(self):
         def mutate(reg):
             reg["skills"][0]["domain_evidence_status"] = "IMPLEMENTED"
-            reg["skills"][0]["evidence_rules"] = [{"kind": "min_facts", "n": 1}]
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "required_fact_fields", "values": ["revenue"]}]
         proc = self.run_validator(make_registry(mutate=mutate))
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+    def test_implemented_with_count_only_rule_still_fails(self):
+        def mutate(reg):
+            reg["skills"][0]["domain_evidence_status"] = "IMPLEMENTED"
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "min_facts", "n": 7}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "领域标识")
 
     def test_invalid_evidence_rule_kind_fails(self):
         def mutate(reg):
@@ -270,6 +291,26 @@ class TestRealRegistry(unittest.TestCase):
         pending = [s["name"] for s in reg["skills"]
                    if s.get("domain_evidence_status") != "IMPLEMENTED"]
         self.assertEqual(pending, [], f"仍为 PHASE2_PENDING 的契约: {pending}")
+
+    def test_phase2_all_implemented_contracts_have_machine_evidence_rules(self):
+        reg = json.loads((REPO / "tools" / "full_analysis_contract.json")
+                         .read_text(encoding="utf-8"))
+        missing = [s["name"] for s in reg["skills"]
+                   if s.get("domain_evidence_status") == "IMPLEMENTED"
+                   and not s.get("evidence_rules")]
+        self.assertEqual(missing, [],
+                         f"IMPLEMENTED 但没有机器 evidence_rules: {missing}")
+
+    def test_phase2_all_contracts_have_domain_identifying_rule(self):
+        reg = json.loads((REPO / "tools" / "full_analysis_contract.json")
+                         .read_text(encoding="utf-8"))
+        domain_kinds = {"required_fact_fields", "required_judgment_rule_ids",
+                        "required_command_operations"}
+        missing = [s["name"] for s in reg["skills"]
+                   if not any(r.get("kind") in domain_kinds
+                              for r in s.get("evidence_rules", []))]
+        self.assertEqual(missing, [],
+                         f"缺领域标识 evidence rule: {missing}")
 
 
 if __name__ == "__main__":

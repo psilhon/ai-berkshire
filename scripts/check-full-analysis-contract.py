@@ -32,6 +32,17 @@ ALLOWED_PLACEHOLDERS = {"company", "date", "period", "industry"}
 EVIDENCE_RULE_KINDS = {
     "min_facts", "min_dual_source_facts", "min_calculations",
     "min_judgments_with_falsification", "min_role_runs",
+    "min_command_receipts", "required_fact_fields",
+    "required_judgment_rule_ids", "required_command_operations",
+}
+COUNT_RULE_KINDS = {
+    "min_facts", "min_dual_source_facts", "min_calculations",
+    "min_judgments_with_falsification", "min_role_runs",
+    "min_command_receipts",
+}
+DOMAIN_RULE_KINDS = {
+    "required_fact_fields", "required_judgment_rule_ids",
+    "required_command_operations",
 }
 
 SAVE_HEADING_KEYWORDS = ("保存", "输出", "报告位置", "文件命名", "存储", "写入",
@@ -236,18 +247,27 @@ def validate(registry_path: Path, repo_root: Path):
                 _err(errors, f"{label} evidence_rule kind 非法 (允许 "
                              f"{sorted(EVIDENCE_RULE_KINDS)}): {rule!r}")
                 continue
-            n = rule.get("n", 1)
-            if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
-                _err(errors, f"{label} evidence_rule n 必须为正 int: {rule!r}")
+            if rule["kind"] in COUNT_RULE_KINDS:
+                n = rule.get("n", 1)
+                if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+                    _err(errors, f"{label} evidence_rule n 必须为正 int: {rule!r}")
+            else:
+                values = rule.get("values")
+                if not isinstance(values, list) or not values \
+                        or len(values) != len(set(values)) \
+                        or not all(isinstance(x, str) and x for x in values):
+                    _err(errors, f"{label} evidence_rule values 必须为非空唯一"
+                                 f"字符串数组: {rule!r}")
 
-        # §15.3: IMPLEMENTED 契约不允许"纯通用" —— 至少一个领域专属断言
-        sections = set()
-        for rule in item.get("artifact_rules", []):
-            sections.update(rule.get("required_sections", []) or [])
-        has_domain = bool(sections - set(generic_sections)) or bool(ev_rules)
-        if status == "IMPLEMENTED" and not has_domain:
-            _err(errors, f"{label} 标 IMPLEMENTED 但只有通用 required_sections "
-                         f"且无 evidence_rules —— §15.3 不允许纯通用契约")
+        # §15.3: 标题字符串只能证明结构存在，不能代替可执行领域证据。
+        if status == "IMPLEMENTED" and not ev_rules:
+            _err(errors, f"{label} 标 IMPLEMENTED 但 evidence_rules 为空 —— "
+                         "领域 required_sections 不能代替机器证据")
+        elif status == "IMPLEMENTED" and not any(
+                rule.get("kind") in DOMAIN_RULE_KINDS
+                for rule in ev_rules if isinstance(rule, dict)):
+            _err(errors, f"{label} 标 IMPLEMENTED 但缺带领域标识的 "
+                         "evidence rule")
 
         patterns = item.get("legacy_output_patterns")
         if not isinstance(patterns, list):

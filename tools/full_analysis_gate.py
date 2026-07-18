@@ -15,7 +15,9 @@ finalize / summary / contracts。
 本工具不做也不声称"预防式"拦截, 缺沙箱信号不阻断。
 """
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -27,6 +29,8 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
+
+import report_audit
 
 TOOLS_DIR = Path(__file__).resolve().parent
 DEFAULT_REGISTRY = TOOLS_DIR / "full_analysis_contract.json"
@@ -46,7 +50,7 @@ BASELINE_REL = Path("evidence") / "audit-baseline.txt"
 RESULT_REL = Path("evidence") / "04-验收器结果.json"
 
 EVIDENCE_KEYS = ("facts", "calculations", "judgments", "role_runs",
-                 "limitations", "audit")
+                 "command_receipts", "limitations", "audit")
 SECRET_RE = re.compile(
     r"(?i)(api[_-]?key|secret|token|password|passwd|private[_-]?key)"
     r"\s*[=:]\s*\S+")
@@ -115,6 +119,15 @@ def save_manifest(run_root, manifest):
 def run_git(repo_root, *args):
     return subprocess.run(["git", "-C", str(repo_root), *args],
                           capture_output=True, text=True)
+
+
+def is_git_workspace(repo_root):
+    """Git 可用且 repo_root 位于工作树时返回 True；Git 不是运行前提。"""
+    try:
+        cp = run_git(repo_root, "rev-parse", "--is-inside-work-tree")
+    except OSError:
+        return False
+    return cp.returncode == 0 and cp.stdout.strip() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +200,21 @@ def snapshot_path(path):
             "mtime_ns": st.st_mtime_ns}
 
 
+def _dir_children_matching(watch_path, child_regex):
+    """watch_path 目录下直接子项中匹配 child_regex 的名字 (排序)。
+
+    child_regex 针对相对 watch_path 的子路径 (本注册表下参数化尾段恒为单层
+    文件名)。目录不存在/正则非法均返回 []。用于参数化项"新增匹配文件"侦测,
+    取代对目录自身 mtime 的比对 (后者会被无关活动误触发)。
+    """
+    try:
+        pat = re.compile(child_regex)
+        names = os.listdir(watch_path)
+    except (OSError, re.error):
+        return []
+    return sorted(n for n in names if pat.match(n))
+
+
 def build_watchlist(registry, company, as_of, repo_root):
     date = as_of.replace("-", "")
     home = os.environ.get("HOME", "")
@@ -203,42 +231,70 @@ def build_watchlist(registry, company, as_of, repo_root):
                 base = Path(repo_root)
                 rel = inst
             unknown = re.findall(r"\{(period|industry)\}", inst)
+            entry = {
+                "skill": sk["name"],
+                "index": sk["index"],
+                "pattern": pattern,
+            }
             if unknown:
-                regex = re.escape(inst)
-                for ph in ("period", "industry"):
-                    regex = regex.replace(re.escape("{%s}" % ph), ".+?")
+                # prefix = 占位符之前的稳定目录段; watch = 该目录 (占位符在首
+                # 段时退化到 base = HOME/repo 根)。剩余尾段含占位符 → 编成子
+                # 路径正则, 仅当 watch 目录下"新增匹配该正则的文件"才算越界
+                # (§8.3)。不用目录自身 mtime 判变 —— 活机器上 HOME/reports 被
+                # 缓存、会话文件、INDEX 重建等无关活动持续改写, mtime 必误报。
                 prefix = []
                 for seg in rel.split("/"):
                     if "{" in seg:
                         break
                     prefix.append(seg)
                 watch = base.joinpath(*prefix) if prefix else base
-                kind = "parameterized"
+                tail = "/".join(rel.split("/")[len(prefix):])
+                child_regex = re.escape(tail)
+                for ph in ("period", "industry"):
+                    child_regex = child_regex.replace(
+                        re.escape("{%s}" % ph), ".+?")
+                child_regex = "^" + child_regex + "$"
+                entry.update({
+                    "kind": "parameterized",
+                    "regex": child_regex,
+                    "child_regex": child_regex,
+                    "watch_path": str(watch),
+                    "snapshot": snapshot_path(watch),
+                    "baseline_matches": _dir_children_matching(
+                        watch, child_regex),
+                })
             else:
-                regex = None
                 watch = base / rel
-                kind = "exact"
-            entries.append({
-                "skill": sk["name"],
-                "index": sk["index"],
-                "pattern": pattern,
-                "kind": kind,
-                "regex": regex,
-                "watch_path": str(watch),
-                "snapshot": snapshot_path(watch),
-            })
+                entry.update({
+                    "kind": "exact",
+                    "regex": None,
+                    "watch_path": str(watch),
+                    "snapshot": snapshot_path(watch),
+                })
+            entries.append(entry)
     return entries
 
 
 def watchlist_changes(watchlist):
     changes = []
     for entry in watchlist:
-        current = snapshot_path(entry["watch_path"])
-        if current != entry["snapshot"]:
-            changes.append(
-                f"watchlist 候选发生变化 [{entry['skill']}] "
-                f"pattern={entry['pattern']!r} path={entry['watch_path']} "
-                f"基线={entry['snapshot']} 当前={current}")
+        if entry.get("kind") == "parameterized" and entry.get("child_regex"):
+            baseline = set(entry.get("baseline_matches", []))
+            current = set(_dir_children_matching(
+                entry["watch_path"], entry["child_regex"]))
+            new = sorted(current - baseline)
+            if new:
+                changes.append(
+                    f"watchlist 候选新增匹配输出 [{entry['skill']}] "
+                    f"pattern={entry['pattern']!r} dir={entry['watch_path']} "
+                    f"新增={new}")
+        else:
+            current = snapshot_path(entry["watch_path"])
+            if current != entry["snapshot"]:
+                changes.append(
+                    f"watchlist 候选发生变化 [{entry['skill']}] "
+                    f"pattern={entry['pattern']!r} path={entry['watch_path']} "
+                    f"基线={entry['snapshot']} 当前={current}")
     return changes
 
 
@@ -412,6 +468,47 @@ def git_status_text(repo_root):
     return cp.stdout.decode("utf-8", errors="surrogateescape")
 
 
+def git_path_fingerprint(repo_root, rel_path):
+    """对 Git 可见基线路径记录可恢复比较的内容摘要。"""
+    path = Path(repo_root) / rel_path
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return {"exists": False, "type": None, "mode": None, "size": None,
+                "sha256": None}
+    mode = stat.S_IMODE(st.st_mode)
+    if stat.S_ISREG(st.st_mode):
+        kind = "regular"
+        digest = sha256_file(path)
+    elif stat.S_ISLNK(st.st_mode):
+        kind = "symlink"
+        digest = hashlib.sha256(
+            os.readlink(path).encode("utf-8", errors="surrogateescape")).hexdigest()
+    elif stat.S_ISDIR(st.st_mode):
+        kind = "directory"
+        digest = None
+    else:
+        kind = "other"
+        digest = None
+    return {"exists": True, "type": kind, "mode": mode, "size": st.st_size,
+            "sha256": digest}
+
+
+def build_git_baseline(repo_root, status_text):
+    entries = []
+    for record, path in parse_porcelain_v2_z(status_text):
+        entries.append({
+            "record": record,
+            "path": path,
+            "fingerprint": git_path_fingerprint(repo_root, path),
+        })
+    return {"schema_version": 1, "mode": "git", "entries": entries}
+
+
+def build_no_git_baseline():
+    return {"schema_version": 1, "mode": "none", "entries": []}
+
+
 def new_skill_entry(item, repo_root):
     spec = Path(repo_root) / item["spec_source"]
     if not spec.is_file():
@@ -430,6 +527,7 @@ def new_skill_entry(item, repo_root):
         "calculations": [],
         "judgments": [],
         "role_runs": [],
+        "command_receipts": [],
         "limitations": [],
         "audit": [],
         "attempts": [],
@@ -439,11 +537,7 @@ def new_skill_entry(item, repo_root):
 
 def cmd_init(args):
     repo_root = Path(args.repo_root).resolve()
-    cp = run_git(repo_root, "rev-parse", "--is-inside-work-tree")
-    if cp.returncode != 0 or cp.stdout.strip() != "true":
-        raise GateExit(EXIT_USAGE,
-                       f"--repo-root 不在 git 工作树内 (无非 Git fallback): "
-                       f"{repo_root}")
+    git_workspace = is_git_workspace(repo_root)
     validate_company(args.company)
     if not AS_OF_RE.match(args.as_of):
         raise GateExit(EXIT_USAGE, f"--as-of 必须为 YYYY-MM-DD: {args.as_of}")
@@ -454,21 +548,14 @@ def cmd_init(args):
 
     registry = load_registry(args.registry)
     if args.mode == "resume":
-        return _init_resume(args, repo_root, registry)
+        return _init_resume(args, repo_root, registry, git_workspace)
 
     run_id = f"{now_stamp()}-{args.company}"
     prefix = Path("local") / "筛选公司" if args.visibility == "private" \
         else Path("筛选公司")
     rel_root = prefix / args.company / "全量分析" / run_id
     run_root = repo_root / rel_root
-    if args.visibility == "private":
-        ci = run_git(repo_root, "check-ignore", "--no-index", "-q", "--",
-                     rel_root.as_posix())
-        if ci.returncode != 0:
-            raise GateExit(EXIT_FAIL,
-                           f"private 运行根未被 .gitignore 忽略, 会入库泄露: "
-                           f"{rel_root.as_posix()}")
-    elif rel_root.parts[0] == "local":
+    if args.visibility == "public" and rel_root.parts[0] == "local":
         raise GateExit(EXIT_FAIL, f"public 运行根不得在 local/ 下: {rel_root}")
 
     run_root.mkdir(parents=True, exist_ok=True)
@@ -482,10 +569,13 @@ def cmd_init(args):
     acquire_lock(run_root, run_id, args.platform, root_real,
                  recover_stale=args.recover_stale)
 
-    baseline = git_status_text(repo_root)
+    workspace_audit_mode = "git" if git_workspace else "none"
+    baseline = build_git_baseline(repo_root, git_status_text(repo_root)) \
+        if git_workspace else build_no_git_baseline()
     with open(run_root / BASELINE_REL, "w", encoding="utf-8",
-              errors="surrogateescape") as f:
-        f.write(baseline)
+              errors="strict") as f:
+        json.dump(baseline, f, ensure_ascii=True, indent=2)
+        f.write("\n")
         f.flush()
         os.fsync(f.fileno())
 
@@ -503,10 +593,11 @@ def cmd_init(args):
             "run_root": rel_root.as_posix(),
             "root_real": str(root_real),
             "path_enforcement_level": "MONITORED",
+            "workspace_audit_mode": workspace_audit_mode,
             "completion_status": None,
             "validation_result": None,
             "assurance_level": "SINGLE_CONTEXT",
-            "review_mode": None,
+            "review_mode": "self_review",
             "created_at": ts,
             "updated_at": ts,
         },
@@ -530,11 +621,12 @@ def cmd_init(args):
         "run_root": str(run_root),
         "phase": "WORKING",
         "path_enforcement_level": "MONITORED",
+        "workspace_audit_mode": workspace_audit_mode,
     }, ensure_ascii=False))
     return EXIT_OK
 
 
-def _init_resume(args, repo_root, registry):
+def _init_resume(args, repo_root, registry, git_workspace):
     if not args.run_id:
         raise GateExit(EXIT_USAGE, "--mode resume 必须提供 --run-id")
     prefix = Path("local") / "筛选公司" if args.visibility == "private" \
@@ -562,6 +654,11 @@ def _init_resume(args, repo_root, registry):
 
     acquire_lock(run_root, args.run_id, args.platform, root_real,
                  recover_stale=args.recover_stale)
+
+    if run.get("workspace_audit_mode", "git") == "git" \
+            and not git_workspace:
+        run["workspace_audit_mode"] = "none"
+        atomic_write_json(run_root / BASELINE_REL, build_no_git_baseline())
 
     manifest["registry_sha256"] = sha256_file(args.registry)
     reset = []
@@ -632,12 +729,189 @@ def validate_evidence_payload(payload):
     for key in EVIDENCE_KEYS:
         if key in payload and not isinstance(payload[key], list):
             raise GateExit(EXIT_USAGE, f"evidence-file {key} 必须为数组")
-    for fact in payload.get("facts", []):
-        if isinstance(fact, dict) and (
-                "status" in fact or "computed_status" in fact):
+    fact_required = {"fact_id", "field", "subject", "period", "unit",
+                     "value", "tolerance_pct", "sources"}
+    source_required = {"publisher_id", "acquisition_chain_id", "source_type",
+                       "observed_value", "accessed_at"}
+    source_allowed = source_required | {"document_id", "url", "subject",
+                                        "period", "unit"}
+    seen_fact_ids = set()
+    for i, fact in enumerate(payload.get("facts", [])):
+        if not isinstance(fact, dict) or set(fact) != fact_required:
             raise GateExit(EXIT_USAGE,
-                           "fact 记录不得携带 status/computed_status "
-                           "(状态只能 gate 计算)")
+                           f"facts[{i}] 必须且只能含 {sorted(fact_required)}")
+        for key in ("fact_id", "field", "subject", "period", "unit"):
+            if not isinstance(fact[key], str) or not fact[key].strip():
+                raise GateExit(EXIT_USAGE, f"facts[{i}].{key} 必须为非空字符串")
+        if fact["fact_id"] in seen_fact_ids:
+            raise GateExit(EXIT_USAGE, f"facts[{i}].fact_id 重复: {fact['fact_id']}")
+        seen_fact_ids.add(fact["fact_id"])
+        if not _decimal_string(fact["value"]) \
+                or not _decimal_string(fact["tolerance_pct"]):
+            raise GateExit(EXIT_USAGE,
+                           f"facts[{i}] value/tolerance_pct 必须为有限十进制字符串")
+        if not isinstance(fact["sources"], list):
+            raise GateExit(EXIT_USAGE, f"facts[{i}].sources 必须为数组")
+        for j, source in enumerate(fact["sources"]):
+            if not isinstance(source, dict) \
+                    or not source_required.issubset(source) \
+                    or not set(source).issubset(source_allowed):
+                raise GateExit(EXIT_USAGE,
+                               f"facts[{i}].sources[{j}] 字段不符合封闭 schema")
+            for key in source_required - {"observed_value",
+                                           "acquisition_chain_id"}:
+                if not isinstance(source[key], str) or not source[key].strip():
+                    raise GateExit(EXIT_USAGE,
+                                   f"facts[{i}].sources[{j}].{key} 必须为非空字符串")
+            if not _decimal_string(source["observed_value"]):
+                raise GateExit(EXIT_USAGE,
+                               f"facts[{i}].sources[{j}].observed_value "
+                               "必须为有限十进制字符串")
+            if not source.get("document_id") and not source.get("url"):
+                raise GateExit(EXIT_USAGE,
+                               f"facts[{i}].sources[{j}] 必须含 document_id 或 url")
+
+    for i, calc in enumerate(payload.get("calculations", [])):
+        if not isinstance(calc, dict) or set(calc) != {
+                "calculation_id", "type", "args", "expected"}:
+            raise GateExit(EXIT_USAGE,
+                           f"calculations[{i}] 必须且只能含 "
+                           "calculation_id/type/args/expected")
+        if not isinstance(calc["calculation_id"], str) \
+                or not calc["calculation_id"].strip() \
+                or not isinstance(calc["type"], str) \
+                or not isinstance(calc["args"], dict) \
+                or not isinstance(calc["expected"], dict):
+            raise GateExit(EXIT_USAGE, f"calculations[{i}] 字段类型非法")
+
+    judgment_required = {
+        "judgment_id", "rule_id", "conclusion", "confidence",
+        "falsification_condition", "fact_ids", "calculation_ids",
+        "artifact_sections",
+    }
+    for i, judgment in enumerate(payload.get("judgments", [])):
+        if not isinstance(judgment, dict) or set(judgment) != judgment_required:
+            raise GateExit(EXIT_USAGE,
+                           f"judgments[{i}] 必须且只能含 "
+                           f"{sorted(judgment_required)}")
+        for key in ("judgment_id", "rule_id", "conclusion"):
+            if not isinstance(judgment[key], str) or not judgment[key].strip():
+                raise GateExit(EXIT_USAGE,
+                               f"judgments[{i}].{key} 必须为非空字符串")
+        if not isinstance(judgment["falsification_condition"], str):
+            raise GateExit(EXIT_USAGE,
+                           f"judgments[{i}].falsification_condition 必须为字符串")
+        if judgment["confidence"] not in {"low", "medium", "high"}:
+            raise GateExit(EXIT_USAGE,
+                           f"judgments[{i}].confidence 必须为 low/medium/high")
+        for key in ("fact_ids", "calculation_ids", "artifact_sections"):
+            if not isinstance(judgment[key], list) or not all(
+                    isinstance(x, str) and x for x in judgment[key]):
+                raise GateExit(EXIT_USAGE,
+                               f"judgments[{i}].{key} 必须为字符串数组")
+        if not judgment["artifact_sections"]:
+            raise GateExit(EXIT_USAGE,
+                           f"judgments[{i}].artifact_sections 不得为空")
+
+    role_required = {"role", "context_id", "execution_mode", "artifact_paths",
+                     "started_at", "finished_at"}
+    for i, role in enumerate(payload.get("role_runs", [])):
+        if not isinstance(role, dict) or set(role) != role_required:
+            raise GateExit(EXIT_USAGE,
+                           f"role_runs[{i}] 必须且只能含 {sorted(role_required)}")
+        for key in ("role", "context_id", "execution_mode", "started_at",
+                    "finished_at"):
+            if not isinstance(role[key], str) or not role[key].strip():
+                raise GateExit(EXIT_USAGE,
+                               f"role_runs[{i}].{key} 必须为非空字符串")
+        if not isinstance(role["artifact_paths"], list) \
+                or not role["artifact_paths"] \
+                or not all(isinstance(x, str) and x
+                           for x in role["artifact_paths"]):
+            raise GateExit(EXIT_USAGE,
+                           f"role_runs[{i}].artifact_paths 必须为非空字符串数组")
+
+    for i, limitation in enumerate(payload.get("limitations", [])):
+        if not isinstance(limitation, dict) or not isinstance(
+                limitation.get("code"), str):
+            raise GateExit(EXIT_USAGE, f"limitations[{i}] 必须含字符串 code")
+        if limitation["code"] == "not_applicable":
+            required = {"code", "predicate_id", "input_facts", "alternative"}
+            if set(limitation) != required:
+                raise GateExit(EXIT_USAGE,
+                               f"limitations[{i}] not_applicable 必须且只能含 "
+                               f"{sorted(required)}")
+            if not isinstance(limitation["predicate_id"], str) \
+                    or not isinstance(limitation["input_facts"], list) \
+                    or not all(isinstance(x, str) and x
+                               for x in limitation["input_facts"]) \
+                    or limitation["alternative"] is not None \
+                    and not isinstance(limitation["alternative"], str):
+                raise GateExit(EXIT_USAGE,
+                               f"limitations[{i}] not_applicable 字段类型非法")
+        elif set(limitation) != {"code", "note"} \
+                or not isinstance(limitation.get("note"), str):
+            raise GateExit(EXIT_USAGE,
+                           f"limitations[{i}] 普通限制必须且只能含 code/note")
+
+    command_required = {"command_id", "operation", "argv", "exit_code",
+                        "started_at", "finished_at", "sources", "warnings"}
+    for i, receipt in enumerate(payload.get("command_receipts", [])):
+        if not isinstance(receipt, dict) or set(receipt) != command_required:
+            raise GateExit(EXIT_USAGE,
+                           f"command_receipts[{i}] 必须且只能含 "
+                           f"{sorted(command_required)}")
+        for key in ("command_id", "operation", "started_at", "finished_at"):
+            if not isinstance(receipt[key], str) or not receipt[key].strip():
+                raise GateExit(EXIT_USAGE,
+                               f"command_receipts[{i}].{key} 必须为非空字符串")
+        if not isinstance(receipt["argv"], list) or not receipt["argv"] \
+                or not all(isinstance(x, str) and x for x in receipt["argv"]):
+            raise GateExit(EXIT_USAGE,
+                           f"command_receipts[{i}].argv 必须为非空字符串数组")
+        if not isinstance(receipt["exit_code"], int) \
+                or isinstance(receipt["exit_code"], bool):
+            raise GateExit(EXIT_USAGE,
+                           f"command_receipts[{i}].exit_code 必须为 int")
+        for key in ("sources", "warnings"):
+            if not isinstance(receipt[key], list) or not all(
+                    isinstance(x, str) for x in receipt[key]):
+                raise GateExit(EXIT_USAGE,
+                               f"command_receipts[{i}].{key} 必须为字符串数组")
+
+    audit_required = {"artifact", "ratio", "seed", "results"}
+    audit_result_required = {"id", "fetched_value", "fetched_source",
+                             "fetched_value2", "fetched_source2"}
+    for i, record in enumerate(payload.get("audit", [])):
+        if not isinstance(record, dict) or set(record) != audit_required:
+            raise GateExit(EXIT_USAGE,
+                           f"audit[{i}] 必须且只能含 {sorted(audit_required)}; "
+                           "verdict/sample_count 只能由 gate 重算")
+        if not isinstance(record["artifact"], str) \
+                or not isinstance(record["ratio"], (int, float)) \
+                or isinstance(record["ratio"], bool) \
+                or not 0 < record["ratio"] <= 1 \
+                or not isinstance(record["seed"], int) \
+                or isinstance(record["seed"], bool) \
+                or not isinstance(record["results"], list):
+            raise GateExit(EXIT_USAGE, f"audit[{i}] 字段类型/范围非法")
+        for j, result in enumerate(record["results"]):
+            if not isinstance(result, dict) or set(result) != audit_result_required:
+                raise GateExit(EXIT_USAGE,
+                               f"audit[{i}].results[{j}] 字段不符合封闭 schema")
+            if not isinstance(result["id"], int) \
+                    or isinstance(result["id"], bool):
+                raise GateExit(EXIT_USAGE,
+                               f"audit[{i}].results[{j}].id 必须为 int")
+            for key in ("fetched_value", "fetched_value2"):
+                if result[key] is not None and not _decimal_string(result[key]):
+                    raise GateExit(EXIT_USAGE,
+                                   f"audit[{i}].results[{j}].{key} "
+                                   "必须为十进制字符串或 null")
+            for key in ("fetched_source", "fetched_source2"):
+                if not isinstance(result[key], str):
+                    raise GateExit(EXIT_USAGE,
+                                   f"audit[{i}].results[{j}].{key} 必须为字符串")
 
 
 def cmd_finish_skill(args):
@@ -669,6 +943,117 @@ def cmd_finish_skill(args):
     sk["execution_state"] = args.state
     save_manifest(run_root, manifest)
     print(f"finish-skill: {args.skill} -> {args.state}")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# 运行上下文：review mode / industry 均只能经 gate 写入
+# ---------------------------------------------------------------------------
+def _require_working(manifest, command):
+    if manifest.get("run", {}).get("phase") != "WORKING":
+        raise GateExit(EXIT_USAGE,
+                       f"{command} 仅允许 WORKING 运行, 当前 "
+                       f"{manifest.get('run', {}).get('phase')}")
+
+
+def cmd_set_review_mode(args):
+    run_root = Path(args.run_root)
+    manifest = load_manifest(run_root)
+    _require_working(manifest, "set-review-mode")
+    if args.mode == "independent_context":
+        max_contexts = max(
+            (sk.get("independent_context_count", 0)
+             for sk in manifest.get("skills", [])), default=0)
+        if max_contexts < 2:
+            raise GateExit(
+                EXIT_FAIL,
+                "review_mode=independent_context 需要至少一项已记录 "
+                f"independent_context_count>=2, 实际最大 {max_contexts}")
+    manifest["run"]["review_mode"] = args.mode
+    save_manifest(run_root, manifest)
+    print(f"set-review-mode: {args.mode}")
+    return EXIT_OK
+
+
+def cmd_set_industry(args):
+    run_root = Path(args.run_root)
+    manifest = load_manifest(run_root)
+    _require_working(manifest, "set-industry")
+    payload = load_json_or_exit(args.industry_file, "industry-file")
+    required = {"basis", "period", "source_fact_ids", "segments"}
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise GateExit(EXIT_USAGE,
+                       f"industry-file 必须且只能含 {sorted(required)}")
+    if payload["basis"] != "latest_fy_revenue_or_operating_income":
+        raise GateExit(EXIT_USAGE,
+                       "industry-file basis 必须为 "
+                       "latest_fy_revenue_or_operating_income")
+    if not isinstance(payload["period"], str) or not payload["period"].strip():
+        raise GateExit(EXIT_USAGE, "industry-file period 必须为非空字符串")
+    source_ids = payload["source_fact_ids"]
+    if not isinstance(source_ids, list) or not source_ids \
+            or len(set(source_ids)) != len(source_ids) \
+            or not all(isinstance(x, str) and x for x in source_ids):
+        raise GateExit(EXIT_USAGE,
+                       "industry-file source_fact_ids 必须为非空唯一字符串数组")
+    known_ids = {fact.get("fact_id") for fact in _all_facts(manifest)}
+    dangling = [fact_id for fact_id in source_ids if fact_id not in known_ids]
+    if dangling:
+        raise GateExit(EXIT_FAIL,
+                       f"industry source_fact_ids 存在悬空 fact ID: {dangling}")
+
+    segments = payload["segments"]
+    if not isinstance(segments, list) or not segments:
+        raise GateExit(EXIT_USAGE, "industry-file segments 必须为非空数组")
+    parsed = []
+    labels = set()
+    for i, segment in enumerate(segments):
+        if not isinstance(segment, dict) or set(segment) != {
+                "label", "revenue_share_pct"}:
+            raise GateExit(EXIT_USAGE,
+                           f"segments[{i}] 必须且只能含 label/revenue_share_pct")
+        label = segment["label"]
+        share = _dec(segment["revenue_share_pct"])
+        if not isinstance(label, str) or not label.strip() or label in labels:
+            raise GateExit(EXIT_USAGE,
+                           f"segments[{i}].label 必须为非空且不重复")
+        if not isinstance(segment["revenue_share_pct"], str) \
+                or share is None or not share.is_finite() \
+                or share <= 0 or share > 100:
+            raise GateExit(EXIT_USAGE,
+                           f"segments[{i}].revenue_share_pct "
+                           "必须为 (0,100] 的十进制字符串")
+        labels.add(label)
+        parsed.append((label, share))
+    total = sum((share for _label, share in parsed), Decimal("0"))
+    if not Decimal("99") <= total <= Decimal("101"):
+        raise GateExit(EXIT_FAIL,
+                       f"industry 分部占比合计须在 99%-101%, 实际 {total}%")
+    parsed.sort(key=lambda row: (-row[1], row[0]))
+    if parsed[0][1] >= Decimal("50"):
+        scope_type = "primary"
+        selected = [parsed[0][0]]
+    else:
+        scope_type = "multi_segment"
+        selected = []
+        cumulative = Decimal("0")
+        for label, share in parsed:
+            selected.append(label)
+            cumulative += share
+            if cumulative >= Decimal("80"):
+                break
+        if cumulative < Decimal("80"):
+            raise GateExit(EXIT_FAIL,
+                           "industry multi_segment 无法覆盖累计 80%")
+    manifest["company"]["industry"] = {
+        "scope_type": scope_type,
+        "labels": selected,
+        "basis": payload["basis"],
+        "period": payload["period"],
+        "source_fact_ids": source_ids,
+    }
+    save_manifest(run_root, manifest)
+    print(json.dumps(manifest["company"]["industry"], ensure_ascii=False))
     return EXIT_OK
 
 
@@ -756,6 +1141,9 @@ def classify_fact(fact):
     双源 = 存在两个一致源 publisher 互异且 chain 互异且均非空;
     任一可比源偏差超容差 = CONFLICT (未解释分歧, fail-closed)。
     """
+    if any(not isinstance(fact.get(key), str) or not fact.get(key).strip()
+           for key in ("subject", "period", "unit")):
+        return "UNAVAILABLE"
     value = _dec(fact.get("value"))
     tol = _dec(fact.get("tolerance_pct"))
     comparable = []
@@ -793,6 +1181,8 @@ def classify_fact(fact):
 EVIDENCE_RULE_KINDS = {
     "min_facts", "min_dual_source_facts", "min_calculations",
     "min_judgments_with_falsification", "min_role_runs",
+    "min_command_receipts", "required_fact_fields",
+    "required_judgment_rule_ids", "required_command_operations",
 }
 
 
@@ -806,6 +1196,8 @@ def evaluate_evidence_rules(sk, item):
     calcs = [c for c in sk.get("calculations", []) if isinstance(c, dict)]
     judgments = [j for j in sk.get("judgments", []) if isinstance(j, dict)]
     role_runs = [r for r in sk.get("role_runs", []) if isinstance(r, dict)]
+    receipts = [r for r in sk.get("command_receipts", [])
+                if isinstance(r, dict)]
     for rule in item.get("evidence_rules", []):
         if not isinstance(rule, dict):
             continue
@@ -827,19 +1219,189 @@ def evaluate_evidence_rules(sk, item):
                 errors.append(f"领域证据不足: 需 ≥{n} 条带证伪条件的判断, 实际 {good}")
         elif kind == "min_role_runs" and len(role_runs) < n:
             errors.append(f"领域证据不足: 需 ≥{n} 条角色执行记录, 实际 {len(role_runs)}")
+        elif kind == "min_command_receipts" and len(receipts) < n:
+            errors.append(f"领域证据不足: 需 ≥{n} 条命令执行收据, 实际 {len(receipts)}")
+        elif kind == "required_fact_fields":
+            present = {fact.get("field") for fact in facts}
+            missing = [value for value in rule.get("values", [])
+                       if value not in present]
+            if missing:
+                errors.append(f"领域证据缺 required fact fields: {missing}")
+        elif kind == "required_judgment_rule_ids":
+            present = {judgment.get("rule_id") for judgment in judgments}
+            missing = [value for value in rule.get("values", [])
+                       if value not in present]
+            if missing:
+                errors.append(f"领域证据缺 required judgment rule IDs: {missing}")
+        elif kind == "required_command_operations":
+            present = {receipt.get("operation") for receipt in receipts}
+            missing = [value for value in rule.get("values", [])
+                       if value not in present]
+            if missing:
+                errors.append(f"领域证据缺 required command operations: {missing}")
     return errors
 
 
-def load_calc_allowlist():
-    schema = load_json_or_exit(RESULT_SCHEMA_PATH, "financial_rigor 结果 schema")
-    return set(schema.get("operations", {}))
+def load_calc_schema():
+    return load_json_or_exit(RESULT_SCHEMA_PATH, "financial_rigor 结果 schema")
 
 
-def replay_calculation(calc, allowlist):
+def _decimal_string(value):
+    if not isinstance(value, str):
+        return False
+    parsed = _dec(value)
+    return parsed is not None and parsed.is_finite()
+
+
+def _validate_issue_items(items, field):
+    errors = []
+    if not isinstance(items, list):
+        return [f"{field} 必须为数组"]
+    for i, item in enumerate(items):
+        if not isinstance(item, dict) or set(item) != {"code", "message"}:
+            errors.append(f"{field}[{i}] 必须且只能含 code/message")
+        elif not all(isinstance(item[k], str) for k in ("code", "message")):
+            errors.append(f"{field}[{i}].code/message 必须为字符串")
+    return errors
+
+
+def _validate_operation_result(operation, result, spec):
+    errors = []
+    if not isinstance(result, dict):
+        return [f"{operation} result 必须为 object"]
+    required = set(spec.get("result_required", []))
+    if set(result) != required:
+        errors.append(f"{operation} result 字段必须逐项等于 schema: "
+                      f"期望 {sorted(required)} 实际 {sorted(result)}")
+        return errors
+    for field in spec.get("decimal_string_fields", []):
+        value = result.get(field)
+        if value is not None and not _decimal_string(value):
+            errors.append(f"{operation} result.{field} 必须为有限十进制字符串或 null")
+    for field, values in spec.get("enums", {}).items():
+        if result.get(field) not in values:
+            errors.append(f"{operation} result.{field} 不在枚举 {values}")
+
+    if operation == "verify-valuation":
+        metrics = result.get("metrics")
+        allowed = set(spec.get("metrics_allowed", []))
+        if not isinstance(metrics, dict) or not set(metrics).issubset(allowed):
+            errors.append("verify-valuation result.metrics 含非法字段")
+        elif any(not _decimal_string(v) for v in metrics.values()):
+            errors.append("verify-valuation result.metrics 值必须为有限十进制字符串")
+        skipped = result.get("skipped")
+        expected = set(spec.get("skipped_item_fields", []))
+        if not isinstance(skipped, list) or any(
+                not isinstance(x, dict) or set(x) != expected for x in skipped):
+            errors.append("verify-valuation result.skipped 字段不符合 schema")
+    elif operation == "cross-validate":
+        if not isinstance(result.get("all_consistent"), bool):
+            errors.append("cross-validate result.all_consistent 必须为 bool")
+        source_fields = set(spec.get("source_item_fields", []))
+        sources = result.get("sources")
+        if not isinstance(sources, list) or any(
+                not isinstance(x, dict) or set(x) != source_fields for x in sources):
+            errors.append("cross-validate result.sources 字段不符合 schema")
+        else:
+            for i, source in enumerate(sources):
+                for field in spec.get("source_decimal_string_fields", []):
+                    if not _decimal_string(source.get(field)):
+                        errors.append(f"cross-validate sources[{i}].{field} "
+                                      "必须为有限十进制字符串")
+                if not isinstance(source.get("within_tolerance"), bool):
+                    errors.append(f"cross-validate sources[{i}].within_tolerance "
+                                  "必须为 bool")
+    elif operation == "benford":
+        if not isinstance(result.get("sample_size"), int) \
+                or isinstance(result.get("sample_size"), bool):
+            errors.append("benford result.sample_size 必须为 int")
+        conforms = result.get("is_conforming")
+        if conforms is not None and not isinstance(conforms, bool):
+            errors.append("benford result.is_conforming 必须为 bool 或 null")
+    elif operation == "calc":
+        if not isinstance(result.get("expression"), str):
+            errors.append("calc result.expression 必须为字符串")
+    elif operation == "three-scenario":
+        if not isinstance(result.get("years"), int) \
+                or isinstance(result.get("years"), bool):
+            errors.append("three-scenario result.years 必须为 int")
+        if not isinstance(result.get("currency"), str):
+            errors.append("three-scenario result.currency 必须为字符串")
+        rows = result.get("scenarios")
+        fields = set(spec.get("scenario_item_fields", []))
+        ids = spec.get("scenario_id_enum", [])
+        if not isinstance(rows, list) or len(rows) != len(ids) or any(
+                not isinstance(x, dict) or set(x) != fields for x in rows):
+            errors.append("three-scenario result.scenarios 字段不符合 schema")
+        else:
+            if [row.get("id") for row in rows] != ids:
+                errors.append("three-scenario scenario id/顺序不符合 schema")
+            for i, row in enumerate(rows):
+                for field in spec.get("scenario_decimal_string_fields", []):
+                    if not _decimal_string(row.get(field)):
+                        errors.append(f"three-scenario scenarios[{i}].{field} "
+                                      "必须为有限十进制字符串")
+    return errors
+
+
+def validate_financial_envelope(env, process_exit_code, schema):
+    """按冻结 schema 校验重放输出；返回错误列表。"""
+    if not isinstance(env, dict):
+        return ["financial_rigor envelope 必须为 object"]
+    errors = []
+    envelope = schema.get("envelope", {})
+    required = set(envelope.get("required", []))
+    if set(env) != required:
+        errors.append("financial_rigor envelope 字段必须逐项等于 schema: "
+                      f"期望 {sorted(required)} 实际 {sorted(env)}")
+        return errors
+    operation = env.get("operation")
+    op_spec = schema.get("operations", {}).get(operation)
+    if op_spec is None:
+        errors.append(f"operation 不在 schema: {operation!r}")
+        return errors
+    if env.get("schema_version") != schema.get("schema_version"):
+        errors.append("schema_version 与冻结 schema 不一致")
+    if not isinstance(env.get("inputs"), dict):
+        errors.append("inputs 必须为 object")
+    if env.get("outcome") not in envelope.get("outcome_enum", []):
+        errors.append(f"outcome 非法: {env.get('outcome')!r}")
+    if env.get("exit_code") not in envelope.get("exit_codes", []):
+        errors.append(f"exit_code 非法: {env.get('exit_code')!r}")
+    if env.get("exit_code") != process_exit_code:
+        errors.append(f"进程 exit {process_exit_code} 与 JSON exit_code "
+                      f"{env.get('exit_code')!r} 不一致")
+    if env.get("outcome") in ("PASS", "FAIL"):
+        if not isinstance(env.get("is_pass"), bool):
+            errors.append("PASS/FAIL 的 is_pass 必须为 bool")
+    elif env.get("is_pass") is not None:
+        errors.append("INSUFFICIENT/ERROR 的 is_pass 必须为 null")
+    errors.extend(_validate_issue_items(env.get("warnings"), "warnings"))
+    errors.extend(_validate_issue_items(env.get("errors"), "errors"))
+    errors.extend(_validate_operation_result(operation, env.get("result"), op_spec))
+    return errors
+
+
+def _semantic_equal(want, got):
+    if isinstance(want, dict) and isinstance(got, dict):
+        return set(want) == set(got) and all(
+            _semantic_equal(want[k], got[k]) for k in want)
+    if isinstance(want, list) and isinstance(got, list):
+        return len(want) == len(got) and all(
+            _semantic_equal(a, b) for a, b in zip(want, got))
+    want_d, got_d = _dec(want), _dec(got)
+    if isinstance(want, str) and isinstance(got, str) \
+            and want_d is not None and got_d is not None:
+        return want_d == got_d
+    return want == got
+
+
+def replay_calculation(calc, schema):
     """#10: 用当前工具 --json 重放, 语义字段比较; 返回错误列表。"""
     cid = calc.get("calculation_id", "<无id>")
     ctype = calc.get("type")
-    if ctype not in allowlist:
+    operations = schema.get("operations", {})
+    if ctype not in operations:
         return [f"计算 {cid} type 不在 allowlist: {ctype!r}"]
     cmd = [sys.executable, str(FINANCIAL_RIGOR), ctype]
     for key, val in (calc.get("args") or {}).items():
@@ -858,21 +1420,24 @@ def replay_calculation(calc, allowlist):
         env = json.loads(cp.stdout)
     except json.JSONDecodeError:
         return [f"计算 {cid} 重放未产出合法 JSON (exit {cp.returncode})"]
-    errors = []
-    expected = calc.get("expected") or {}
-    for key in ("outcome", "is_pass", "exit_code"):
-        if key in expected and env.get(key) != expected[key]:
-            errors.append(f"计算 {cid} {key} 不一致: 期望 {expected[key]!r} "
+    errors = [f"计算 {cid} {e}"
+              for e in validate_financial_envelope(env, cp.returncode, schema)]
+    expected = calc.get("expected")
+    expected_keys = {"outcome", "is_pass", "exit_code", "result"}
+    if not isinstance(expected, dict) or set(expected) != expected_keys:
+        errors.append(f"计算 {cid} expected 必须且只能含 "
+                      "outcome/is_pass/exit_code/result")
+        return errors
+    for e in _validate_operation_result(ctype, expected.get("result"),
+                                        operations[ctype]):
+        errors.append(f"计算 {cid} expected {e}")
+    for key in ("outcome", "is_pass", "exit_code", "result"):
+        if not _semantic_equal(expected.get(key), env.get(key)):
+            errors.append(f"计算 {cid} {key} 不一致: 期望 {expected.get(key)!r} "
                           f"实际 {env.get(key)!r}")
-    actual_result = env.get("result") or {}
-    for key, want in (expected.get("result") or {}).items():
-        got = actual_result.get(key)
-        want_d, got_d = _dec(want), _dec(got)
-        same = (want_d is not None and got_d is not None
-                and want_d == got_d) or want == got
-        if not same:
-            errors.append(f"计算 {cid} result.{key} 不一致: 期望 {want!r} "
-                          f"实际 {got!r}")
+    if env.get("outcome") != "PASS" or env.get("is_pass") is not True \
+            or env.get("exit_code") != 0:
+        errors.append(f"计算 {cid} 重放未得到 PASS/true/exit 0")
     return errors
 
 
@@ -890,7 +1455,38 @@ def scan_artifact_privacy(run_root, rel_path):
     return []
 
 
-def evaluate_audit(sk, item):
+def _compute_audit_record(record, run_root):
+    artifact = record["artifact"]
+    try:
+        text = (Path(run_root) / artifact).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError as e:
+        return None, 0, [f"审计产物不可读: {artifact}: {e}"]
+    points, _stats = report_audit.extract_data_points(text)
+    sampled = report_audit.sample_points(
+        points, ratio=record["ratio"], seed=record["seed"])
+    submitted = record["results"]
+    by_id = {row["id"]: row for row in submitted}
+    sample_ids = [point["id"] for point in sampled]
+    if len(by_id) != len(submitted) or set(by_id) != set(sample_ids):
+        return None, len(sampled), [
+            f"审计 results.id 必须逐项等于 gate 抽样 ID: "
+            f"期望 {sample_ids} 实际 {[row['id'] for row in submitted]}"]
+    merged = []
+    for point in sampled:
+        merged.append({**point, **by_id[point["id"]]})
+    with contextlib.redirect_stdout(io.StringIO()):
+        outcome = report_audit.render_verdict(merged, report_name=artifact)
+    record["computed_verdict"] = outcome["verdict"]
+    record["computed_sample_count"] = outcome["total"]
+    record["computed_counts"] = {
+        key: outcome[key] for key in (
+            "pass_count", "warn_count", "fail_count", "skipped_count",
+            "single_source_count")}
+    return outcome["verdict"], outcome["total"], []
+
+
+def evaluate_audit(sk, item, run_root):
     """#14: required/advisory/none 三态审计策略。返回 (errors, caps)。"""
     errors, caps = [], []
     records = sk.get("audit", [])
@@ -900,28 +1496,103 @@ def evaluate_audit(sk, item):
             continue
         matched = [a for a in records
                    if isinstance(a, dict) and a.get("artifact") == rule["path"]]
+        computed = []
         for rec in matched:
-            if rec.get("sample_count") == 0 and rec.get("verdict") == "PASS":
-                errors.append(f"审计记录 0 样本却 PASS (永不允许): {rule['path']}")
+            verdict, sample_count, audit_errors = _compute_audit_record(
+                rec, run_root)
+            errors.extend(audit_errors)
+            computed.append((verdict, sample_count))
         if policy == "required":
             if not matched:
                 errors.append(f"required 审计缺记录: {rule['path']}")
-            for rec in matched:
-                if rec.get("verdict") != "PASS":
-                    errors.append(f"required 审计 verdict="
-                                  f"{rec.get('verdict')}: {rule['path']}")
+            for verdict, _count in computed:
+                if verdict != "PASS":
+                    errors.append(f"required 审计 computed_verdict="
+                                  f"{verdict}: {rule['path']}")
         elif policy == "advisory":
             if not matched:
                 caps.append(f"advisory 审计缺记录: {rule['path']}")
-            for rec in matched:
-                if rec.get("verdict") == "FAIL":
-                    errors.append(f"advisory 审计 verdict=FAIL: {rule['path']}")
-                elif rec.get("verdict") == "INSUFFICIENT":
+            for verdict, _count in computed:
+                if verdict == "FAIL":
+                    errors.append(f"advisory 审计 computed_verdict=FAIL: "
+                                  f"{rule['path']}")
+                elif verdict == "INSUFFICIENT":
                     caps.append(f"advisory 审计 INSUFFICIENT: {rule['path']}")
     return errors, caps
 
 
-def evaluate_not_applicable(sk, item, registry, run_root):
+def _all_facts(manifest):
+    return [fact for entry in manifest.get("skills", [])
+            for fact in entry.get("facts", []) if isinstance(fact, dict)]
+
+
+def _fact_truthy(fact):
+    value = str(fact.get("value", "")).strip().lower()
+    numeric = _dec(value)
+    if numeric is not None:
+        return numeric != 0
+    return value in {"true", "yes", "present", "available"}
+
+
+def evaluate_applicability(predicate_id, manifest, sk, input_facts):
+    """计算注册适用性谓词；None 表示证据不足，不能准许 N/A。"""
+    facts = _all_facts(manifest)
+    selected = [fact for fact in facts if fact.get("fact_id") in input_facts]
+    company = manifest.get("company", {})
+    run = manifest.get("run", {})
+    by_name = {entry.get("name"): entry for entry in manifest.get("skills", [])}
+    if predicate_id == "always_applicable":
+        return True
+    if predicate_id == "is_a_share":
+        return any(re.search(r"(^|\D)\d{6}(?:\.(?:SH|SZ))?$", str(code), re.I)
+                   for code in company.get("codes", []))
+    if predicate_id == "has_comparable_financial_history":
+        return len({fact.get("period") for fact in selected}) >= 2
+    if predicate_id == "has_investable_price":
+        return any("price" in fact.get("field", "").lower()
+                   and _fact_truthy(fact) for fact in selected)
+    if predicate_id == "min_independent_contexts_2":
+        return sk.get("independent_context_count", 0) >= 2
+    if predicate_id == "identifiable_key_managers":
+        return any("manager" in fact.get("field", "").lower()
+                   and _fact_truthy(fact) for fact in selected)
+    if predicate_id == "has_primary_filing_for_period":
+        return any(source.get("source_type") in {
+            "filing", "annual_report", "interim_report", "announcement"}
+            for fact in selected for source in fact.get("sources", []))
+    if predicate_id == "earnings_review_complete_and_min_2_contexts":
+        return by_name.get("earnings-review", {}).get(
+            "execution_state") == "COMPLETE" \
+            and sk.get("independent_context_count", 0) >= 2
+    if predicate_id == "main_business_definable":
+        return company.get("industry") is not None
+    if predicate_id == "listed_and_main_industry_definable":
+        return company.get("listing_status") == "listed" \
+            and company.get("industry") is not None
+    if predicate_id == "physical_bottleneck_exists":
+        return any("bottleneck" in fact.get("field", "").lower()
+                   and _fact_truthy(fact) for fact in selected)
+    if predicate_id == "has_two_pairable_snapshots":
+        return len({fact.get("period") for fact in selected}) >= 2
+    if predicate_id == "private_run_with_portfolio_input":
+        return run.get("visibility") == "private" and any(
+            "portfolio" in fact.get("field", "").lower()
+            and _fact_truthy(fact) for fact in selected)
+    if predicate_id == "is_unlisted":
+        return company.get("listing_status") == "unlisted"
+    if predicate_id == "core_research_passed_min_3_questions":
+        base = by_name.get("investment-research", {})
+        return base.get("execution_state") == "COMPLETE" \
+            and len(base.get("judgments", [])) >= 3
+    if predicate_id == "has_fact_base":
+        return bool(selected)
+    if predicate_id == "core_research_passed_draft_allowed":
+        return by_name.get("investment-research", {}).get(
+            "execution_state") == "COMPLETE"
+    return None
+
+
+def evaluate_not_applicable(sk, item, registry, run_root, manifest):
     """[b] N/A 负向验收: 谓词/输入事实/负向产物/替代路径四要素齐备才 N/A PASS。"""
     na = next((l for l in sk.get("limitations", [])
                if isinstance(l, dict) and l.get("code") == "not_applicable"),
@@ -929,15 +1600,39 @@ def evaluate_not_applicable(sk, item, registry, run_root):
     if na is None:
         return None, []
     errors = []
-    predicates = registry.get("predicates", [])
-    if na.get("predicate_id") not in predicates:
-        errors.append(f"N/A 谓词不在注册表: {na.get('predicate_id')!r}")
-    if not na.get("input_facts"):
+    registered = item.get("applicability_rule", {}).get("predicate_id")
+    if na.get("predicate_id") != registered:
+        errors.append(f"N/A 谓词与当前契约不一致: {na.get('predicate_id')!r} "
+                      f"!= {registered!r}")
+    if registered not in registry.get("predicates", []):
+        errors.append(f"N/A 谓词不在注册表: {registered!r}")
+    input_ids = na.get("input_facts")
+    if not input_ids:
         errors.append("N/A 缺 input_facts (谓词输入事实)")
+        input_ids = []
+    known_ids = {fact.get("fact_id") for fact in _all_facts(manifest)}
+    dangling = [fact_id for fact_id in input_ids if fact_id not in known_ids]
+    if dangling:
+        errors.append(f"N/A input_facts 存在悬空 fact ID: {dangling}")
+    if not dangling and registered in registry.get("predicates", []):
+        applicable = evaluate_applicability(registered, manifest, sk, input_ids)
+        if applicable is None:
+            errors.append(f"N/A 谓词无法由已登记事实计算: {registered}")
+        elif applicable:
+            errors.append(f"N/A 非法: 适用性谓词 {registered} 实际为 true")
     neg_dir = registry.get("negative_acceptance_dir", "06-负向验收")
     neg = Path(run_root) / neg_dir / f"{item['index']:02d}-{item['name']}.md"
     if not neg.is_file() or neg.stat().st_size == 0:
         errors.append(f"N/A 缺负向验收产物: {neg_dir}/{neg.name}")
+    else:
+        text = neg.read_text(encoding="utf-8", errors="replace")
+        required_tokens = [str(registered), *input_ids]
+        expect_alt = item.get("applicability_rule", {}).get("alternative")
+        if expect_alt is not None:
+            required_tokens.append(str(expect_alt))
+        missing = [token for token in required_tokens if token not in text]
+        if missing:
+            errors.append(f"N/A 负向验收产物缺谓词/fact/替代路径: {missing}")
     expect_alt = item.get("applicability_rule", {}).get("alternative")
     if na.get("alternative") != expect_alt:
         errors.append(f"N/A alternative 与注册表不一致: "
@@ -945,7 +1640,7 @@ def evaluate_not_applicable(sk, item, registry, run_root):
     return na, errors
 
 
-def evaluate_roles(sk, item, registry, run_root):
+def evaluate_roles(sk, item, registry, run_root, manifest):
     """[g] 角色规则: 缺必需角色 FAIL; 独立上下文不足按 sequential_cap 封顶。"""
     errors, caps = [], []
     rr = item.get("role_rule", {})
@@ -960,8 +1655,8 @@ def evaluate_roles(sk, item, registry, run_root):
     if min_ctx and sk.get("independent_context_count", 0) < min_ctx:
         cap = rr.get("sequential_cap", "PASS")
         if cap == "NOT_APPLICABLE_PASS":
-            na, na_errors = evaluate_not_applicable(sk, item, registry,
-                                                    run_root)
+            na, na_errors = evaluate_not_applicable(
+                sk, item, registry, run_root, manifest)
             if na is None:
                 errors.append(f"独立上下文不足且未走负向验收 "
                               f"(cap={cap}, 需 N/A 收口)")
@@ -1010,37 +1705,68 @@ def git_boundary_errors(manifest, run_root):
     reports/INDEX.md 不在 allowlist — 任何变化都是越界 (§8.3)。
     """
     run = manifest["run"]
+    workspace_audit_mode = run.get("workspace_audit_mode", "git")
+    if workspace_audit_mode == "none":
+        return []
+    if workspace_audit_mode != "git":
+        return [f"workspace_audit_mode 非法: {workspace_audit_mode!r}"]
     rel = PurePosixPath(run["run_root"])
     repo_root = Path(run["root_real"]).parents[len(rel.parts) - 1]
     try:
-        baseline = (Path(run_root) / BASELINE_REL).read_text(
-            encoding="utf-8", errors="surrogateescape")
-    except OSError as e:
+        baseline = json.loads((Path(run_root) / BASELINE_REL).read_text(
+            encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
         return [f"审计基线不可读: {e}"]
+    if baseline.get("schema_version") != 1 \
+            or not isinstance(baseline.get("entries"), list):
+        return ["审计基线 schema 非法或为无内容摘要的旧版本"]
     current = git_status_text(repo_root)
-    known = {rec for rec, _ in parse_porcelain_v2_z(baseline)}
+    baseline_by_path = {entry.get("path"): entry
+                        for entry in baseline["entries"]
+                        if isinstance(entry, dict) and isinstance(
+                            entry.get("path"), str)}
+    current_by_path = {path: {"record": rec,
+                              "fingerprint": git_path_fingerprint(repo_root, path)}
+                       for rec, path in parse_porcelain_v2_z(current)}
     rel_str = rel.as_posix()
     errors = []
-    for rec, path in parse_porcelain_v2_z(current):
-        if rec in known:
-            continue
+
+    def excluded(path):
         if path == rel_str or path.startswith(rel_str + "/"):
-            continue
+            return True
         segments = path.split("/")
         if ".git" in segments or "__pycache__" in segments:
+            return True
+        return False
+
+    for path, entry in baseline_by_path.items():
+        if excluded(path):
+            continue
+        current_entry = current_by_path.get(path)
+        if current_entry is None:
+            errors.append(f"git 基线既有路径消失或状态被清除: {path}")
+            continue
+        if current_entry["record"] != entry.get("record"):
+            errors.append(f"git 基线既有路径状态变化: {path}")
+        if current_entry["fingerprint"] != entry.get("fingerprint"):
+            errors.append(f"git 基线既有路径内容/类型/大小变化: {path}")
+
+    for path in current_by_path:
+        if path in baseline_by_path or excluded(path):
             continue
         errors.append(f"git 可见越界变化 (不在基线, 不在运行根): {path}")
     return errors
 
 
-def evaluate_skill(sk, item, registry, run_root, allowlist):
+def evaluate_skill(sk, item, registry, run_root, calc_schema, manifest):
     """逐项计算 computed_status; 返回 (status, errors, caps)。"""
     if sk["execution_state"] == "BLOCKED":
         return "FAIL", ["执行态 BLOCKED (阻塞只能计为 FAIL)"], []
 
     errors, caps = [], []
 
-    na, na_errors = evaluate_not_applicable(sk, item, registry, run_root)
+    na, na_errors = evaluate_not_applicable(
+        sk, item, registry, run_root, manifest)
     if na is not None:
         return ("FAIL", na_errors, []) if na_errors \
             else ("NOT_APPLICABLE_PASS", [], [])
@@ -1057,7 +1783,7 @@ def evaluate_skill(sk, item, registry, run_root, allowlist):
         errors.extend(scan_artifact_privacy(run_root, norm))
 
     for calc in sk.get("calculations", []):
-        errors.extend(replay_calculation(calc, allowlist))
+        errors.extend(replay_calculation(calc, calc_schema))
 
     for fact in sk.get("facts", []):
         if not isinstance(fact, dict):
@@ -1073,11 +1799,12 @@ def evaluate_skill(sk, item, registry, run_root, allowlist):
     # Phase 2 领域证据结构性检查 (须在 fact 分类之后)
     errors.extend(evaluate_evidence_rules(sk, item))
 
-    audit_errors, audit_caps = evaluate_audit(sk, item)
+    audit_errors, audit_caps = evaluate_audit(sk, item, run_root)
     errors.extend(audit_errors)
     caps.extend(audit_caps)
 
-    role_errors, role_caps = evaluate_roles(sk, item, registry, run_root)
+    role_errors, role_caps = evaluate_roles(
+        sk, item, registry, run_root, manifest)
     errors.extend(role_errors)
     caps.extend(role_caps)
 
@@ -1124,7 +1851,7 @@ def cmd_finalize(args):
                        "finalize 拒绝: 存在 PENDING/RUNNING 未收口项:",
                        *[f"  - {u}" for u in unfinished])
 
-    allowlist = load_calc_allowlist()
+    calc_schema = load_calc_schema()
     matrix = []
     any_fail = False
     any_pwl = False
@@ -1134,7 +1861,7 @@ def cmd_finalize(args):
             status, errors, caps = "FAIL", [f"不在注册表: {sk['name']}"], []
         else:
             status, errors, caps = evaluate_skill(
-                sk, item, registry, run_root, allowlist)
+                sk, item, registry, run_root, calc_schema, manifest)
         sk["computed_status"] = status
         any_fail = any_fail or status == "FAIL"
         any_pwl = any_pwl or status == "PASS_WITH_LIMITATIONS"
@@ -1146,15 +1873,30 @@ def cmd_finalize(args):
             "caps": caps,
         })
 
+    run = manifest["run"]
+    workspace_audit_mode = run.get("workspace_audit_mode", "git")
     run_errors = git_boundary_errors(manifest, run_root)
     run_errors.extend(watchlist_changes(manifest.get("watchlist", [])))
+    run_caps = []
+    if workspace_audit_mode == "none":
+        run_caps.append(
+            "Git 工作区审计未启用（Git 不可用或 repo_root 非 Git 工作树）："
+            "已跳过工作区级越界变化审计；运行根路径 gate 与 legacy watchlist "
+            "仍生效")
 
     completion = "COMPLETE"
-    validation = "FAIL" if (any_fail or run_errors) else (
-        "PASS_WITH_LIMITATIONS" if any_pwl else "PASS")
     assurance = compute_assurance(manifest, registry)
 
-    run = manifest["run"]
+    review_mode = manifest.get("run", {}).get("review_mode")
+    if review_mode not in {"independent_context", "user", "self_review"}:
+        run_errors.append(f"review_mode 非法或缺失: {review_mode!r}")
+    elif review_mode == "independent_context" \
+            and assurance == "SINGLE_CONTEXT":
+        run_errors.append(
+            "review_mode=independent_context 与 assurance=SINGLE_CONTEXT 矛盾")
+    validation = "FAIL" if (any_fail or run_errors) else (
+        "PASS_WITH_LIMITATIONS" if (any_pwl or run_caps) else "PASS")
+
     run["completion_status"] = completion
     run["validation_result"] = validation
     run["assurance_level"] = assurance
@@ -1165,8 +1907,12 @@ def cmd_finalize(args):
         "completion_status": completion,
         "validation_result": validation,
         "assurance_level": assurance,
+        "review_mode": review_mode,
+        "workspace_audit_mode": workspace_audit_mode,
+        "industry": manifest.get("company", {}).get("industry"),
         "matrix": matrix,
         "run_errors": run_errors,
+        "run_caps": run_caps,
         "finalized_at": now_iso(),
     }
     atomic_write_json(run_root / RESULT_REL, result)
@@ -1196,6 +1942,10 @@ def cmd_summary(args):
     print(f"completion_status={result['completion_status']}")
     print(f"validation_result={result['validation_result']}")
     print(f"assurance_level={result['assurance_level']}")
+    print(f"review_mode={result['review_mode']}")
+    print("workspace_audit_mode=" + result.get("workspace_audit_mode", "git"))
+    print("industry=" + json.dumps(result.get("industry"), ensure_ascii=False,
+                                   separators=(",", ":")))
     counts = {}
     for row in result["matrix"]:
         counts[row["computed_status"]] = \
@@ -1210,6 +1960,10 @@ def cmd_summary(args):
         print("run 级错误:")
         for e in result["run_errors"]:
             print(f"  - {e}")
+    if result.get("run_caps"):
+        print("运行级限制:")
+        for cap in result["run_caps"]:
+            print(f"  - {cap}")
     return EXIT_OK
 
 
@@ -1262,7 +2016,7 @@ def build_parser():
     p_init = sub.add_parser("init", help="初始化运行根 + manifest + 锁")
     add_registry(p_init)
     p_init.add_argument("--company", required=True)
-    p_init.add_argument("--visibility", required=True,
+    p_init.add_argument("--visibility", default="private",
                         choices=["private", "public"])
     p_init.add_argument("--platform", required=True,
                         choices=["codex", "claude_code"])
@@ -1295,6 +2049,19 @@ def build_parser():
     p_finish.add_argument("--artifact", action="append", default=[])
     p_finish.add_argument("--evidence-file", type=Path, default=None)
     p_finish.set_defaults(func=cmd_finish_skill)
+
+    p_review = sub.add_parser("set-review-mode", help="记录实际复核模式")
+    add_run_root(p_review)
+    p_review.add_argument(
+        "--mode", required=True,
+        choices=["independent_context", "user", "self_review"])
+    p_review.set_defaults(func=cmd_set_review_mode)
+
+    p_industry = sub.add_parser(
+        "set-industry", help="按 50%/累计 80% 规则写入公司行业 scope")
+    add_run_root(p_industry)
+    p_industry.add_argument("--industry-file", type=Path, required=True)
+    p_industry.set_defaults(func=cmd_set_industry)
 
     p_ck = sub.add_parser("checkpoint", help="中间验证 COMPLETE 项产物")
     add_registry(p_ck)
