@@ -67,6 +67,22 @@
         {
           "kind": "min_command_receipts",
           "n": 7
+        },
+        {
+          "kind": "advisory_command_operations",
+          "values": [
+            {"op": "ratios", "feeds": "quality-screen", "layer": 1},
+            {"op": "mainbz", "feeds": "financial-data", "layer": 1},
+            {"op": "peers", "feeds": "industry-funnel", "layer": 1},
+            {"op": "managers", "feeds": "management-deep-dive", "layer": 2},
+            {"op": "repurchase", "feeds": "investment-research", "layer": 2},
+            {"op": "pledge", "feeds": "thesis-tracker", "layer": 2},
+            {"op": "audit", "feeds": "management-deep-dive", "layer": 2},
+            {"op": "express", "feeds": "earnings-review", "layer": 2},
+            {"op": "holder-num", "feeds": "investment-research", "layer": 2},
+            {"op": "north-hold", "feeds": "news-pulse", "layer": 3},
+            {"op": "kline", "feeds": "thesis-drift", "layer": 4}
+          ]
         }
       ],
       "domain_evidence_status": "IMPLEMENTED",

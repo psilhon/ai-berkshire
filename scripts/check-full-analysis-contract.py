@@ -34,6 +34,8 @@ EVIDENCE_RULE_KINDS = {
     "min_judgments_with_falsification", "min_role_runs",
     "min_command_receipts", "required_fact_fields",
     "required_judgment_rule_ids", "required_command_operations",
+    # advisory: token-gated 补充命令; gate 不执法 (缺失不失败), 仅登记预期取数
+    "advisory_command_operations",
 }
 COUNT_RULE_KINDS = {
     "min_facts", "min_dual_source_facts", "min_calculations",
@@ -59,6 +61,38 @@ _INFRA_PREFIXES = ("skills/", "tools/", "scripts/", "tests/", "data/", "docs/",
 
 def _err(errors, msg):
     errors.append(msg)
+
+
+def _check_advisory_values(errors, label, rule, known_skills):
+    """advisory_command_operations.values = 对象数组 {op, feeds, layer}.
+
+    这是"取数命令 → 消费 skill → 采集层"的唯一机器映射 (编排 skill 正文不复述):
+    op 非空且唯一; feeds 须属注册表内 skill 名 (防喂养目标 typo); layer 为 1-6 int。
+    gate 不据此执法 (缺失不失败), 仅登记预期取数与路由。
+    """
+    values = rule.get("values")
+    if not isinstance(values, list) or not values:
+        _err(errors, f"{label} advisory_command_operations values 必须为非空对象数组: {rule!r}")
+        return
+    ops = []
+    for entry in values:
+        if not isinstance(entry, dict):
+            _err(errors, f"{label} advisory value 必须为 {{op,feeds,layer}} 对象: {entry!r}")
+            continue
+        op = entry.get("op")
+        feeds = entry.get("feeds")
+        layer = entry.get("layer")
+        if not isinstance(op, str) or not op:
+            _err(errors, f"{label} advisory value op 必须为非空字符串: {entry!r}")
+        else:
+            ops.append(op)
+        if not isinstance(feeds, str) or feeds not in known_skills:
+            _err(errors, f"{label} advisory value feeds 必须为注册表内 skill 名: {entry!r}")
+        if not isinstance(layer, int) or isinstance(layer, bool) \
+                or not (1 <= layer <= 6):
+            _err(errors, f"{label} advisory value layer 必须为 1-6 的 int: {entry!r}")
+    if len(ops) != len(set(ops)):
+        _err(errors, f"{label} advisory value op 必须唯一: {sorted(ops)}")
 
 
 def extract_save_paths(text):
@@ -166,6 +200,7 @@ def validate(registry_path: Path, repo_root: Path):
     dup_names = {n for n in names if names.count(n) > 1}
     if dup_names:
         _err(errors, f"name 重复: {sorted(dup_names)}")
+    known_skill_names = {n for n in names if isinstance(n, str) and n}
 
     seen_paths = {}
     for item in skills:
@@ -259,6 +294,8 @@ def validate(registry_path: Path, repo_root: Path):
                 n = rule.get("n", 1)
                 if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
                     _err(errors, f"{label} evidence_rule n 必须为正 int: {rule!r}")
+            elif rule["kind"] == "advisory_command_operations":
+                _check_advisory_values(errors, label, rule, known_skill_names)
             else:
                 values = rule.get("values")
                 if not isinstance(values, list) or not values \

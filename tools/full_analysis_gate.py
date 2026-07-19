@@ -1355,6 +1355,8 @@ EVIDENCE_RULE_KINDS = {
     "min_judgments_with_falsification", "min_role_runs",
     "min_command_receipts", "required_fact_fields",
     "required_judgment_rule_ids", "required_command_operations",
+    # advisory: token-gated 补充命令; 无 elif 分支 => 永不失败 (仅登记预期取数)
+    "advisory_command_operations",
 }
 
 

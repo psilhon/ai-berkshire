@@ -274,6 +274,62 @@ class TestPhase2EvidenceRules(_ValidatorCase):
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "evidence_rule n")
 
+    def test_advisory_command_operations_kind_passes(self):
+        """advisory_command_operations: op/feeds/layer 对象数组, feeds 属注册表 skill。"""
+        def mutate(reg):
+            reg["skills"][0]["domain_evidence_status"] = "IMPLEMENTED"
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "required_command_operations", "values": ["overview"]},
+                {"kind": "advisory_command_operations", "values": [
+                    {"op": "ratios", "feeds": "skill-02", "layer": 1},
+                    {"op": "mainbz", "feeds": "skill-03", "layer": 2},
+                ]},
+            ]
+        proc = self.run_validator(make_registry(mutate=mutate))
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+    def test_advisory_command_operations_needs_values(self):
+        def mutate(reg):
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "advisory_command_operations", "n": 3}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "values")
+
+    def test_advisory_command_operations_rejects_bare_strings(self):
+        """裸字符串数组是旧形态, 现须为对象数组 (单真源: op/feeds/layer)。"""
+        def mutate(reg):
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "advisory_command_operations",
+                 "values": ["ratios", "mainbz"]}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "对象")
+
+    def test_advisory_command_operations_feeds_must_be_registry_skill(self):
+        """feeds 必须是注册表内 skill 名, 防喂养目标 typo。"""
+        def mutate(reg):
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "advisory_command_operations", "values": [
+                    {"op": "ratios", "feeds": "no-such-skill", "layer": 1}]}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "feeds")
+
+    def test_advisory_command_operations_layer_must_be_valid(self):
+        def mutate(reg):
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "advisory_command_operations", "values": [
+                    {"op": "ratios", "feeds": "skill-02", "layer": 9}]}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "layer")
+
+    def test_advisory_command_operations_op_must_be_unique(self):
+        def mutate(reg):
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "advisory_command_operations", "values": [
+                    {"op": "ratios", "feeds": "skill-02", "layer": 1},
+                    {"op": "ratios", "feeds": "skill-03", "layer": 2}]}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "op")
+
 
 class TestRealRegistry(unittest.TestCase):
     """真实仓库注册表必须通过 (默认参数直跑)。"""

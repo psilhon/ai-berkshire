@@ -7,6 +7,8 @@
 > 前提：账号为**付费 Tushare Pro（10,000 积分）**；下列接口除 Level-2 逐笔/部分另类需单独开通外，基本全覆盖。
 > ⚠️ **积分门槛为估计值**，评估时 tushare.pro 实时文档抓取不可用；接入前请在个人中心最终核对每个接口的积分与权限。
 > 定位：数据集成路线图，供 `tools/ashare_plugin/` 演进参考；不构成投资建议。
+>
+> **单真源提示**：advisory 命令的编排路由（命令 → 消费 skill → 采集层）以 `tools/full_analysis_contract.json` 的 `advisory_command_operations.values`（`feeds`/`layer` 字段）为唯一真源；下表『受益 skill』列是**集成动机**参考，可能比契约 `feeds` 更宽或不同，**不作编排路由依据**。
 
 ## 一、现状定性（关键判断）
 
@@ -22,7 +24,7 @@
 
 ### 🔴 Tier 1 — 直接补当前硬空缺（建议先做）
 
-| Tushare 接口 | 补的空缺 | 对应 skill | ~积分 |
+| Tushare 接口 | 补的空缺 | 受益 skill（集成动机，非路由） | ~积分 |
 |---|---|---|---|
 | **`fina_mainbz`** 主营业务构成 | 分部收入（集运/码头、分产品/分地区）当前**只靠东财 F10 单源** → Tushare 给独立第二源，分部真双源 | investment-research / quality-screen | ~2000 |
 | **`stk_managers`** 上市公司管理层 | **直接补 management-deep-dive 里"管理层履历（出生年/首次任职）未取"的硬缺口** | management-deep-dive | ~2000 |
