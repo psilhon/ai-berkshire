@@ -36,14 +36,28 @@ This skill is generated from `skills/ashare-data.md` so Claude Code and Codex us
 
 | 命令 | 用途 | 关键参数 | 数据源（主 → 备） |
 |------|------|---------|-----------------|
-| `quote <代码>` | 实时行情快照 + 52周高低 | — | 腾讯行情（盘中快照）+ 东财52周 |
+| `quote <代码>` | 实时行情快照 + 52周高低 + 价格双源核对 | — | 腾讯行情（盘中快照）+ 东财52周 + 新浪（独立价格第二源） |
 | `financials <代码>` | 近5年核心财务（营收/净利/EPS/ROE） | — | 东方财富 |
-| `valuation <代码>` | 估值指标（PE/PB/市值）+ 市值自洽验算 | — | 腾讯行情 + 东财52周 |
+| `valuation <代码>` | 估值指标（PE/PB/市值）+ 市值自洽验算 + 价格双源 + Tushare 股息率 | — | 腾讯行情 + 东财52周 + 新浪价格双源 |
 | `search <关键词>` | 公司名/拼音 → 股票代码（≤10条） | — | 东方财富 suggest |
 | `history <代码>` | 年报长序列：ROE/毛利率/净利率/OCF÷净利/利息覆盖 | `--years N`（1-50，默认10） | 东方财富（仅年报） |
 | `equity-history <代码>` | 股本变动史（增发/回购/配售及原因） | — | 东方财富 |
 | `signals <代码>` | 龙虎榜/资金流/解禁/融资融券四块信号（两融覆盖与时效见陷阱7） | `--date YYYY-MM-DD`（仅龙虎榜，且只在深交所备用源路径真正按日过滤） | 东财 → 新浪（资金流）/深交所（深市龙虎榜） |
 | `announcements <代码>` | 公司公告列表（含PDF链接） | `--limit N`（1-100，默认20） | 巨潮 → 深交所（深市）/东财（沪/北） |
+| `mainbz <代码>` | 主营业务构成 分产品 + 分地区（收入/占比/利润） | — | Tushare `fina_mainbz`（**分部独立第二源**，需 TUSHARE_TOKEN） |
+| `managers <代码>` | 管理层履历：姓名/职位/性别/出生年/学历/任职起止/简历 | — | Tushare `stk_managers`（**补履历缺口**，需 TUSHARE_TOKEN） |
+| `repurchase <代码>` | 股票回购：进度/数量/金额/价格上限 | — | Tushare `repurchase`（**回购结构化**，需 TUSHARE_TOKEN） |
+| `pledge <代码>` | 股权质押：比例趋势/笔数（高质押=治理红线） | — | Tushare `pledge_stat`（**治理风险信号**，需 TUSHARE_TOKEN） |
+| `express <代码>` | 业绩快报：财报前早期业绩（营收/净利/EPS/ROE/同比） | — | Tushare `express`（**提前量**，需 TUSHARE_TOKEN） |
+| `kline <代码>` | 前复权日线序列 + 区间高低/收益 + 腾讯交叉 | `--days N`（默认120） | Tushare `daily`+`adj_factor`（**独立历史价源**，需 TUSHARE_TOKEN） |
+| `audit <代码>` | 财务审计意见：是否标准无保留 + 事务所 + 费用 | — | Tushare `fina_audit`（**治理信号**，需 TUSHARE_TOKEN） |
+| `holder-num <代码>` | 股东户数趋势（筹码集中度） | — | Tushare `stk_holdernumber`（需 TUSHARE_TOKEN） |
+| `ratios <代码>` | 财务比率全景 ROE/扣非ROE/ROA/ROIC/毛利/净利/流动比/速动比/OCF·营收 | — | Tushare `fina_indicator`（**quality-screen 独立比率集**，需 TUSHARE_TOKEN） |
+| `peers <代码>` | 行业可比公司池：申万一/二/三级成员股（industry-funnel 候选池） | `--level l1/l2/l3`（默认l3） | Tushare `index_member_all`（**候选池自动化**，需 TUSHARE_TOKEN） |
+| `north-hold <代码>` | 北向持股趋势（占比/外资情绪） | — | Tushare `hk_hold`（沪深股通，需 TUSHARE_TOKEN） |
+| `index-val [指数]` | 大盘估值分位：PE/PB 历史分位（市场择时锚） | 指数别名 hs300/zz500/sse/cyb…（默认hs300） | Tushare `index_dailybasic`（需 TUSHARE_TOKEN） |
+
+> 上表为常用命令；CLI 另有一批 Tushare 增强命令（`pe-band`/`dividend`/`shareholders`/`management`/`consensus`/`research-visits`/`insider-trades`/`industry-pe`/`hk-quote`/`ah-cross-check`/`disclosure-calendar`/`news`），均需 `TUSHARE_TOKEN`，`python3 tools/ashare_data.py --help` 可列全。
 
 ---
 
@@ -123,6 +137,15 @@ python3 tools/ashare_data.py signals <代码>
 - 财务、公告、重大事项、文本名称、市场信号及任何期间/单位不一致字段不适用上述覆盖，仍保留原始披露或主数据值；接口无权限、限流或空数据时也不得覆盖。
 - 实时腾讯行情只与同一交易日已更新的 Tushare 日终数据比较；日期不同必须为 `INSUFFICIENT`。
 - `MATCH` 只代表对应字段在相同标的、期间、单位和报告版本下偏差不超过 1%，不代表整份报告自动完成双源核验。
+- **扩展字段（`quote`/`valuation`）**：Tushare `daily_basic` 额外取 `pe_ttm`（对齐腾讯"动态PE"口径，可定位 `pe` 冲突是否只是 TTM vs 静态差）、`dv_ratio`（股息率）、`dv_ttm`、`ps_ttm`。`valuation` 会显示 Tushare `dv_ratio` 股息率，但**其口径可能含上一周期高分红、非前瞻收益率**，须按分红期间自行核对，不能直接当作研究报告的前瞻股息率第二源。
+
+## 独立价格第二源（新浪）
+
+`quote`/`valuation` 在腾讯行情之外，另取**新浪独立行情**（`hq.sinajs.cn`，不同发布主体、不同传播链）做价格双源核对：
+
+- 输出 `价格双源` 行：`MATCH`（偏差≤1%，价格达真独立双源）/ `CONFLICT`（两源冲突，两值并列）/ 新浪不可用（价格暂为单源）。
+- 这是真正的第二**行情链**（区别于 Tushare 交叉，也区别于东财 52 周），失败时静默降级为单源、从不打断主行情。
+- 价格双源只覆盖现价；PE/PB/市值仍以腾讯为主、Tushare 交叉，不因价格双源自动升级为逐字段双源。
 
 ---
 

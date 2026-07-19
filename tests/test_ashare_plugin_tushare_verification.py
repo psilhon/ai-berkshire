@@ -240,6 +240,8 @@ class TestCommandVerification(unittest.TestCase):
                 "circ_mv": 800000,
                 "pe": 8,
                 "pb": 1.1,
+                "pe_ttm": 8,
+                "dv_ratio": 6.88,
                 "turnover_rate": 1.2,
             }]),
         })
@@ -256,8 +258,28 @@ class TestCommandVerification(unittest.TestCase):
 
         self.assertEqual(
             {field["field"] for field in result["fields"]},
-            {"close", "market_cap", "float_cap", "pe", "pb", "turnover_rate"},
+            {"close", "market_cap", "float_cap", "pe", "pb", "turnover_rate",
+             "pe_ttm", "dividend_yield"},
         )
+
+    def test_quote_surfaces_tushare_dividend_yield_without_tencent_primary(self):
+        client = FakeTushareClient({
+            "daily_basic": _ok("tushare.daily_basic", [{
+                "trade_date": "20260718",
+                "close": 10,
+                "dv_ratio": 6.88,
+            }]),
+        })
+        result = verify_command("quote", "600036", {
+            "quote_time": "20260718150000",
+            "price": "10",
+        }, client=client)
+        dy = next(f for f in result["fields"] if f["field"] == "dividend_yield")
+        # Tencent quote has no dividend yield -> surfaced as INSUFFICIENT but
+        # the independent Tushare value is preserved for the research layer.
+        self.assertEqual(dy["verification_value"], "6.88")
+        self.assertEqual(dy["verification_source"], "tushare.daily_basic")
+        self.assertEqual(dy["status"], "INSUFFICIENT")
 
     def test_financials_selects_same_period_latest_update(self):
         client = FakeTushareClient({
@@ -312,7 +334,32 @@ class TestCommandVerification(unittest.TestCase):
             # P1: Industry benchmark
             "industry-pe",
             "news", "disclosure-calendar", "hk-quote", "ah-cross-check",
+            # Tier 1 gap fillers
+            "mainbz", "managers", "repurchase", "pledge", "express", "kline",
+            # Tier 2 gap fillers
+            "audit", "holder-num", "ratios", "peers", "north-hold",
         })
+
+    def test_managers_and_mainbz_route_to_tushare_primary(self):
+        for command, api in (
+            ("managers", "stk_managers"), ("mainbz", "fina_mainbz"),
+            ("repurchase", "repurchase"), ("pledge", "pledge_stat"),
+            ("express", "express"),
+            ("audit", "fina_audit"), ("holder-num", "stk_holdernumber"),
+            ("ratios", "fina_indicator"), ("peers", "index_member_all"),
+            ("north-hold", "hk_hold"),
+        ):
+            client = FakeTushareClient(
+                {api: _ok(f"tushare.{api}", [{"x": 1}, {"x": 2}])}
+            )
+            result = verify_command(command, "600036", [{}], client=client)
+            field = next(
+                f for f in result["fields"] if f["field"] == f"{api}:row_count"
+            )
+            self.assertEqual(field["status"], "MATCH")
+            self.assertEqual(field["primary_value"], "2")
+            # ts_code was passed (not treated as a search / market command)
+            self.assertEqual(client.calls[0][0], api)
 
     def test_partial_endpoint_failure_keeps_successful_financial_fields(self):
         client = FakeTushareClient({

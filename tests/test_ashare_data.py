@@ -481,5 +481,377 @@ class TestTushareCliVerification(OfflineAshareDataTestCase):
         self.assertIn("NOT_CONFIGURED", output.getvalue())
 
 
+class _FakeTsClient:
+    configured = True
+
+    def __init__(self, rows):
+        # rows: a list (same data for every api) OR a dict {api_name: rows}
+        self._rows = rows
+        self.calls = []
+
+    def query(self, api_name, *, params=None, fields=()):
+        self.calls.append((api_name, dict(params or {})))
+        data = self._rows[api_name] if isinstance(self._rows, dict) else list(self._rows)
+        return {"ok": True, "data": list(data), "source": f"tushare.{api_name}"}
+
+
+class TestManagersCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_current_manager_bios(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"name": "万敏", "title": "董事长", "gender": "M",
+             "birthday": "1965", "edu": "硕士", "national": "中国",
+             "begin_date": "20260701", "end_date": None, "resume": "曾任..."},
+            {"name": "旧董事", "title": "董事", "gender": "M",
+             "birthday": "1960", "edu": "本科", "national": "中国",
+             "begin_date": "20200101", "end_date": "20260630", "resume": "已离任"},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_managers("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("万敏", text)
+        self.assertIn("董事长", text)
+        self.assertIn("stk_managers", text)
+        self.assertIn("1965", text)  # 出生年/履历补齐
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_managers("601919"))
+
+    def test_discoverable(self):
+        proc = run_cli("--help")
+        self.assertIn("managers", proc.stdout)
+
+
+class TestMainbzCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_product_and_region_segments(self, get_client):
+        client = _FakeTsClient([
+            {"end_date": "20251231", "bz_item": "集装箱航运业务",
+             "bz_sales": 210731000000, "bz_profit": 40964000000,
+             "bz_cost": None, "curr_type": "CNY"},
+            {"end_date": "20251231", "bz_item": "码头业务",
+             "bz_sales": 12041000000, "bz_profit": 3120000000,
+             "bz_cost": None, "curr_type": "CNY"},
+        ])
+        get_client.return_value = client
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_mainbz("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("集装箱航运业务", text)
+        self.assertIn("fina_mainbz", text)
+        types = [c[1].get("type") for c in client.calls]
+        self.assertIn("P", types)  # 分产品
+        self.assertIn("D", types)  # 分地区
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_mainbz("601919"))
+
+    def test_discoverable(self):
+        proc = run_cli("--help")
+        self.assertIn("mainbz", proc.stdout)
+
+
+class TestRepurchaseCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_buyback_events(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"ann_date": "20260707", "end_date": "20261006", "proc": "实施",
+             "vol": 3000000, "amount": 41361744, "high_limit": 15.40,
+             "low_limit": None},
+            {"ann_date": "20260706", "end_date": "20261006", "proc": "董事会预案",
+             "vol": 100000000, "amount": 1540000000, "high_limit": 15.40,
+             "low_limit": None},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_repurchase("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2026-07-07", text)
+        self.assertIn("实施", text)
+        self.assertIn("repurchase", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_repurchase("601919"))
+
+    def test_discoverable(self):
+        proc = run_cli("--help")
+        self.assertIn("repurchase", proc.stdout)
+
+
+class TestPledgeCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_pledge_ratio_trend(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"end_date": "20260630", "pledge_count": 0, "pledge_ratio": 0.0,
+             "rest_pledge": 0, "unrest_pledge": 0, "total_share": 15268.12},
+            {"end_date": "20251231", "pledge_count": 2, "pledge_ratio": 1.5,
+             "rest_pledge": 100, "unrest_pledge": 50, "total_share": 15489.88},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_pledge("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2026-06-30", text)
+        self.assertIn("pledge_stat", text)
+        self.assertIn("质押", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_pledge("601919"))
+
+    def test_discoverable(self):
+        proc = run_cli("--help")
+        self.assertIn("pledge", proc.stdout)
+
+
+class TestExpressCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_earnings_flash(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"ann_date": "20220311", "end_date": "20211231",
+             "revenue": 333694000000.0, "n_income": 89296000000.0,
+             "diluted_eps": 5.59, "diluted_roe": 101.15,
+             "yoy_net_profit": 9927000000.0, "yoy_sales": 94.85,
+             "bps": 8.31, "perf_summary": "运价大涨"},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_express("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2021-12-31", text)
+        self.assertIn("express", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_express("601919"))
+
+    def test_discoverable(self):
+        proc = run_cli("--help")
+        self.assertIn("express", proc.stdout)
+
+
+class TestKlineCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_computes_forward_adjusted_series(self, get_client):
+        get_client.return_value = _FakeTsClient({
+            "daily": [
+                {"trade_date": "20260101", "open": 9, "high": 11, "low": 8,
+                 "close": 10, "pct_chg": 1.0},
+                {"trade_date": "20260717", "open": 19, "high": 21, "low": 18,
+                 "close": 20, "pct_chg": 2.0},
+            ],
+            "adj_factor": [
+                {"trade_date": "20260101", "adj_factor": 1.0},
+                {"trade_date": "20260717", "adj_factor": 2.0},
+            ],
+        })
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_kline("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        # 前复权: 20260101 close 10 * 1.0/2.0 = 5.00 ; 20260717 stays 20.00
+        self.assertIn("5.00", text)
+        self.assertIn("20.00", text)
+        self.assertIn("kline", text)  # 数据来源标注
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_kline("601919"))
+
+    def test_discoverable(self):
+        proc = run_cli("--help")
+        self.assertIn("kline", proc.stdout)
+
+
+class TestAuditCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_audit_opinion(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"end_date": "20251231", "ann_date": "20260320",
+             "audit_result": "标准无保留意见",
+             "audit_agency": "信永中和会计师事务所", "audit_fees": 11587000.0},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_audit("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("标准无保留意见", text)
+        self.assertIn("fina_audit", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_flags_non_standard_opinion(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"end_date": "20251231", "ann_date": "20260320",
+             "audit_result": "保留意见", "audit_agency": "某所"},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ashare_data.cmd_audit("601919")
+        self.assertIn("⚠️", out.getvalue())  # 非标意见须告警
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_audit("601919"))
+
+    def test_discoverable(self):
+        self.assertIn("audit", run_cli("--help").stdout)
+
+
+class TestHolderNumCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_holder_count_trend(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"end_date": "20260331", "ann_date": "20260430", "holder_num": 397399},
+            {"end_date": "20251231", "ann_date": "20260320", "holder_num": 410000},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_holder_num("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("397,399", text)  # 千分位格式
+        self.assertIn("stk_holdernumber", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_holder_num("601919"))
+
+    def test_discoverable(self):
+        self.assertIn("holder-num", run_cli("--help").stdout)
+
+
+class TestRatiosCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_ratio_series(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"end_date": "20251231", "update_flag": "1", "roe": 13.22,
+             "roe_dt": 13.16, "roa": 8.08, "roic": 9.23,
+             "grossprofit_margin": 20.05, "netprofit_margin": 16.05,
+             "debt_to_assets": 41.42, "current_ratio": 1.51,
+             "quick_ratio": 1.45, "ocf_to_or": 0.21, "bps": 14.99, "eps": 1.99},
+            {"end_date": "20241231", "update_flag": "1", "roe": 22.60,
+             "roa": 12.0, "grossprofit_margin": 25.0},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_ratios("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2025-12-31", text)
+        self.assertIn("13.22", text)  # ROE
+        self.assertIn("fina_indicator", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_ratios("601919"))
+
+    def test_discoverable(self):
+        self.assertIn("ratios", run_cli("--help").stdout)
+
+
+class TestPeersCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_lists_industry_member_pool(self, get_client):
+        members = [
+            {"l1_name": "交通运输", "l2_name": "航运港口", "l3_name": "航运",
+             "l1_code": "801170.SI", "l2_code": "801992.SI", "l3_code": "851761.SI",
+             "ts_code": "601919.SH", "name": "中远海控"},
+            {"l1_name": "交通运输", "l2_name": "航运港口", "l3_name": "航运",
+             "l1_code": "801170.SI", "l2_code": "801992.SI", "l3_code": "851761.SI",
+             "ts_code": "601872.SH", "name": "招商轮船"},
+            {"l1_name": "交通运输", "l2_name": "航运港口", "l3_name": "航运",
+             "l1_code": "801170.SI", "l2_code": "801992.SI", "l3_code": "851761.SI",
+             "ts_code": "600026.SH", "name": "中远海能"},
+        ]
+        client = _FakeTsClient(members)
+        get_client.return_value = client
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_peers("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("航运", text)           # 申万行业归属
+        self.assertIn("招商轮船", text)         # 候选池成员
+        self.assertIn("index_member_all", text)
+        # target 自身应被标出
+        self.assertIn("中远海控", text)
+        # 两次调用：反查行业 + 查成员
+        self.assertGreaterEqual(
+            sum(1 for c in client.calls if c[0] == "index_member_all"), 2
+        )
+
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_level_l2_uses_l2_code(self, get_client):
+        members = [{"l1_name": "交通运输", "l2_name": "航运港口", "l3_name": "航运",
+                    "l1_code": "801170.SI", "l2_code": "801992.SI", "l3_code": "851761.SI",
+                    "ts_code": "601919.SH", "name": "中远海控"}]
+        client = _FakeTsClient(members)
+        get_client.return_value = client
+        with redirect_stdout(StringIO()):
+            ashare_data.cmd_peers("601919", level="l2")
+        # 成员查询用了 l2_code 参数
+        member_calls = [c for c in client.calls if "l2_code" in c[1]]
+        self.assertTrue(member_calls)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_peers("601919"))
+
+    def test_discoverable(self):
+        self.assertIn("peers", run_cli("--help").stdout)
+
+
+class TestNorthHoldCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_northbound_holding_trend(self, get_client):
+        get_client.return_value = _FakeTsClient([
+            {"trade_date": "20260630", "ts_code": "601919.SH",
+             "name": "中远海控", "vol": 268178679, "ratio": 2.13},
+            {"trade_date": "20260531", "ts_code": "601919.SH",
+             "name": "中远海控", "vol": 250000000, "ratio": 2.00},
+        ])
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_north_hold("601919")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("2.13", text)      # 北向持股占比
+        self.assertIn("hk_hold", text)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_north_hold("601919"))
+
+    def test_discoverable(self):
+        self.assertIn("north-hold", run_cli("--help").stdout)
+
+
+class TestIndexValCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_shows_market_valuation_percentile(self, get_client):
+        rows = [
+            {"trade_date": "20200101", "pe": 12.0, "pe_ttm": 11.5, "pb": 1.2},
+            {"trade_date": "20260717", "pe": 14.21, "pe_ttm": 13.98, "pb": 1.42},
+        ]
+        client = _FakeTsClient(rows)
+        get_client.return_value = client
+        with redirect_stdout(StringIO()) as out:
+            ok = ashare_data.cmd_index_val("hs300")
+        text = out.getvalue()
+        self.assertTrue(ok)
+        self.assertIn("13.98", text)   # 当前 PE(TTM)
+        self.assertIn("分位", text)
+        # 别名 hs300 -> 000300.SH
+        codes = [c[1].get("ts_code") for c in client.calls]
+        self.assertIn("000300.SH", codes)
+
+    @mock.patch.object(ashare_data, "_get_tushare_client", return_value=None)
+    def test_requires_token(self, _gc):
+        self.assertFalse(ashare_data.cmd_index_val("hs300"))
+
+    def test_discoverable(self):
+        self.assertIn("index-val", run_cli("--help").stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

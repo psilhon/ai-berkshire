@@ -42,12 +42,28 @@ COMMAND_APIS = {
     # P3: HK stock
     "hk-quote": ("hk_daily", "hk_basic"),
     "ah-cross-check": ("hk_daily", "daily_basic"),
+    # Tier 1 gap fillers (Tushare-primary)
+    "mainbz": ("fina_mainbz",),
+    "managers": ("stk_managers",),
+    "repurchase": ("repurchase",),
+    "pledge": ("pledge_stat",),
+    "express": ("express",),
+    "kline": ("daily", "adj_factor"),
+    # Tier 2 gap fillers
+    "audit": ("fina_audit",),
+    "holder-num": ("stk_holdernumber",),
+    "ratios": ("fina_indicator",),
+    "peers": ("index_member_all",),
+    "north-hold": ("hk_hold",),
 }
 
 API_FIELDS = {
     "daily_basic": (
         "ts_code", "trade_date", "close", "turnover_rate", "pe", "pb",
         "total_share", "float_share", "total_mv", "circ_mv",
+        # Expanded Tushare content: TTM PE (resolves 腾讯"动态PE"口径),
+        # dividend yield (独立股息率第二源), TTM dividend yield, TTM PS.
+        "pe_ttm", "dv_ratio", "dv_ttm", "ps_ttm",
     ),
     "income": (
         "ts_code", "ann_date", "f_ann_date", "end_date", "report_type",
@@ -64,6 +80,9 @@ API_FIELDS = {
     "fina_indicator": (
         "ts_code", "ann_date", "end_date", "update_flag", "roe",
         "grossprofit_margin", "netprofit_margin", "debt_to_assets",
+        # Expanded ratio set for quality-screen (roe_dt=扣非ROE, ocf_to_or=经营现金流/营收)
+        "roe_dt", "roa", "roic", "assets_to_eqt", "current_ratio",
+        "quick_ratio", "ocf_to_or", "bps", "eps",
     ),
     "share_float": ("ts_code", "ann_date", "float_date", "float_share", "float_ratio"),
     "stock_basic": ("ts_code", "symbol", "name", "market", "list_status", "list_date"),
@@ -110,6 +129,46 @@ API_FIELDS = {
     ),
     "index_classify": (
         "index_code", "industry_name", "level", "parent_code",
+    ),
+    # Tier 1 gap fillers: 主营业务构成（分部收入独立第二源）+ 管理层履历
+    "fina_mainbz": (
+        "ts_code", "end_date", "bz_item", "bz_sales", "bz_profit",
+        "bz_cost", "curr_type", "update_flag",
+    ),
+    "stk_managers": (
+        "ts_code", "ann_date", "name", "gender", "lev", "title",
+        "edu", "national", "birthday", "begin_date", "end_date", "resume",
+    ),
+    "repurchase": (
+        "ts_code", "ann_date", "end_date", "proc", "exp_date",
+        "vol", "amount", "high_limit", "low_limit",
+    ),
+    "pledge_stat": (
+        "ts_code", "end_date", "pledge_count", "unrest_pledge",
+        "rest_pledge", "total_share", "pledge_ratio",
+    ),
+    "express": (
+        "ts_code", "ann_date", "end_date", "revenue", "n_income",
+        "diluted_eps", "diluted_roe", "yoy_net_profit", "yoy_sales",
+        "bps", "perf_summary", "update_flag",
+    ),
+    "daily": (
+        "ts_code", "trade_date", "open", "high", "low", "close",
+        "pre_close", "pct_chg", "vol", "amount",
+    ),
+    "adj_factor": ("ts_code", "trade_date", "adj_factor"),
+    "fina_audit": (
+        "ts_code", "ann_date", "end_date", "audit_result",
+        "audit_agency", "audit_fees",
+    ),
+    "stk_holdernumber": ("ts_code", "ann_date", "end_date", "holder_num"),
+    "index_member_all": (
+        "l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name",
+        "ts_code", "name", "in_date", "is_new",
+    ),
+    "hk_hold": ("code", "trade_date", "ts_code", "name", "vol", "ratio", "exchange"),
+    "index_dailybasic": (
+        "ts_code", "trade_date", "pe", "pe_ttm", "pb", "dv_ratio", "total_mv",
     ),
     # P2/P3: Independent paid permission APIs
     "major_news": (
@@ -443,6 +502,8 @@ def _market_fields(
             ("pe", "pe", "pe", "multiple", Decimal("1"), Decimal("1")),
             ("pb", "pb", "pb", "multiple", Decimal("1"), Decimal("1")),
             ("turnover_rate", "turnover_rate", "turnover_rate", "percent", Decimal("1"), Decimal("1")),
+            # 腾讯"动态PE"对齐 Tushare TTM 口径，用于定位 pe CONFLICT 是否为口径差。
+            ("pe_ttm", "pe", "pe_ttm", "multiple", Decimal("1"), Decimal("1")),
         ])
 
     fields = []
@@ -459,6 +520,22 @@ def _market_fields(
             verification_period=verification_period,
             primary_unit=unit,
             verification_unit=unit,
+        ))
+
+    if command in {"quote", "valuation"}:
+        # 独立股息率第二源：腾讯行情不提供股息率，故无主值可比（记 INSUFFICIENT），
+        # 但把 Tushare dv_ratio 的实测值透传出来，供研究层作股息率的独立第二源。
+        dv = _decimal(selected.get("dv_ratio"))
+        fields.append(compare_decimal(
+            "dividend_yield",
+            None,
+            None if dv is None else dv,
+            primary_source="tencent",
+            verification_source="tushare.daily_basic",
+            primary_period=primary_period,
+            verification_period=verification_period,
+            primary_unit="percent",
+            verification_unit="percent",
         ))
     return fields
 
@@ -707,6 +784,8 @@ def verify_command(
         "shareholders", "dividend", "management",
         "industry-pe",
         "news", "disclosure-calendar", "hk-quote", "ah-cross-check",
+        "mainbz", "managers", "repurchase", "pledge", "express", "kline",
+        "audit", "holder-num", "ratios", "peers", "north-hold",
     }:
         fields = _tushare_primary_fields(results)
     else:

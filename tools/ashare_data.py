@@ -18,7 +18,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_EVEN
 
 try:
@@ -32,6 +32,7 @@ try:
         apply_market_precedence,
         safe_verify_command,
     )
+    from tools.ashare_plugin.quote import parse_sina_quote, price_cross_check
 except ModuleNotFoundError:  # direct execution: tools/ is the script directory
     from ashare_plugin.transport import TransportClient
     from ashare_plugin.disclosures import fetch_announcements
@@ -43,6 +44,7 @@ except ModuleNotFoundError:  # direct execution: tools/ is the script directory
         apply_market_precedence,
         safe_verify_command,
     )
+    from ashare_plugin.quote import parse_sina_quote, price_cross_check
 
 _DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
 _TRANSPORT = TransportClient()
@@ -238,6 +240,14 @@ def _fmt_times(value) -> str:
         return str(value)
 
 
+def _fmt_date(value) -> str:
+    """YYYYMMDD（或含分隔符）→ YYYY-MM-DD；无法解析时原样返回。"""
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())[:8]
+    if len(digits) == 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    return str(value) if value not in (None, "") else "-"
+
+
 def _safe_verification(command, subject, primary_data, *, trade_date=None):
     try:
         return safe_verify_command(
@@ -310,6 +320,47 @@ def _print_precedence(verification):
             )
 
 
+def _sina_price(code: str):
+    """独立第二行情源（新浪）当前价；失败时返回 None，从不打断主行情。"""
+    try:
+        raw = _TRANSPORT.get_text(
+            f"https://hq.sinajs.cn/list={_qq_code(code)}",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+                "Referer": "https://finance.sina.com.cn",
+            },
+        )
+    except Exception:
+        return None
+    parsed = parse_sina_quote(raw)
+    return parsed.get("price") if parsed else None
+
+
+def _print_price_cross_check(tencent_price, code):
+    """打印腾讯 vs 新浪的独立价格双源核对（真第二行情链）。"""
+    cc = price_cross_check(tencent_price, _sina_price(code))
+    if cc["status"] == "MATCH":
+        print(
+            f"  价格双源:   ✅ 腾讯 {cc['primary_price']} = 新浪 "
+            f"{cc['second_price']}（偏差 {cc['deviation_pct']}%，独立第二源）"
+        )
+    elif cc["status"] == "CONFLICT":
+        print(
+            f"  价格双源:   ⚠️ 腾讯 {cc['primary_price']} vs 新浪 "
+            f"{cc['second_price']}（偏差 {cc['deviation_pct']}%，冲突）"
+        )
+    else:
+        print("  价格双源:   新浪独立源不可用（价格暂为单源）")
+
+
+def _tushare_dividend_yield(verification):
+    """从验证块提取 Tushare 独立股息率（dv_ratio），无则返回 None。"""
+    for field in verification.get("fields", []):
+        if field.get("field") == "dividend_yield":
+            return field.get("verification_value")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 命令实现
 # ---------------------------------------------------------------------------
@@ -351,6 +402,7 @@ def cmd_quote(code: str):
     high_52w, low_52w = _fetch_52w(code)
     print(f"  52周最高:   {high_52w}")
     print(f"  52周最低:   {low_52w}")
+    _print_price_cross_check(d["price"], code)
     _print_precedence(verification)
     _print_verification(verification)
     return True
@@ -384,9 +436,16 @@ def cmd_valuation(code: str):
     print(f"  流通市值:   {d['float_cap']}亿")
     print(f"  PE(动):     {d['pe']}")
     print(f"  PB:         {d['pb']}")
+    dv_yield = _tushare_dividend_yield(verification)
+    if dv_yield is not None:
+        print(
+            f"  股息率:     {dv_yield}%（Tushare dv_ratio 口径，"
+            f"可能含上一周期高分红，非前瞻股息率，需按分红期间自行核对）"
+        )
     high_52w, low_52w = _fetch_52w(code)
     print(f"  52周最高:   {high_52w}")
     print(f"  52周最低:   {low_52w}")
+    _print_price_cross_check(price, code)
 
     # 市值验算
     try:
@@ -1581,6 +1640,778 @@ def cmd_management(code: str):
     return True
 
 
+def cmd_managers(code: str):
+    """上市公司管理层履历——Tushare stk_managers。
+
+    获取董监高姓名、职位、性别、出生年、学历、任职起止与简历，
+    补 management-deep-dive 的"履历（出生年/首次任职）未取"缺口。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "stk_managers",
+        params={"ts_code": ts_code},
+        fields=API_FIELDS["stk_managers"],
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare stk_managers 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+
+    def _serving(m):
+        return str(m.get("end_date") or "").strip() in ("", "None", "0")
+
+    current = [m for m in rows if _serving(m)]
+
+    # 同一人常按每个职务/委员会各占一行；按姓名去重，聚合职务，履历取一次。
+    people = {}
+    order = []
+    for m in current:
+        name = str(m.get("name", "-"))
+        if name not in people:
+            people[name] = {"titles": [], "row": m}
+            order.append(name)
+        title = str(m.get("title", "-")).strip()
+        if title and title not in people[name]["titles"]:
+            people[name]["titles"].append(title)
+        # 保留简历最长（最完整）的那行作为履历来源
+        if len(str(m.get("resume") or "")) > len(str(people[name]["row"].get("resume") or "")):
+            people[name]["row"] = m
+    order.sort(key=lambda n: str(people[n]["row"].get("begin_date") or ""), reverse=True)
+
+    print("=" * 60)
+    print(f"管理层履历: {code} ({ts_code})")
+    print("数据来源: Tushare stk_managers（董监高名单 + 履历）")
+    print("=" * 60)
+
+    if not order:
+        print("\n  无在任管理层数据。")
+    else:
+        print(f"\n  在任 {len(order)} 人（去重后；全历史 {len(rows)} 条职务记录）：\n")
+        for name in order[:30]:
+            m = people[name]["row"]
+            titles = " / ".join(people[name]["titles"]) or "-"
+            gender = {"M": "男", "F": "女"}.get(str(m.get("gender") or ""), "")
+            birth = str(m.get("birthday") or "")[:4]
+            edu = str(m.get("edu") or "").strip()
+            begin = str(m.get("begin_date") or "")[:8]
+            print(f"  ▸ {name}（{titles}）")
+            meta = " | ".join(x for x in [
+                gender,
+                f"生{birth}" if birth else "",
+                edu,
+                f"任职起 {begin}" if begin else "",
+            ] if x)
+            if meta:
+                print(f"      {meta}")
+            resume = str(m.get("resume") or "").strip()
+            if resume and resume not in ("None", "null"):
+                print(f"      简历: {resume[:120]}")
+
+    verification = _safe_verification("managers", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_mainbz(code: str):
+    """主营业务构成（分产品 + 分地区）——Tushare fina_mainbz。
+
+    分部收入独立第二源；研究层可与东财 F10 主营构成交叉核对达成分部双源，
+    补 investment-research/quality-screen 分部单源缺口。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    ts_code = normalize_code(code).secu_code
+
+    def _fetch(bz_type):
+        r = client.query(
+            "fina_mainbz",
+            params={"ts_code": ts_code, "type": bz_type},
+            fields=API_FIELDS["fina_mainbz"],
+        )
+        return r["data"] if r.get("ok") else []
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    prod = _fetch("P")
+    region = _fetch("D")
+    all_rows = prod + region
+    if not all_rows:
+        print(f"❌ Tushare fina_mainbz 无数据（{ts_code}）")
+        return False
+
+    latest = max((str(r.get("end_date") or "") for r in all_rows), default="")
+
+    print("=" * 60)
+    print(f"主营业务构成: {code} ({ts_code})")
+    print(f"数据来源: Tushare fina_mainbz（分部独立第二源），最新期: {latest[:10]}")
+    print("=" * 60)
+
+    def _table(title, rows):
+        rows = [r for r in rows if str(r.get("end_date") or "") == latest]
+        if not rows:
+            return
+        rows.sort(key=lambda r: _num(r.get("bz_sales")) or 0, reverse=True)
+        total = sum((_num(r.get("bz_sales")) or 0) for r in rows)
+        print(f"\n  【{title}】")
+        print(f"  {'项目':<24s} {'收入':>12s} {'占比':>7s} {'利润':>12s}")
+        print(f"  {'-'*24} {'-'*12} {'-'*7} {'-'*12}")
+        for r in rows[:15]:
+            item = str(r.get("bz_item", "-"))[:22]
+            sales = _num(r.get("bz_sales"))
+            pct = (sales / total * 100) if (sales is not None and total) else None
+            pct_s = f"{pct:.1f}%" if pct is not None else "-"
+            print(
+                f"  {item:<24s} {_fmt_yi(r.get('bz_sales')):>12s} "
+                f"{pct_s:>7s} {_fmt_yi(r.get('bz_profit')):>12s}"
+            )
+
+    _table("分产品", prod)
+    _table("分地区", region)
+    print("\n  注：Tushare 分部为独立第二源，可与东财 F10 主营构成交叉核对达成分部双源。")
+    verification = _safe_verification("mainbz", code, all_rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_repurchase(code: str):
+    """股票回购——Tushare repurchase。
+
+    回购进度/数量/金额/价格上限；补 management-deep-dive / news-pulse
+    当前靠巨潮公告手工提取的回购数据缺口。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "repurchase",
+        params={"ts_code": ts_code},
+        fields=API_FIELDS["repurchase"],
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare repurchase 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+    rows.sort(key=lambda r: str(r.get("ann_date") or ""), reverse=True)
+
+    print("=" * 60)
+    print(f"股票回购: {code} ({ts_code})")
+    print("数据来源: Tushare repurchase")
+    print("=" * 60)
+
+    if not rows:
+        print("\n  无回购记录。")
+    else:
+        print(f"\n  近 {min(len(rows), 20)} 条（全 {len(rows)} 条）：\n")
+        print(f"  {'公告日':<12s} {'进度':<12s} {'回购数量':>12s} {'回购金额':>12s} {'价上限':>8s}")
+        print(f"  {'-'*12} {'-'*12} {'-'*12} {'-'*12} {'-'*8}")
+        for r in rows[:20]:
+            ann = _fmt_date(r.get("ann_date"))
+            proc = str(r.get("proc", "-"))[:10]
+            high = r.get("high_limit")
+            high_s = f"{float(high):.2f}" if high not in (None, "") else "-"
+            print(
+                f"  {ann:<12s} {proc:<12s} {_fmt_yi(r.get('vol')):>12s} "
+                f"{_fmt_yi(r.get('amount')):>12s} {high_s:>8s}"
+            )
+
+    verification = _safe_verification("repurchase", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_pledge(code: str):
+    """股权质押统计——Tushare pledge_stat。
+
+    质押比例趋势；控股股东高质押 = 治理风险红线信号（当前完全空白）。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "pledge_stat",
+        params={"ts_code": ts_code},
+        fields=API_FIELDS["pledge_stat"],
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare pledge_stat 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+    rows.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
+
+    print("=" * 60)
+    print(f"股权质押: {code} ({ts_code})")
+    print("数据来源: Tushare pledge_stat（高质押 = 治理风险信号）")
+    print("=" * 60)
+
+    if not rows:
+        print("\n  无质押记录。")
+    else:
+        print(f"\n  {'截止日':<12s} {'质押比例':>8s} {'质押笔数':>8s} {'质押股数(万)':>14s}")
+        print(f"  {'-'*12} {'-'*8} {'-'*8} {'-'*14}")
+        for r in rows[:12]:
+            end = _fmt_date(r.get("end_date"))
+            ratio = _num(r.get("pledge_ratio"))
+            ratio_s = f"{ratio:.2f}%" if ratio is not None else "-"
+            cnt = r.get("pledge_count")
+            pledged = (_num(r.get("rest_pledge")) or 0) + (_num(r.get("unrest_pledge")) or 0)
+            print(f"  {end:<12s} {ratio_s:>8s} {str(cnt if cnt is not None else '-'):>8s} {pledged:>14.0f}")
+
+        latest_ratio = _num(rows[0].get("pledge_ratio"))
+        if latest_ratio is not None:
+            if latest_ratio >= 30:
+                print(f"\n  ⚠️ 最新质押比例 {latest_ratio:.2f}% —— 高质押是治理红线信号")
+            elif latest_ratio > 0:
+                print(f"\n  最新质押比例 {latest_ratio:.2f}%（偏低）")
+            else:
+                print("\n  ✅ 最新无股权质押（质押比例 0%）")
+
+    verification = _safe_verification("pledge", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_express(code: str):
+    """业绩快报——Tushare express。
+
+    正式财报前的早期业绩信号（营收/净利/EPS/ROE/同比），补 earnings-review 提前量。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "express", params={"ts_code": ts_code}, fields=API_FIELDS["express"]
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare express 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+    rows.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
+
+    print("=" * 60)
+    print(f"业绩快报: {code} ({ts_code})")
+    print("数据来源: Tushare express（正式财报前的早期业绩信号）")
+    print("=" * 60)
+
+    if not rows:
+        print("\n  无业绩快报记录（该公司未在正式财报前发布过快报）。")
+    else:
+        for r in rows[:12]:
+            period = _fmt_date(r.get("end_date"))
+            ann = _fmt_date(r.get("ann_date"))
+            rev = _num(r.get("revenue"))
+            ni = _num(r.get("n_income"))
+            prior_ni = _num(r.get("yoy_net_profit"))  # 去年同期净利（金额）
+            yoy_sales = _num(r.get("yoy_sales"))
+            np_yoy = ((ni / prior_ni - 1) * 100) if (ni is not None and prior_ni) else None
+            eps = r.get("diluted_eps")
+            roe = r.get("diluted_roe")
+            bps = r.get("bps")
+            print(f"\n  ▸ 报告期 {period}（披露 {ann}）")
+            rev_s = f"{_fmt_yi(rev)}" + (f"（同比 {yoy_sales:+.2f}%）" if yoy_sales is not None else "")
+            ni_s = f"{_fmt_yi(ni)}" + (f"（同比 {np_yoy:+.1f}%）" if np_yoy is not None else "")
+            print(f"      营收 {rev_s}  净利 {ni_s}")
+            metrics = " ".join(x for x in [
+                f"EPS {eps}" if eps not in (None, "") else "",
+                f"ROE {roe}%" if roe not in (None, "") else "",
+                f"BVPS {bps}" if bps not in (None, "") else "",
+            ] if x)
+            if metrics:
+                print(f"      {metrics}")
+            summary = str(r.get("perf_summary") or "").strip()
+            if summary and summary not in ("None", "null"):
+                print(f"      摘要: {summary[:120]}")
+        print("\n  注：快报为未审计早期数据，以正式定期报告为准。")
+
+    verification = _safe_verification("express", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_kline(code: str, days: int = 120):
+    """前复权日线序列——Tushare daily + adj_factor。
+
+    补管线"无复权 OHLC 序列"缺口：独立历史价格源（对 news-pulse/thesis-drift），
+    前复权处理跨越分红/送转，可与腾讯 qfq 日线交叉。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    ts_code = normalize_code(code).secu_code
+    start = (datetime.now() - timedelta(days=int(days * 1.7))).strftime("%Y%m%d")
+
+    daily = client.query(
+        "daily", params={"ts_code": ts_code, "start_date": start},
+        fields=API_FIELDS["daily"],
+    )
+    if not daily["ok"]:
+        print(f"❌ Tushare daily 查询失败: {daily.get('message', '未知')}")
+        return False
+    rows = [r for r in daily["data"] if r.get("close") is not None]
+    if not rows:
+        print("❌ 无日线数据")
+        return False
+
+    adj = client.query(
+        "adj_factor", params={"ts_code": ts_code, "start_date": start},
+        fields=API_FIELDS["adj_factor"],
+    )
+    adj_map = {}
+    if adj["ok"]:
+        for r in adj["data"]:
+            f = _num(r.get("adj_factor"))
+            if f is not None:
+                adj_map[str(r.get("trade_date"))] = f
+
+    rows.sort(key=lambda r: str(r.get("trade_date")))
+    latest_adj = adj_map.get(str(rows[-1].get("trade_date"))) \
+        or (max(adj_map.values()) if adj_map else 1.0)
+
+    def _qfq(px, td):
+        p = _num(px)
+        f = adj_map.get(str(td), latest_adj)
+        return (p * f / latest_adj) if (p is not None and latest_adj) else None
+
+    window = rows[-days:] if len(rows) > days else rows
+    for r in window:
+        td = r.get("trade_date")
+        r["_qo"] = _qfq(r.get("open"), td)
+        r["_qh"] = _qfq(r.get("high"), td)
+        r["_ql"] = _qfq(r.get("low"), td)
+        r["_qc"] = _qfq(r.get("close"), td)
+
+    adj_note = "前复权" if adj_map else "未复权（adj_factor 不可用）"
+    print("=" * 60)
+    print(f"复权日线(kline): {code} ({ts_code})")
+    print(f"数据来源: Tushare daily + adj_factor（{adj_note}），近 {len(window)} 个交易日")
+    print("=" * 60)
+
+    print(f"\n  {'交易日':<12s} {'开':>8s} {'高':>8s} {'低':>8s} {'收':>8s} {'涨跌%':>8s}")
+    print(f"  {'-'*12} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    for r in window[-15:]:
+        pct = _num(r.get("pct_chg"))
+        pct_s = f"{pct:+.2f}" if pct is not None else "-"
+        print(
+            f"  {_fmt_date(r.get('trade_date')):<12s} "
+            f"{(r['_qo'] or 0):>8.2f} {(r['_qh'] or 0):>8.2f} "
+            f"{(r['_ql'] or 0):>8.2f} {(r['_qc'] or 0):>8.2f} {pct_s:>8s}"
+        )
+
+    closes = [r["_qc"] for r in window if r["_qc"] is not None]
+    highs = [r["_qh"] for r in window if r["_qh"] is not None]
+    lows = [r["_ql"] for r in window if r["_ql"] is not None]
+    if closes and highs and lows:
+        ret = (closes[-1] / closes[0] - 1) * 100 if closes[0] else 0.0
+        print(
+            f"\n  区间(前复权): 高 {max(highs):.2f} / 低 {min(lows):.2f}；"
+            f"首 {closes[0]:.2f} → 末 {closes[-1]:.2f}（{ret:+.1f}%）"
+        )
+
+    # 独立第二历史源交叉：与腾讯当前价对最新收盘
+    try:
+        qq = _parse_qq_quote(_curl(f"https://qt.gtimg.cn/q={_qq_code(code)}"))
+        qq_price = _num(qq.get("price")) if qq else None
+    except Exception:
+        qq_price = None
+    if qq_price is not None and closes:
+        dev = abs(qq_price - closes[-1]) / closes[-1] * 100 if closes[-1] else 0
+        tag = "✅ 一致" if dev <= 1 else "⚠️ 偏差"
+        print(f"  最新收盘 vs 腾讯现价: {closes[-1]:.2f} / {qq_price:.2f}（{tag} {dev:.2f}%，独立源交叉）")
+
+    verification = _safe_verification("kline", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_audit(code: str):
+    """财务审计意见——Tushare fina_audit。
+
+    是否"标准无保留意见" = 治理硬信号；非标意见告警。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "fina_audit", params={"ts_code": ts_code}, fields=API_FIELDS["fina_audit"]
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare fina_audit 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+    seen = {}
+    for r in sorted(rows, key=lambda r: str(r.get("ann_date") or "")):
+        seen[str(r.get("end_date"))] = r
+    periods = sorted(seen.values(), key=lambda r: str(r.get("end_date")), reverse=True)
+
+    print("=" * 60)
+    print(f"财务审计意见: {code} ({ts_code})")
+    print("数据来源: Tushare fina_audit")
+    print("=" * 60)
+
+    if not periods:
+        print("\n  无审计意见记录。")
+    else:
+        print(f"\n  {'年报期':<12s} {'审计意见':<16s} {'会计事务所':<24s} {'审计费':>10s}")
+        print(f"  {'-'*12} {'-'*16} {'-'*24} {'-'*10}")
+        for r in periods[:12]:
+            opinion = str(r.get("audit_result", "-"))
+            flag = "" if opinion == "标准无保留意见" else "  ⚠️"
+            print(
+                f"  {_fmt_date(r.get('end_date')):<12s} {opinion:<16s} "
+                f"{str(r.get('audit_agency', '-'))[:22]:<24s} "
+                f"{_fmt_yi(r.get('audit_fees')):>10s}{flag}"
+            )
+        non_std = [r for r in periods if str(r.get("audit_result")) != "标准无保留意见"]
+        if non_std:
+            print(f"\n  ⚠️ 存在 {len(non_std)} 期非标准无保留意见 —— 治理/财务红线，需深究")
+        else:
+            print("\n  ✅ 所列各期均为标准无保留意见")
+
+    verification = _safe_verification("audit", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_holder_num(code: str):
+    """股东户数趋势——Tushare stk_holdernumber。
+
+    户数下降=筹码集中（多为偏多信号），上升=分散。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "stk_holdernumber", params={"ts_code": ts_code},
+        fields=API_FIELDS["stk_holdernumber"],
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare stk_holdernumber 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+    rows.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
+
+    print("=" * 60)
+    print(f"股东户数: {code} ({ts_code})")
+    print("数据来源: Tushare stk_holdernumber（筹码集中度）")
+    print("=" * 60)
+
+    if not rows:
+        print("\n  无股东户数记录。")
+    else:
+        print(f"\n  {'截止日':<12s} {'股东户数':>12s} {'环比':>10s}")
+        print(f"  {'-'*12} {'-'*12} {'-'*10}")
+        for i, r in enumerate(rows[:12]):
+            num = _num(r.get("holder_num"))
+            num_s = f"{int(num):,}" if num is not None else "-"
+            chg = "-"
+            if i + 1 < len(rows):
+                prev = _num(rows[i + 1].get("holder_num"))
+                if num is not None and prev:
+                    chg = f"{(num / prev - 1) * 100:+.1f}%"
+            print(f"  {_fmt_date(r.get('end_date')):<12s} {num_s:>12s} {chg:>10s}")
+
+        latest = _num(rows[0].get("holder_num"))
+        oldest = _num(rows[-1].get("holder_num")) if len(rows) > 1 else None
+        if latest is not None and oldest:
+            trend = "集中" if latest < oldest else "分散"
+            print(f"\n  区间筹码趋{trend}：{int(oldest):,} → {int(latest):,}"
+                  f"（{(latest / oldest - 1) * 100:+.1f}%）")
+
+    verification = _safe_verification("holder-num", code, rows)
+    _print_verification(verification)
+    return True
+
+
+def cmd_ratios(code: str):
+    """财务比率全景——Tushare fina_indicator（年报口径）。
+
+    ROE/扣非ROE/ROA/ROIC/毛利/净利/资产负债/流动比/速动比/OCF·营收，
+    补 quality-screen 更全的独立比率集。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    ts_code = normalize_code(code).secu_code
+    result = client.query(
+        "fina_indicator", params={"ts_code": ts_code},
+        fields=API_FIELDS["fina_indicator"],
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare fina_indicator 查询失败: {result.get('message', '未知')}")
+        return False
+
+    annual = [r for r in result["data"] if str(r.get("end_date") or "").endswith("1231")]
+    seen = {}
+    for r in sorted(annual, key=lambda r: (str(r.get("end_date")), str(r.get("update_flag") or ""))):
+        seen[str(r.get("end_date"))] = r
+    periods = sorted(seen.values(), key=lambda r: str(r.get("end_date")), reverse=True)[:6]
+
+    print("=" * 60)
+    print(f"财务比率全景: {code} ({ts_code})")
+    print("数据来源: Tushare fina_indicator（年报口径，独立比率集）")
+    print("=" * 60)
+
+    if not periods:
+        print("\n  无年报比率记录。")
+    else:
+        def g(r, k):
+            try:
+                return f"{float(r.get(k)):.2f}"
+            except (TypeError, ValueError):
+                return "-"
+
+        hdr = (f"  {'期间':<12s} {'ROE':>7s} {'扣非ROE':>8s} {'ROA':>7s} {'ROIC':>7s} "
+               f"{'毛利%':>7s} {'净利%':>7s} {'资负%':>7s} {'流动比':>7s} {'速动比':>7s} {'OCF/营收':>8s}")
+        print("\n" + hdr)
+        print("  " + "-" * (len(hdr) - 2))
+        for r in periods:
+            print(
+                f"  {_fmt_date(r.get('end_date')):<12s} {g(r,'roe'):>7s} {g(r,'roe_dt'):>8s} "
+                f"{g(r,'roa'):>7s} {g(r,'roic'):>7s} {g(r,'grossprofit_margin'):>7s} "
+                f"{g(r,'netprofit_margin'):>7s} {g(r,'debt_to_assets'):>7s} "
+                f"{g(r,'current_ratio'):>7s} {g(r,'quick_ratio'):>7s} {g(r,'ocf_to_or'):>8s}"
+            )
+        print("\n  注：Tushare 比率为独立源，可与东财 F10 交叉；周期股须看多年趋势而非单年。")
+
+    verification = _safe_verification("ratios", code, result["data"])
+    _print_verification(verification)
+    return True
+
+
+def cmd_peers(code: str, level: str = "l3"):
+    """行业可比公司池——Tushare index_member_all（申万分类）。
+
+    反查标的申万一/二/三级行业，列出全部成员股 = industry-funnel 候选池自动化。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    ts_code = normalize_code(code).secu_code
+    r1 = client.query(
+        "index_member_all", params={"ts_code": ts_code, "is_new": "Y"},
+        fields=API_FIELDS["index_member_all"],
+    )
+    if not r1["ok"] or not r1["data"]:
+        msg = r1.get("message", "无数据") if not r1["ok"] else "未归入申万成分"
+        print(f"❌ 未找到 {ts_code} 的申万行业归属: {msg}")
+        return False
+
+    info = r1["data"][0]
+    l1, l2, l3 = info.get("l1_name"), info.get("l2_name"), info.get("l3_name")
+
+    level = level.lower()
+    if level not in ("l1", "l2", "l3"):
+        level = "l3"
+    code_key = {"l1": "l1_code", "l2": "l2_code", "l3": "l3_code"}[level]
+    level_name = {"l1": l1, "l2": l2, "l3": l3}[level]
+    ind_code = info.get(code_key)
+
+    r2 = client.query(
+        "index_member_all", params={code_key: ind_code, "is_new": "Y"},
+        fields=API_FIELDS["index_member_all"],
+    )
+    seen = {}
+    for m in (r2["data"] if r2["ok"] else []):
+        seen[str(m.get("ts_code"))] = m
+    members = sorted(seen.values(), key=lambda m: str(m.get("ts_code")))
+
+    print("=" * 60)
+    print(f"行业可比公司池: {code} ({ts_code})")
+    print("数据来源: Tushare index_member_all（申万分类）")
+    print("=" * 60)
+    print(f"\n  申万归属: 一级「{l1}」/ 二级「{l2}」/ 三级「{l3}」")
+    print(f"  候选池口径: {level.upper()}「{level_name}」 —— 共 {len(members)} 家\n")
+
+    if not members:
+        print("  无成员（该级代码缺失或权限不足）。")
+    else:
+        for i, m in enumerate(members, 1):
+            mcode = str(m.get("ts_code", "-"))
+            mark = "  ← 本标的" if mcode == ts_code else ""
+            print(f"  {i:>2d}. {mcode:<12s} {str(m.get('name', '-'))}{mark}")
+        print("\n  注：此为 industry-funnel 候选池；可对每家跑 quote/valuation/ratios 逐层去劣。")
+
+    verification = _safe_verification("peers", code, r1["data"])
+    _print_verification(verification)
+    return True
+
+
+def cmd_north_hold(code: str):
+    """北向持股趋势——Tushare hk_hold（沪深股通）。
+
+    北向持股占比 = 外资/机构情绪；占比上升=外资增持（多为偏多信号）。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    ts_code = normalize_code(code).secu_code
+    start = (datetime.now() - timedelta(days=400)).strftime("%Y%m%d")
+    result = client.query(
+        "hk_hold", params={"ts_code": ts_code, "start_date": start},
+        fields=API_FIELDS["hk_hold"],
+    )
+    if not result["ok"]:
+        print(f"❌ Tushare hk_hold 查询失败: {result.get('message', '未知')}")
+        return False
+
+    rows = result["data"]
+    rows.sort(key=lambda r: str(r.get("trade_date") or ""), reverse=True)
+
+    print("=" * 60)
+    print(f"北向持股: {code} ({ts_code})")
+    print("数据来源: Tushare hk_hold（沪深股通，外资情绪）")
+    print("=" * 60)
+
+    if not rows:
+        print("\n  无北向持股记录（可能非陆股通标的或区间无数据）。")
+    else:
+        print(f"\n  {'交易日':<12s} {'北向持股':>12s} {'占比':>8s} {'占比环比':>10s}")
+        print(f"  {'-'*12} {'-'*12} {'-'*8} {'-'*10}")
+        for i, r in enumerate(rows[:15]):
+            ratio = _num(r.get("ratio"))
+            ratio_s = f"{ratio:.2f}%" if ratio is not None else "-"
+            chg = "-"
+            if i + 1 < len(rows):
+                prev = _num(rows[i + 1].get("ratio"))
+                if ratio is not None and prev is not None:
+                    chg = f"{ratio - prev:+.2f}pct"
+            print(f"  {_fmt_date(r.get('trade_date')):<12s} "
+                  f"{_fmt_yi(r.get('vol')):>12s}股 {ratio_s:>8s} {chg:>10s}")
+
+        latest = _num(rows[0].get("ratio"))
+        oldest = _num(rows[-1].get("ratio")) if len(rows) > 1 else None
+        if latest is not None and oldest is not None:
+            trend = "增持" if latest > oldest else "减持"
+            print(f"\n  区间北向{trend}：占比 {oldest:.2f}% → {latest:.2f}%（{latest - oldest:+.2f}pct）")
+
+    verification = _safe_verification("north-hold", code, rows)
+    _print_verification(verification)
+    return True
+
+
+_INDEX_ALIASES = {
+    "hs300": ("000300.SH", "沪深300"),
+    "zz500": ("000905.SH", "中证500"),
+    "zz1000": ("000852.SH", "中证1000"),
+    "sse": ("000001.SH", "上证综指"),
+    "szse": ("399001.SZ", "深证成指"),
+    "cyb": ("399006.SZ", "创业板指"),
+    "kc50": ("000688.SH", "科创50"),
+}
+
+
+def cmd_index_val(index: str = "hs300"):
+    """大盘指数估值分位——Tushare index_dailybasic。
+
+    指数 PE(TTM)/PB 当前值 + 历史分位；市场估值水位锚（择时/情绪，非个股结论）。
+    """
+    client = _get_tushare_client()
+    if not client:
+        return False
+
+    alias = _INDEX_ALIASES.get(str(index).lower())
+    idx_code, idx_name = alias if alias else (index, index)
+
+    result = client.query(
+        "index_dailybasic", params={"ts_code": idx_code, "start_date": "20180101"},
+        fields=API_FIELDS["index_dailybasic"],
+    )
+    if not result["ok"] or not result["data"]:
+        aliases = " / ".join(sorted(_INDEX_ALIASES))
+        print(f"❌ index_dailybasic 无数据（{idx_code}）；可用别名: {aliases} 或直接传指数代码如 000300.SH")
+        return False
+
+    rows = sorted(result["data"], key=lambda r: str(r.get("trade_date") or ""))
+    latest = rows[-1]
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    print("=" * 60)
+    print(f"大盘估值分位: {idx_name}（{idx_code}）")
+    print(f"数据来源: Tushare index_dailybasic，截至 {_fmt_date(latest.get('trade_date'))}"
+          f"（{rows[0].get('trade_date', '')[:4]} 至今 {len(rows)} 日）")
+    print("=" * 60)
+
+    import statistics
+    print(f"\n  {'指标':<10s} {'当前':>8s} {'分位':>7s} {'最低':>8s} {'中位':>8s} {'最高':>8s}")
+    print(f"  {'-'*10} {'-'*8} {'-'*7} {'-'*8} {'-'*8} {'-'*8}")
+    for key, label in (("pe_ttm", "PE(TTM)"), ("pe", "PE"), ("pb", "PB")):
+        vals = [_num(r.get(key)) for r in rows]
+        vals = [v for v in vals if v is not None and v > 0]
+        cur = _num(latest.get(key))
+        if not vals or cur is None:
+            continue
+        pct = sum(1 for v in vals if v <= cur) / len(vals) * 100
+        print(f"  {label:<10s} {cur:>8.2f} {pct:>6.0f}% "
+              f"{min(vals):>8.2f} {statistics.median(vals):>8.2f} {max(vals):>8.2f}")
+
+    print("\n  注：分位越低=市场整体估值越便宜（市场择时/情绪锚，非个股买卖结论）。")
+    return True
+
+
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
@@ -1671,6 +2502,48 @@ def main():
     p_ah.add_argument("code", help="A股代码")
     p_ah.add_argument("--json", action="store_true", help="JSON 输出")
 
+    # Tier 1 缺口补齐命令
+    p_mainbz = sub.add_parser("mainbz", help="主营业务构成 分产品/分地区（Tushare fina_mainbz — 分部独立第二源）")
+    p_mainbz.add_argument("code", help="股票代码")
+
+    p_managers = sub.add_parser("managers", help="管理层履历 出生年/学历/任职起止（Tushare stk_managers）")
+    p_managers.add_argument("code", help="股票代码")
+
+    p_repo = sub.add_parser("repurchase", help="股票回购 进度/数量/金额（Tushare repurchase）")
+    p_repo.add_argument("code", help="股票代码")
+
+    p_pledge = sub.add_parser("pledge", help="股权质押 比例趋势/治理风险（Tushare pledge_stat）")
+    p_pledge.add_argument("code", help="股票代码")
+
+    p_express = sub.add_parser("express", help="业绩快报 财报前早期业绩信号（Tushare express）")
+    p_express.add_argument("code", help="股票代码")
+
+    p_kline = sub.add_parser("kline", help="前复权日线序列 独立历史价格源（Tushare daily+adj_factor）")
+    p_kline.add_argument("code", help="股票代码")
+    p_kline.add_argument("--days", type=int, default=120, help="交易日窗口，默认 120")
+
+    # Tier 2 缺口补齐命令
+    p_audit = sub.add_parser("audit", help="财务审计意见 是否标准无保留（Tushare fina_audit）")
+    p_audit.add_argument("code", help="股票代码")
+
+    p_hnum = sub.add_parser("holder-num", help="股东户数趋势 筹码集中度（Tushare stk_holdernumber）")
+    p_hnum.add_argument("code", help="股票代码")
+
+    p_ratios = sub.add_parser("ratios", help="财务比率全景 ROE/ROA/ROIC/流动比等（Tushare fina_indicator）")
+    p_ratios.add_argument("code", help="股票代码")
+
+    p_peers = sub.add_parser("peers", help="行业可比公司池 申万成员股（Tushare index_member_all）")
+    p_peers.add_argument("code", help="股票代码")
+    p_peers.add_argument("--level", default="l3", choices=["l1", "l2", "l3"],
+                         help="申万级别，默认 l3（最精确）")
+
+    p_north = sub.add_parser("north-hold", help="北向持股趋势 外资情绪（Tushare hk_hold）")
+    p_north.add_argument("code", help="股票代码")
+
+    p_idxval = sub.add_parser("index-val", help="大盘估值分位 PE/PB历史分位（Tushare index_dailybasic）")
+    p_idxval.add_argument("index", nargs="?", default="hs300",
+                          help="指数别名 hs300/zz500/sse/cyb… 或指数代码，默认 hs300")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1703,6 +2576,20 @@ def main():
         # P3: HK stock
         "hk-quote": lambda: cmd_hk_quote(args.code),
         "ah-cross-check": lambda: cmd_ah_cross_check(args.code, args.json),
+        # Tier 1 缺口补齐
+        "mainbz": lambda: cmd_mainbz(args.code),
+        "managers": lambda: cmd_managers(args.code),
+        "repurchase": lambda: cmd_repurchase(args.code),
+        "pledge": lambda: cmd_pledge(args.code),
+        "express": lambda: cmd_express(args.code),
+        "kline": lambda: cmd_kline(args.code, args.days),
+        # Tier 2 缺口补齐
+        "audit": lambda: cmd_audit(args.code),
+        "holder-num": lambda: cmd_holder_num(args.code),
+        "ratios": lambda: cmd_ratios(args.code),
+        "peers": lambda: cmd_peers(args.code, args.level),
+        "north-hold": lambda: cmd_north_hold(args.code),
+        "index-val": lambda: cmd_index_val(args.index),
     }
     try:
         outcome = cmds[args.command]()
