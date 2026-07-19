@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from tools.ashare_plugin.fundamentals import fetch_history
 
@@ -35,6 +36,21 @@ class TestFundamentals(unittest.TestCase):
         result = fetch_history("600036", client=client)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "empty_data")
+
+    def test_successful_result_includes_verification(self):
+        client = FakeClient([
+            {"success": True, "result": {"pages": 1, "data": [{"REPORT_YEAR": "2025"}]}},
+        ])
+        fake_v = {"provider": "tushare", "configured": True, "status": "MATCH",
+                   "as_of": None, "warnings": [], "fields": [], "endpoints": []}
+        with mock.patch(
+            "tools.ashare_plugin.fundamentals.safe_verify_command",
+            return_value=fake_v,
+        ):
+            result = fetch_history("600036", years=10, client=client)
+        self.assertTrue(result["ok"])
+        self.assertIn("verification", result)
+        self.assertIs(result["verification"], fake_v)
 
 
 if __name__ == "__main__":

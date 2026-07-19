@@ -305,6 +305,13 @@ class TestCommandVerification(unittest.TestCase):
         self.assertEqual(set(COMMAND_APIS), {
             "quote", "valuation", "financials", "history",
             "equity-history", "search", "signals", "announcements",
+            # Phase 1: Tushare 10,000-point commands
+            "pe-band", "research-visits", "insider-trades",
+            # Phase 2: enhancement commands
+            "consensus", "shareholders", "dividend", "management",
+            # P1: Industry benchmark
+            "industry-pe",
+            "news", "disclosure-calendar", "hk-quote", "ah-cross-check",
         })
 
     def test_partial_endpoint_failure_keeps_successful_financial_fields(self):
@@ -342,6 +349,57 @@ class TestCommandVerification(unittest.TestCase):
 
         self.assertEqual(result["status"], "MATCH")
         self.assertIn("balancesheet: permission_denied", result["warnings"])
+
+
+class TestSafeVerifyCommand(unittest.TestCase):
+    def test_delegates_to_verify_command_and_returns_result(self):
+        from tools.ashare_plugin.tushare_verification import safe_verify_command
+        from unittest import mock
+        expected = {
+            "provider": "tushare",
+            "configured": True,
+            "status": "MATCH",
+            "as_of": None,
+            "warnings": [],
+            "fields": [],
+            "endpoints": [],
+        }
+        with mock.patch(
+            "tools.ashare_plugin.tushare_verification.verify_command",
+            return_value=expected,
+        ):
+            result = safe_verify_command("search", "平安银行", [{"Code": "1"}])
+        self.assertEqual(result, expected)
+
+    def test_returns_degraded_on_exception(self):
+        from tools.ashare_plugin.tushare_verification import safe_verify_command
+        from unittest import mock
+        with mock.patch(
+            "tools.ashare_plugin.tushare_verification.verify_command",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = safe_verify_command("search", "平安银行", [])
+        self.assertEqual(result["status"], "INSUFFICIENT")
+        self.assertEqual(result["provider"], "tushare")
+        self.assertTrue(result["configured"])
+        self.assertEqual(result["fields"], [])
+        self.assertEqual(result["endpoints"], [])
+
+    def test_forwards_trade_date_and_client_kwargs(self):
+        from tools.ashare_plugin.tushare_verification import safe_verify_command
+        from unittest import mock
+        fake_client = object()
+        with mock.patch(
+            "tools.ashare_plugin.tushare_verification.verify_command",
+            return_value={"status": "MATCH"},
+        ) as mock_verify:
+            safe_verify_command(
+                "signals", "600519", {},
+                trade_date="2026-07-17", client=fake_client,
+            )
+        _, kwargs = mock_verify.call_args
+        self.assertEqual(kwargs["trade_date"], "2026-07-17")
+        self.assertIs(kwargs["client"], fake_client)
 
 
 if __name__ == "__main__":

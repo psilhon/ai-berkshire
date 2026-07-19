@@ -396,7 +396,7 @@ class TestPluginCommands(OfflineAshareDataTestCase):
 
 
 class TestTushareCliVerification(OfflineAshareDataTestCase):
-    @mock.patch.object(ashare_data, "verify_command")
+    @mock.patch.object(ashare_data, "safe_verify_command")
     def test_valuation_conflict_prints_tushare_effective_value(self, verify):
         verify.return_value = {
             "provider": "tushare",
@@ -427,7 +427,7 @@ class TestTushareCliVerification(OfflineAshareDataTestCase):
         self.assertIn("PB:         0.8468", output.getvalue())
         self.assertIn("Tushare 覆盖: pb 0.87 -> 0.8468", output.getvalue())
 
-    @mock.patch.object(ashare_data, "verify_command")
+    @mock.patch.object(ashare_data, "safe_verify_command")
     def test_successful_quote_prints_verification_without_changing_success(self, verify):
         verify.return_value = {
             "provider": "tushare",
@@ -448,7 +448,7 @@ class TestTushareCliVerification(OfflineAshareDataTestCase):
         self.assertIn("Tushare 验证: MATCH", output.getvalue())
 
     @mock.patch.object(
-        ashare_data, "verify_command", side_effect=RuntimeError("hidden")
+        ashare_data, "safe_verify_command", side_effect=RuntimeError("hidden")
     )
     def test_verification_exception_does_not_fail_primary(self, _verify):
         with mock.patch.object(ashare_data, "_curl", return_value=_quote_raw()), \
@@ -460,7 +460,7 @@ class TestTushareCliVerification(OfflineAshareDataTestCase):
         self.assertIn("Tushare 验证: INSUFFICIENT", output.getvalue())
         self.assertNotIn("hidden", output.getvalue())
 
-    @mock.patch.object(ashare_data, "verify_command")
+    @mock.patch.object(ashare_data, "safe_verify_command")
     def test_not_configured_is_explicit(self, verify):
         verify.return_value = {
             "provider": "tushare",

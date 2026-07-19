@@ -1,9 +1,10 @@
 from typing import Any, Dict, List, Optional
 
-from . import DataResult, failure_result, success_result
+from . import DataResult, failure_result, success_result, with_verification
 from .errors import TransportError
 from .identifiers import normalize_code
 from .transport import TransportClient
+from .tushare_verification import safe_verify_command
 
 
 DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
@@ -70,7 +71,11 @@ def fetch_history(
         return failure_result("eastmoney", exc.error_type, str(exc))
     if not rows:
         return failure_result("eastmoney", "empty_data", f"未获取到 {identity.secu_code} 的年度财务数据")
-    return success_result(rows, "eastmoney")
+    result = success_result(rows, "eastmoney")
+    return with_verification(
+        result,
+        safe_verify_command("history", code, rows),
+    )
 
 
 def fetch_financials(
@@ -96,7 +101,11 @@ def fetch_financials(
         return failure_result("eastmoney", exc.error_type, str(exc))
     if not rows:
         return failure_result("eastmoney", "empty_data", f"未获取到 {identity.secu_code} 的财务数据")
-    return success_result(rows, "eastmoney")
+    result = success_result(rows, "eastmoney")
+    return with_verification(
+        result,
+        safe_verify_command("financials", code, rows),
+    )
 
 
 def fetch_equity_history(
@@ -119,7 +128,11 @@ def fetch_equity_history(
         return failure_result("eastmoney", exc.error_type, str(exc))
     if not rows:
         return failure_result("eastmoney", "empty_data", f"未获取到 {identity.secu_code} 的历史股本")
-    return success_result(rows, "eastmoney")
+    result = success_result(rows, "eastmoney")
+    return with_verification(
+        result,
+        safe_verify_command("equity-history", code, rows),
+    )
 
 
 __all__ = ["fetch_equity_history", "fetch_financials", "fetch_history"]

@@ -1,9 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
-from . import DataResult, failure_result, success_result
+from . import DataResult, failure_result, success_result, with_verification
 from .errors import TransportError
 from .identifiers import normalize_code
 from .transport import TransportClient
+from .tushare_verification import safe_verify_command
 
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
@@ -68,10 +69,14 @@ def fetch_quote(code: str, *, client: Optional[TransportClient] = None) -> DataR
         warnings.append("东方财富 52 周区间不可用")
     quote["high_52w"] = high_52w
     quote["low_52w"] = low_52w
-    return success_result(
+    result = success_result(
         quote,
         "tencent+eastmoney",
         warnings=warnings,
+    )
+    return with_verification(
+        result,
+        safe_verify_command("quote", code, quote),
     )
 
 

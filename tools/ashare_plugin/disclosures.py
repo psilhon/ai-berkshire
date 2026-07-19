@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from . import DataResult, failure_result, success_result
+from . import DataResult, failure_result, success_result, with_verification
 from .errors import TransportError
 from .identifiers import normalize_code
 from .transport import FallbackChain, TransportClient
+from .tushare_verification import safe_verify_command
 
 
 CNINFO_URL = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
@@ -147,10 +148,16 @@ def fetch_announcements(
         return failure_result("identifier", "invalid_code", "公告数量必须在 1 到 100 之间")
     client = client or TransportClient()
     backup = (lambda: _szse(identity.code, limit, client)) if identity.market == "SZ" else (lambda: _eastmoney(identity.code, limit, client))
-    return FallbackChain([
+    result = FallbackChain([
         lambda: _cninfo(identity, limit, client),
         backup,
     ]).run()
+    if result.get("ok"):
+        result = with_verification(
+            result,
+            safe_verify_command("announcements", code, result),
+        )
+    return result
 
 
 __all__ = ["fetch_announcements", "fetch_official_announcements"]

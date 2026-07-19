@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from tools.ashare_plugin.market_signals import (
     fetch_dragon_tiger,
@@ -114,6 +115,30 @@ class TestMarketSignals(unittest.TestCase):
         self.assertIn("fund_flow", result["data"])
         self.assertIn("lockup", result["data"])
         self.assertIn("margin", result["data"])
+
+    def test_successful_result_includes_verification(self):
+        client = FakeClient({
+            "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get": {
+                "data": {"klines": ["2026-07-16,1,2,3,4,5"]}
+            },
+            "https://datacenter.eastmoney.com/api/data/v1/get": {
+                "success": True,
+                "result": {"data": [{"SECURITY_CODE": "600519"}]}
+            },
+        })
+        fake_v = {"provider": "tushare", "configured": True, "status": "MATCH",
+                   "as_of": None, "warnings": [], "fields": [], "endpoints": []}
+        with mock.patch(
+            "tools.ashare_plugin.market_signals.safe_verify_command",
+            return_value=fake_v,
+        ) as mock_v:
+            result = fetch_signals("600519", client=client)
+        self.assertTrue(result["ok"])
+        self.assertIn("verification", result)
+        self.assertIs(result["verification"], fake_v)
+        # verify trade_date is forwarded
+        _, kwargs = mock_v.call_args
+        self.assertEqual(kwargs["trade_date"], None)
 
 
 if __name__ == "__main__":

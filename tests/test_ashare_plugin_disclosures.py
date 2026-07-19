@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from tools.ashare_plugin.disclosures import fetch_announcements
 
@@ -124,6 +125,30 @@ class TestDisclosures(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "all_sources_failed")
         self.assertGreaterEqual(len(result["warnings"]), 2)
+
+    def test_successful_result_includes_verification(self):
+        client = FakeClient({
+            "https://www.cninfo.com.cn/new/data/szse_stock.json": {
+                "stockList": [{"code": "300750", "orgId": "GD165627"}],
+            },
+            "https://www.cninfo.com.cn/new/hisAnnouncement/query": {
+                "announcements": [{
+                    "announcementTitle": "年度报告",
+                    "announcementTime": 1760000000000,
+                    "adjunctUrl": "doc.pdf",
+                }]
+            },
+        })
+        fake_v = {"provider": "tushare", "configured": True, "status": "MATCH",
+                   "as_of": None, "warnings": [], "fields": [], "endpoints": []}
+        with mock.patch(
+            "tools.ashare_plugin.disclosures.safe_verify_command",
+            return_value=fake_v,
+        ):
+            result = fetch_announcements("300750", client=client)
+        self.assertTrue(result["ok"])
+        self.assertIn("verification", result)
+        self.assertIs(result["verification"], fake_v)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 from tools.ashare_plugin.quote import fetch_quote, parse_tencent_quote
 
@@ -65,6 +66,32 @@ class TestTencentQuote(unittest.TestCase):
         result = fetch_quote("600036", client=EmptyClient())
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "parse_error")
+
+    def test_successful_result_includes_verification(self):
+        client = FakeClient()
+        fake_v = {"provider": "tushare", "configured": True, "status": "MATCH",
+                   "as_of": None, "warnings": [], "fields": [], "endpoints": []}
+        with mock.patch(
+            "tools.ashare_plugin.quote.safe_verify_command",
+            return_value=fake_v,
+        ):
+            result = fetch_quote("600036", client=client)
+        self.assertTrue(result["ok"])
+        self.assertIn("verification", result)
+        self.assertIs(result["verification"], fake_v)
+
+    def test_failure_result_has_no_verification(self):
+        class EmptyClient(FakeClient):
+            def get_text(self, url, params=None, headers=None):
+                return 'v_none="";'
+
+        with mock.patch(
+            "tools.ashare_plugin.quote.safe_verify_command",
+            return_value={"status": "MATCH"},
+        ) as mock_v:
+            result = fetch_quote("600036", client=EmptyClient())
+        self.assertFalse(result["ok"])
+        mock_v.assert_not_called()
 
 
 if __name__ == "__main__":

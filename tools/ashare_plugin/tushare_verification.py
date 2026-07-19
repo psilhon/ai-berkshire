@@ -25,6 +25,23 @@ COMMAND_APIS = {
     "search": ("stock_basic",),
     "signals": ("moneyflow", "top_list", "margin_detail", "share_float"),
     "announcements": ("anns_d",),
+    # Phase 1: 10,000-point Tushare commands
+    "pe-band": ("daily_basic",),
+    "research-visits": ("stk_surv",),
+    "insider-trades": ("stk_holdertrade",),
+    # Phase 2: enhancement commands
+    "consensus": ("forecast",),
+    "shareholders": ("top10_holders",),
+    "dividend": ("dividend",),
+    "management": ("stk_rewards",),
+    # P1: Industry benchmark
+    "industry-pe": ("sw_daily", "stock_basic", "index_classify"),
+    # P2: News + disclosure
+    "news": ("major_news",),
+    "disclosure-calendar": ("disclosure_date",),
+    # P3: HK stock
+    "hk-quote": ("hk_daily", "hk_basic"),
+    "ah-cross-check": ("hk_daily", "daily_basic"),
 }
 
 API_FIELDS = {
@@ -54,6 +71,60 @@ API_FIELDS = {
     "top_list": ("trade_date", "ts_code", "name", "net_amount", "reason"),
     "margin_detail": ("trade_date", "ts_code", "rzye", "rqyl", "rzmre", "rqmcl"),
     "anns_d": ("ann_date", "ts_code", "name", "title", "url"),
+    # Phase 1: 10,000-point Tushare APIs
+    "stk_surv": (
+        "ts_code", "name", "surv_date", "fund_visitors",
+        "rece_place", "rece_mode", "rece_org", "org_type",
+        "comp_rece", "content",
+    ),
+    "stk_holdertrade": (
+        "ts_code", "ann_date", "holder_name", "holder_type",
+        "in_de", "change_vol", "change_ratio", "after_hold",
+        "avg_price", "hold_float_ratio",
+    ),
+    # Phase 2: enhancement APIs
+    "forecast": (
+        "ts_code", "ann_date", "end_date", "type",
+        "p_change_min", "p_change_max", "net_profit_min",
+        "net_profit_max", "last_parent_net", "first_ann_date",
+        "summary", "change_reason", "update_flag",
+    ),
+    "top10_holders": (
+        "ts_code", "ann_date", "end_date", "holder_name",
+        "hold_num", "hold_ratio", "hold_float_ratio",
+        "change_ratio", "holder_type",
+    ),
+    "dividend": (
+        "ts_code", "end_date", "ann_date", "div_proc",
+        "stk_div", "cash_div", "cash_div_tax",
+        "record_date", "ex_div_date", "base_share",
+    ),
+    "stk_rewards": (
+        "ts_code", "ann_date", "end_date", "name",
+        "title", "reward", "hold_vol",
+    ),
+    "sw_daily": (
+        "ts_code", "trade_date", "open", "high", "low",
+        "close", "change", "pct_change", "vol", "amount",
+        "pe", "pb", "float_mv", "total_mv",
+    ),
+    "index_classify": (
+        "index_code", "industry_name", "level", "parent_code",
+    ),
+    # P2/P3: Independent paid permission APIs
+    "major_news": (
+        "title", "pub_time", "src", "url",
+    ),
+    "disclosure_date": (
+        "ts_code", "ann_date", "end_date", "pre_date", "actual_date",
+    ),
+    "hk_daily": (
+        "ts_code", "trade_date", "open", "close", "high", "low",
+        "pre_close", "change", "pct_change", "vol", "amount",
+    ),
+    "hk_basic": (
+        "ts_code", "name", "list_date", "list_status", "industry",
+    ),
 }
 
 
@@ -505,6 +576,61 @@ def _signal_fields(
     return fields
 
 
+def _pe_band_fields(
+    primary: Dict[str, Any], results: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Cross-check daily_basic PE/PB snapshot against Tencent quote."""
+    daily_rows = results["daily_basic"].get("data") or []
+    if not daily_rows:
+        return []
+    # Use the most recent row from daily_basic
+    latest = max(daily_rows, key=lambda row: _digits(row.get("trade_date")))
+    fields = []
+    for name, primary_key, verify_key, unit in (
+        ("pe", "current_pe_qq", "pe", "multiple"),
+        ("pb", "current_pb_qq", "pb", "multiple"),
+    ):
+        fields.append(compare_decimal(
+            name,
+            primary.get(primary_key),
+            latest.get(verify_key),
+            primary_source="tencent",
+            verification_source="tushare.daily_basic",
+            primary_period=_digits(primary.get("quote_date", "")),
+            verification_period=_digits(latest.get("trade_date")),
+            primary_unit=unit,
+            verification_unit=unit,
+        ))
+    return fields
+
+
+def _tushare_primary_fields(
+    results: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Verification for commands where Tushare IS the primary source.
+
+    No field-level cross-comparison — Tushare is the sole authoritative
+    source for these data types (institutional surveys, insider trades,
+    consensus estimates, etc.). Endpoint health is reported separately
+    via the endpoints array.
+    """
+    fields = []
+    for api_name, result in results.items():
+        row_count = len(result.get("data") or []) if result.get("ok") else 0
+        fields.append(_field(
+            f"{api_name}:row_count",
+            "MATCH" if result.get("ok") else "INSUFFICIENT",
+            row_count,
+            row_count,
+            primary_source=f"tushare.{api_name}",
+            verification_source=f"tushare.{api_name}",
+            period="current",
+            unit="rows",
+            error_type=None if result.get("ok") else result.get("error_type"),
+        ))
+    return fields
+
+
 def _announcement_fields(
     primary: Dict[str, Any], rows: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -570,11 +696,53 @@ def verify_command(
         )
     elif command == "signals":
         fields = _signal_fields(primary_data, results)
+    elif command in {"announcements", "anns_d"}:
+        fields = _announcement_fields(
+            primary_data, results["anns_d"].get("data") or []
+        )
+    elif command == "pe-band":
+        fields = _pe_band_fields(primary_data, results)
+    elif command in {
+        "research-visits", "insider-trades", "consensus",
+        "shareholders", "dividend", "management",
+        "industry-pe",
+        "news", "disclosure-calendar", "hk-quote", "ah-cross-check",
+    }:
+        fields = _tushare_primary_fields(results)
     else:
         fields = _announcement_fields(
             primary_data, results["anns_d"].get("data") or []
         )
     return finalize_verification(fields, endpoints)
+
+
+def safe_verify_command(
+    command: str,
+    subject: str,
+    primary_data: Any,
+    *,
+    trade_date: Optional[str] = None,
+    client: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Verify via Tushare without ever breaking on failure.
+
+    Returns a degraded INSUFFICIENT verification dict when any exception
+    occurs, so that verification failure never corrupts the primary result.
+    """
+    try:
+        return verify_command(
+            command, subject, primary_data, trade_date=trade_date, client=client
+        )
+    except Exception:
+        return {
+            "provider": "tushare",
+            "configured": True,
+            "status": "INSUFFICIENT",
+            "as_of": None,
+            "warnings": ["Tushare 验证发生未分类错误；主数据结果未受影响"],
+            "fields": [],
+            "endpoints": [],
+        }
 
 
 __all__ = [
@@ -587,5 +755,6 @@ __all__ = [
     "compare_text",
     "finalize_verification",
     "not_configured_verification",
+    "safe_verify_command",
     "verify_command",
 ]

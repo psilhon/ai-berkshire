@@ -1,10 +1,11 @@
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from . import DataResult, failure_result, success_result
+from . import DataResult, failure_result, success_result, with_verification
 from .errors import TransportError
 from .identifiers import normalize_code
 from .transport import FallbackChain, TransportClient
+from .tushare_verification import safe_verify_command
 
 
 DATACENTER_URL = "https://datacenter.eastmoney.com/api/data/v1/get"
@@ -245,7 +246,11 @@ def fetch_signals(
     ok = any(result.get("ok") for result in parts.values())
     if not ok:
         return failure_result("multiple", "all_sources_failed", "市场信号均不可用", warnings=warnings)
-    return success_result(parts, "multiple", warnings=warnings)
+    result = success_result(parts, "multiple", warnings=warnings)
+    return with_verification(
+        result,
+        safe_verify_command("signals", code, parts, trade_date=trade_date),
+    )
 
 
 __all__ = [
