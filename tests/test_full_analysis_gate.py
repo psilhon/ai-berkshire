@@ -849,6 +849,31 @@ class TestFullFlow(GateTestCase):
         cp = ws.summary(run_root)
         self.assertEqual(cp.returncode, 2, out(cp))
 
+    def test_pwl_multi_context_skill_single_context_caps_pwl(self):
+        """min_ctx=2 + PWL 的 skill 在单上下文 (count=0) 下:
+        不进 N/A, 产物照验, computed_status=PASS_WITH_LIMITATIONS, 且不 credit INDEPENDENT。"""
+        role_rules = {5: {"required_roles": [],
+                          "min_independent_contexts": 2,
+                          "sequential_cap": "PASS_WITH_LIMITATIONS"}}
+        ws = GateWorkspace(registry=make_registry(role_rules=role_rules))
+        self.addCleanup(ws.cleanup)
+        run_root, _ = ws.init_ok()
+        # 其余 19 项走默认 PASS; sk05 单上下文 (不传 independent-context-count)
+        for sk in ws.manifest(run_root)["skills"]:
+            name = sk["name"]
+            path = sk["assigned_artifact_paths"][0]
+            ws.begin(run_root, name)
+            ws.write_artifact(run_root, path)
+            ws.finish(run_root, name, artifacts=[path])
+        cp = ws.gate("finalize", "--registry", ws.registry_path,
+                     "--run-root", run_root)
+        self.assertEqual(cp.returncode, 0, f"{cp.stdout}\n{cp.stderr}")
+        m = ws.manifest(run_root)
+        sk05 = next(s for s in m["skills"] if s["name"] == "sk05")
+        self.assertEqual(sk05["computed_status"], "PASS_WITH_LIMITATIONS")
+        # sk05 min_ctx=2 但 count=0 → 不满足 → assurance 不得为 INDEPENDENT
+        self.assertIn(m["run"]["assurance_level"], ("MIXED", "SINGLE_CONTEXT"))
+
 
 class TestRunContextCommands(GateTestCase):
 

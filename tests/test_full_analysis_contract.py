@@ -509,6 +509,23 @@ class TestRealRegistry(unittest.TestCase):
             "四视角应由 investment-team 统一编排，不应新增三个独立 Skill",
         )
 
+    def test_multi_perspective_skills_require_independence_for_assurance(self):
+        """#7/#13/#17 多视角契约必须 min_ctx>=2 且 PWL 封顶,
+        否则 compute_assurance 无视其独立性 (装饰性多角色)。"""
+        registry = json.loads(
+            (REPO / "tools" / "full_analysis_contract.json")
+            .read_text(encoding="utf-8"))
+        by_name = {s["name"]: s for s in registry["skills"]}
+        for name in ("management-deep-dive", "news-pulse",
+                     "private-company-research"):
+            rr = by_name[name]["role_rule"]
+            self.assertGreaterEqual(
+                rr["min_independent_contexts"], 2,
+                f"{name} 独立性必须进 assurance 轴 (min_ctx>=2)")
+            self.assertEqual(
+                rr["sequential_cap"], "PASS_WITH_LIMITATIONS",
+                f"{name} 无子代理时应产内容+PWL, 不得 N/A 黑洞")
+
 
 if __name__ == "__main__":
     unittest.main()

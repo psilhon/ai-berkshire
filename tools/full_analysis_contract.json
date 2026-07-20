@@ -414,8 +414,8 @@
       },
       "role_rule": {
         "required_roles": [],
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
         "reports/{company}/{company}-management-{date}.md",
@@ -748,8 +748,8 @@
           "industry-scout",
           "sentiment-scout"
         ],
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
         "reports/{company}/{company}-news-{date}.md",
@@ -950,8 +950,8 @@
           "technology",
           "alternative-data"
         ],
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
         "reports/{company}/{company}-private-{date}.md"
