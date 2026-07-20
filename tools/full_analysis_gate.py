@@ -46,11 +46,12 @@ TZ_SHANGHAI = timezone(timedelta(hours=8))
 MANIFEST_NAME = "manifest.json"
 LOCK_REL = Path("evidence") / ".full-analysis.lock"
 LOCKS_DIR_REL = Path("evidence") / "locks"
+COMMANDS_DIR_REL = Path("evidence") / "commands"
 BASELINE_REL = Path("evidence") / "audit-baseline.txt"
 RESULT_REL = Path("evidence") / "04-验收器结果.json"
 
 EVIDENCE_KEYS = ("facts", "calculations", "judgments", "role_runs",
-                 "command_receipts", "limitations", "audit")
+                 "command_receipts", "artifact_records", "limitations", "audit")
 SECRET_RE = re.compile(
     r"(?i)(api[_-]?key|secret|token|password|passwd|private[_-]?key)"
     r"\s*[=:]\s*\S+")
@@ -76,6 +77,11 @@ def now_stamp():
 
 def sha256_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def artifact_id_for(skill_name, artifact_path):
+    material = f"{skill_name}\0{artifact_path}".encode("utf-8")
+    return "artifact-" + hashlib.sha256(material).hexdigest()[:20]
 
 
 def atomic_write_json(path, obj):
@@ -114,6 +120,18 @@ def load_manifest(run_root):
 def save_manifest(run_root, manifest):
     manifest["run"]["updated_at"] = now_iso()
     atomic_write_json(Path(run_root) / MANIFEST_NAME, manifest)
+
+
+def atomic_write_bytes(path, data):
+    """同目录原子写 bytes，供命令原始输出冻结。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f"{path.name}.tmp-{os.getpid()}"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 def run_git(repo_root, *args):
@@ -326,6 +344,11 @@ def find_registry_item(registry, name):
         if item["name"] == name:
             return item
     raise GateExit(EXIT_USAGE, f"skill 不在注册表: {name}")
+
+
+def repo_root_for_run(manifest):
+    rel = PurePosixPath(manifest["run"]["run_root"])
+    return Path(manifest["run"]["root_real"]).parents[len(rel.parts) - 1]
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +674,7 @@ def new_skill_entry(item, repo_root):
     spec = Path(repo_root) / item["spec_source"]
     if not spec.is_file():
         raise GateExit(EXIT_USAGE, f"spec_source 不存在: {item['spec_source']}")
+    assigned_paths = [rule["path"] for rule in item["artifact_rules"]]
     return {
         "index": item["index"],
         "name": item["name"],
@@ -659,8 +683,13 @@ def new_skill_entry(item, repo_root):
         "computed_status": None,
         "execution_mode": None,
         "independent_context_count": 0,
-        "assigned_artifact_paths": [r["path"] for r in item["artifact_rules"]],
+        "assigned_artifact_paths": assigned_paths,
+        "assigned_artifacts": [
+            {"artifact_id": artifact_id_for(item["name"], path), "path": path}
+            for path in assigned_paths
+        ],
         "artifacts": [],
+        "artifact_records": [],
         "facts": [],
         "calculations": [],
         "judgments": [],
@@ -689,9 +718,10 @@ def cmd_init(args):
         return _init_resume(args, repo_root, registry, git_workspace)
 
     run_id = f"{now_stamp()}-{args.company}"
-    prefix = Path("local") / "筛选公司" if args.visibility == "private" \
-        else Path("筛选公司")
-    rel_root = prefix / args.company / "全量分析" / run_id
+    if args.visibility == "private":
+        rel_root = Path("local") / "company" / args.company / run_id
+    else:
+        rel_root = Path("筛选公司") / args.company / "全量分析" / run_id
     run_root = repo_root / rel_root
     if args.visibility == "public" and rel_root.parts[0] == "local":
         raise GateExit(EXIT_FAIL, f"public 运行根不得在 local/ 下: {rel_root}")
@@ -736,6 +766,9 @@ def cmd_init(args):
             "validation_result": None,
             "assurance_level": "SINGLE_CONTEXT",
             "review_mode": "self_review",
+            "capabilities": {
+                "tushare_configured": bool(os.environ.get("TUSHARE_TOKEN")),
+            },
             "created_at": ts,
             "updated_at": ts,
         },
@@ -767,9 +800,10 @@ def cmd_init(args):
 def _init_resume(args, repo_root, registry, git_workspace):
     if not args.run_id:
         raise GateExit(EXIT_USAGE, "--mode resume 必须提供 --run-id")
-    prefix = Path("local") / "筛选公司" if args.visibility == "private" \
-        else Path("筛选公司")
-    rel_root = prefix / args.company / "全量分析" / args.run_id
+    if args.visibility == "private":
+        rel_root = Path("local") / "company" / args.company / args.run_id
+    else:
+        rel_root = Path("筛选公司") / args.company / "全量分析" / args.run_id
     run_root = repo_root / rel_root
     manifest = load_manifest(run_root)
     run = manifest["run"]
@@ -855,6 +889,90 @@ def cmd_begin_skill(args):
     return EXIT_OK
 
 
+def command_operations(item):
+    operations = set()
+    for rule in item.get("evidence_rules", []):
+        if not isinstance(rule, dict):
+            continue
+        if rule.get("kind") == "required_command_operations":
+            operations.update(rule.get("values", []))
+        elif rule.get("kind") == "conditional_command_operations":
+            operations.update(
+                entry.get("op") for entry in rule.get("values", [])
+                if isinstance(entry, dict) and entry.get("op")
+            )
+    return operations
+
+
+def cmd_run_ashare_command(args):
+    """由 gate 实际执行 allowlisted ashare 命令并冻结输出收据。"""
+    run_root = Path(args.run_root)
+    manifest = load_manifest(run_root)
+    _require_working(manifest, "run-ashare-command")
+    registry = load_registry(args.registry)
+    check_registry_matches_manifest(args.registry, manifest)
+    sk = find_skill(manifest, "ashare-data")
+    item = find_registry_item(registry, "ashare-data")
+    enforce_watchlist_or_block(manifest, run_root, sk)
+    if sk["execution_state"] != "RUNNING":
+        raise GateExit(EXIT_USAGE,
+                       "run-ashare-command 仅允许 ashare-data 为 RUNNING 时执行")
+    allowed = command_operations(item)
+    if args.operation not in allowed:
+        raise GateExit(EXIT_USAGE,
+                       f"operation 未登记于 ashare-data 契约: {args.operation}")
+    company_codes = manifest.get("company", {}).get("codes", [])
+    if not company_codes:
+        raise GateExit(EXIT_USAGE,
+                       "run-ashare-command 要求 init --codes 冻结证券代码")
+    normalized = args.code.upper()
+    known_codes = {str(code).upper() for code in company_codes}
+    if normalized not in known_codes:
+        raise GateExit(EXIT_USAGE,
+                       f"命令代码不在 manifest company.codes: {args.code}")
+
+    repo_root = repo_root_for_run(manifest)
+    script = (repo_root / "tools" / "ashare_data.py").resolve()
+    if not script.is_file():
+        raise GateExit(EXIT_USAGE, f"ashare CLI 不存在: {script}")
+    argv = [sys.executable, str(script), args.operation, args.code]
+    started = now_iso()
+    try:
+        cp = subprocess.run(argv, cwd=repo_root, capture_output=True,
+                            timeout=args.timeout)
+        stdout, stderr, exit_code = cp.stdout, cp.stderr, cp.returncode
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or b""
+        stderr = exc.stderr or b""
+        exit_code = 124
+    finished = now_iso()
+
+    command_id = f"ashare-{len(sk.get('command_receipts', [])) + 1:03d}-{args.operation}"
+    stdout_rel = COMMANDS_DIR_REL / f"{command_id}.stdout.txt"
+    stderr_rel = COMMANDS_DIR_REL / f"{command_id}.stderr.txt"
+    atomic_write_bytes(run_root / stdout_rel, stdout)
+    atomic_write_bytes(run_root / stderr_rel, stderr)
+    receipt = {
+        "command_id": command_id,
+        "operation": args.operation,
+        "argv": argv,
+        "exit_code": exit_code,
+        "started_at": started,
+        "finished_at": finished,
+        "sources": list(dict.fromkeys(args.source)),
+        "warnings": [] if exit_code == 0 else ["command_failed"],
+        "receipt_origin": "gate",
+        "stdout_path": stdout_rel.as_posix(),
+        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+        "stderr_path": stderr_rel.as_posix(),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+    }
+    sk["command_receipts"].append(receipt)
+    save_manifest(run_root, manifest)
+    print(json.dumps(receipt, ensure_ascii=False))
+    return EXIT_OK if exit_code == 0 else EXIT_FAIL
+
+
 def validate_evidence_payload(payload):
     if not isinstance(payload, dict):
         raise GateExit(EXIT_USAGE, "evidence-file 必须是 JSON object")
@@ -933,6 +1051,33 @@ def validate_evidence_payload(payload):
                for src in fact["sources"]) and not has_tushare_market_source:
             raise GateExit(EXIT_USAGE,
                            f"facts[{i}] 缺少可采用的 Tushare 市场来源")
+
+    artifact_record_required = {
+        "artifact_id", "artifact_path", "input_artifact_ids", "fact_ids",
+        "command_ids",
+    }
+    seen_artifact_ids = set()
+    for i, record in enumerate(payload.get("artifact_records", [])):
+        if not isinstance(record, dict) or set(record) != artifact_record_required:
+            raise GateExit(EXIT_USAGE,
+                           f"artifact_records[{i}] 必须且只能含 "
+                           f"{sorted(artifact_record_required)}")
+        for key in ("artifact_id", "artifact_path"):
+            if not isinstance(record[key], str) or not record[key].strip():
+                raise GateExit(EXIT_USAGE,
+                               f"artifact_records[{i}].{key} 必须为非空字符串")
+        if record["artifact_id"] in seen_artifact_ids:
+            raise GateExit(EXIT_USAGE,
+                           f"artifact_records[{i}].artifact_id 重复")
+        seen_artifact_ids.add(record["artifact_id"])
+        for key in ("input_artifact_ids", "fact_ids", "command_ids"):
+            values = record[key]
+            if not isinstance(values, list) or not all(
+                    isinstance(value, str) and value for value in values) \
+                    or len(values) != len(set(values)):
+                raise GateExit(EXIT_USAGE,
+                               f"artifact_records[{i}].{key} "
+                               "必须为唯一非空字符串数组")
 
     for i, calc in enumerate(payload.get("calculations", [])):
         if not isinstance(calc, dict) or set(calc) != {
@@ -1080,7 +1225,10 @@ def validate_evidence_payload(payload):
 def cmd_finish_skill(args):
     run_root = Path(args.run_root)
     manifest = load_manifest(run_root)
+    registry = load_registry(args.registry)
+    check_registry_matches_manifest(args.registry, manifest)
     sk = find_skill(manifest, args.skill)
+    item = find_registry_item(registry, args.skill)
     enforce_watchlist_or_block(manifest, run_root, sk)
     if sk["execution_state"] != "RUNNING":
         raise GateExit(EXIT_USAGE,
@@ -1096,6 +1244,12 @@ def cmd_finish_skill(args):
     if args.evidence_file:
         payload = load_json_or_exit(args.evidence_file, "evidence-file")
         validate_evidence_payload(payload)
+    if payload.get("command_receipts") and item.get("name") == "ashare-data":
+        raise GateExit(
+            EXIT_USAGE,
+            "含命令契约的 skill 不接受调用者提交 command_receipts; "
+            "使用 run-ashare-command 由 gate 实际执行并记录",
+        )
     for art in args.artifact or []:
         norm = unicodedata.normalize("NFC", art)
         if norm not in sk["artifacts"]:
@@ -1355,12 +1509,79 @@ EVIDENCE_RULE_KINDS = {
     "min_judgments_with_falsification", "min_role_runs",
     "min_command_receipts", "required_fact_fields",
     "required_judgment_rule_ids", "required_command_operations",
-    # advisory: token-gated 补充命令; 无 elif 分支 => 永不失败 (仅登记预期取数)
-    "advisory_command_operations",
+    "conditional_command_operations",
 }
 
 
-def evaluate_evidence_rules(sk, item):
+def validate_gate_command_receipt(receipt, manifest, run_root):
+    required = {
+        "command_id", "operation", "argv", "exit_code", "started_at",
+        "finished_at", "sources", "warnings", "receipt_origin",
+        "stdout_path", "stdout_sha256", "stderr_path", "stderr_sha256",
+    }
+    if not isinstance(receipt, dict) or set(receipt) != required:
+        return ["gate 命令收据字段不符合封闭 schema"]
+    errors = []
+    if receipt.get("receipt_origin") != "gate":
+        errors.append("命令收据 receipt_origin 必须为 gate")
+    argv = receipt.get("argv")
+    repo_root = repo_root_for_run(manifest)
+    expected_script = (repo_root / "tools" / "ashare_data.py").resolve()
+    if not isinstance(argv, list) or len(argv) != 4:
+        errors.append("gate 命令收据 argv 必须为 python/script/operation/code")
+    else:
+        if not Path(argv[0]).name.startswith("python"):
+            errors.append("gate 命令收据 argv[0] 不是 Python 解释器")
+        try:
+            actual_script = Path(argv[1]).resolve(strict=True)
+        except OSError:
+            actual_script = None
+        if actual_script != expected_script:
+            errors.append("gate 命令收据 argv[1] 不是当前仓库 ashare_data.py")
+        if argv[2] != receipt.get("operation"):
+            errors.append("gate 命令收据 operation 与 argv 不一致")
+        known_codes = {str(code).upper() for code in
+                       manifest.get("company", {}).get("codes", [])}
+        if str(argv[3]).upper() not in known_codes:
+            errors.append("gate 命令收据 code 不在 manifest company.codes")
+    if not isinstance(receipt.get("sources"), list) or not receipt.get("sources"):
+        errors.append("gate 命令收据 sources 不得为空")
+    for key in ("started_at", "finished_at"):
+        try:
+            datetime.fromisoformat(receipt[key])
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"gate 命令收据 {key} 不是 ISO 时间")
+    try:
+        if datetime.fromisoformat(receipt["finished_at"]) < \
+                datetime.fromisoformat(receipt["started_at"]):
+            errors.append("gate 命令收据 finished_at 早于 started_at")
+    except (KeyError, TypeError, ValueError):
+        pass
+    for stream in ("stdout", "stderr"):
+        rel_value = receipt.get(f"{stream}_path")
+        try:
+            rel = PurePosixPath(rel_value)
+        except TypeError:
+            errors.append(f"gate 命令收据 {stream}_path 非法")
+            continue
+        if rel.is_absolute() or ".." in rel.parts \
+                or rel.parts[:2] != ("evidence", "commands"):
+            errors.append(f"gate 命令收据 {stream}_path 越界")
+            continue
+        path = Path(run_root) / rel
+        if not path.is_file():
+            errors.append(f"gate 命令收据 {stream} 文件不存在: {rel}")
+            continue
+        actual_hash = sha256_file(path)
+        if actual_hash != receipt.get(f"{stream}_sha256"):
+            errors.append(f"gate 命令收据 {stream} SHA-256 不匹配")
+        if stream == "stdout" and receipt.get("exit_code") == 0 \
+                and path.stat().st_size == 0:
+            errors.append("成功命令的 stdout 不得为空")
+    return errors
+
+
+def evaluate_evidence_rules(sk, item, manifest, run_root):
     """Phase 2 (§6.4/§15.3): 领域证据结构性存在检查, 不判内容对错 (§2.2)。
 
     须在 facts 分类之后调用 (依赖 fact.computed_status)。返回错误列表。
@@ -1372,6 +1593,12 @@ def evaluate_evidence_rules(sk, item):
     role_runs = [r for r in sk.get("role_runs", []) if isinstance(r, dict)]
     receipts = [r for r in sk.get("command_receipts", [])
                 if isinstance(r, dict)]
+    if item.get("name") == "ashare-data":
+        for receipt in receipts:
+            errors.extend(validate_gate_command_receipt(
+                receipt, manifest, run_root))
+    successful_receipts = [receipt for receipt in receipts
+                           if receipt.get("exit_code") == 0]
     for rule in item.get("evidence_rules", []):
         if not isinstance(rule, dict):
             continue
@@ -1393,8 +1620,9 @@ def evaluate_evidence_rules(sk, item):
                 errors.append(f"领域证据不足: 需 ≥{n} 条带证伪条件的判断, 实际 {good}")
         elif kind == "min_role_runs" and len(role_runs) < n:
             errors.append(f"领域证据不足: 需 ≥{n} 条角色执行记录, 实际 {len(role_runs)}")
-        elif kind == "min_command_receipts" and len(receipts) < n:
-            errors.append(f"领域证据不足: 需 ≥{n} 条命令执行收据, 实际 {len(receipts)}")
+        elif kind == "min_command_receipts" and len(successful_receipts) < n:
+            errors.append(f"领域证据不足: 需 ≥{n} 条成功命令执行收据, "
+                          f"实际 {len(successful_receipts)}")
         elif kind == "required_fact_fields":
             present = {fact.get("field") for fact in facts}
             missing = [value for value in rule.get("values", [])
@@ -1408,11 +1636,40 @@ def evaluate_evidence_rules(sk, item):
             if missing:
                 errors.append(f"领域证据缺 required judgment rule IDs: {missing}")
         elif kind == "required_command_operations":
-            present = {receipt.get("operation") for receipt in receipts}
+            present = {receipt.get("operation") for receipt in successful_receipts}
             missing = [value for value in rule.get("values", [])
                        if value not in present]
             if missing:
-                errors.append(f"领域证据缺 required command operations: {missing}")
+                errors.append("领域证据缺成功的 required command operations "
+                              f"(exit_code 必须为 0): {missing}")
+        elif kind == "conditional_command_operations":
+            capability = rule.get("capability")
+            configured = bool(manifest.get("run", {}).get("capabilities", {})
+                              .get(capability))
+            required_ops = [entry.get("op") for entry in rule.get("values", [])
+                            if isinstance(entry, dict) and entry.get("op")]
+            if configured:
+                by_operation = {}
+                for receipt in receipts:
+                    by_operation.setdefault(receipt.get("operation"), []).append(receipt)
+                missing = [op for op in required_ops if op not in by_operation]
+                failed = [op for op in required_ops
+                          if op in by_operation and not any(
+                              receipt.get("exit_code") == 0
+                              for receipt in by_operation[op])]
+                if missing:
+                    errors.append(f"条件命令缺失 ({capability}=true): {missing}")
+                if failed:
+                    errors.append(f"条件命令 exit_code 非零 ({capability}=true): "
+                                  f"{failed}")
+            else:
+                limitation_codes = {
+                    limitation.get("code") for limitation in sk.get("limitations", [])
+                    if isinstance(limitation, dict)
+                }
+                if "tushare_not_configured" not in limitation_codes:
+                    errors.append("条件命令未配置时必须记录 limitation: "
+                                  "tushare_not_configured")
     return errors
 
 
@@ -1932,6 +2189,111 @@ def git_boundary_errors(manifest, run_root):
     return errors
 
 
+def evaluate_artifact_records(sk, item, manifest, registry):
+    """校验产物 ID、事实/命令引用与注册表 feeds 血缘。"""
+    errors = []
+    all_facts = {fact.get("fact_id") for entry in manifest["skills"]
+                 for fact in entry.get("facts", []) if isinstance(fact, dict)}
+    all_commands = {receipt.get("command_id") for entry in manifest["skills"]
+                    for receipt in entry.get("command_receipts", [])
+                    if isinstance(receipt, dict)}
+    artifact_owners = {}
+    for entry in manifest["skills"]:
+        for assigned in entry.get("assigned_artifacts", []):
+            artifact_owners[assigned.get("artifact_id")] = entry.get("index")
+    assigned_by_id = {assigned.get("artifact_id"): assigned.get("path")
+                      for assigned in sk.get("assigned_artifacts", [])}
+    records = [record for record in sk.get("artifact_records", [])
+               if isinstance(record, dict)]
+    seen = set()
+    for record in records:
+        artifact_id = record.get("artifact_id")
+        path = record.get("artifact_path")
+        if artifact_id in seen:
+            errors.append(f"artifact_record 重复 artifact_id: {artifact_id}")
+        seen.add(artifact_id)
+        if artifact_id not in assigned_by_id:
+            errors.append(f"artifact_record 使用未分配 artifact_id: {artifact_id}")
+        elif assigned_by_id[artifact_id] != path:
+            errors.append(f"artifact_record path 与分配不一致: {artifact_id}")
+        if path not in sk.get("artifacts", []):
+            errors.append(f"artifact_record path 未由 finish-skill 声明: {path}")
+        dangling_facts = sorted(set(record.get("fact_ids", [])) - all_facts)
+        dangling_commands = sorted(set(record.get("command_ids", [])) - all_commands)
+        dangling_inputs = sorted(set(record.get("input_artifact_ids", [])) -
+                                 set(artifact_owners))
+        if dangling_facts:
+            errors.append(f"artifact_record 悬空 fact ID: {dangling_facts}")
+        if dangling_commands:
+            errors.append(f"artifact_record 悬空 command ID: {dangling_commands}")
+        if dangling_inputs:
+            errors.append(f"artifact_record 悬空 input artifact ID: {dangling_inputs}")
+        backward = sorted(
+            input_id for input_id in record.get("input_artifact_ids", [])
+            if input_id in artifact_owners
+            and artifact_owners[input_id] >= sk.get("index", 0)
+        )
+        if backward:
+            errors.append(f"artifact_record 后向/同层自依赖: {backward}")
+
+    if item.get("name") == "ashare-data":
+        if not records:
+            errors.append("ashare-data 必须提交 artifact_record")
+        linked_facts = {fact_id for record in records
+                        for fact_id in record.get("fact_ids", [])}
+        if not linked_facts:
+            errors.append("ashare-data artifact_record 必须连接共享事实")
+        successful_commands = {
+            receipt.get("command_id") for receipt in sk.get("command_receipts", [])
+            if isinstance(receipt, dict) and receipt.get("exit_code") == 0
+        }
+        linked_commands = {command_id for record in records
+                           for command_id in record.get("command_ids", [])}
+        missing_commands = sorted(successful_commands - linked_commands)
+        if missing_commands:
+            errors.append("ashare-data artifact_record 缺成功 command ID: "
+                          f"{missing_commands}")
+
+    capabilities = manifest.get("run", {}).get("capabilities", {})
+    if item.get("name") != "ashare-data" \
+            and capabilities.get("tushare_configured"):
+        ashare_item = next((candidate for candidate in registry["skills"]
+                            if candidate.get("name") == "ashare-data"), None)
+        ashare_sk = next((entry for entry in manifest["skills"]
+                          if entry.get("name") == "ashare-data"), None)
+        if ashare_item and ashare_sk:
+            ashare_artifact_ids = {
+                assigned.get("artifact_id")
+                for assigned in ashare_sk.get("assigned_artifacts", [])
+            }
+            for rule in ashare_item.get("evidence_rules", []):
+                if rule.get("kind") != "conditional_command_operations":
+                    continue
+                for mapping in rule.get("values", []):
+                    if not isinstance(mapping, dict) \
+                            or mapping.get("feeds") != item.get("name"):
+                        continue
+                    operation = mapping.get("op")
+                    command_ids = {
+                        receipt.get("command_id")
+                        for receipt in ashare_sk.get("command_receipts", [])
+                        if isinstance(receipt, dict)
+                        and receipt.get("operation") == operation
+                        and receipt.get("exit_code") == 0
+                    }
+                    linked = any(
+                        ashare_artifact_ids.intersection(
+                            record.get("input_artifact_ids", []))
+                        and command_ids.intersection(record.get("command_ids", []))
+                        for record in records
+                    )
+                    if not linked:
+                        errors.append(
+                            f"artifact_record 未消费 ashare feeds 映射: "
+                            f"{operation} -> {item.get('name')}")
+    return errors
+
+
 def evaluate_skill(sk, item, registry, run_root, calc_schema, manifest):
     """逐项计算 computed_status; 返回 (status, errors, caps)。"""
     if sk["execution_state"] == "BLOCKED":
@@ -1971,7 +2333,8 @@ def evaluate_skill(sk, item, registry, run_root, calc_schema, manifest):
             caps.append(f"关键事实 {fid} 证据不足 ({status})")
 
     # Phase 2 领域证据结构性检查 (须在 fact 分类之后)
-    errors.extend(evaluate_evidence_rules(sk, item))
+    errors.extend(evaluate_evidence_rules(sk, item, manifest, run_root))
+    errors.extend(evaluate_artifact_records(sk, item, manifest, registry))
 
     audit_errors, audit_caps = evaluate_audit(sk, item, run_root)
     errors.extend(audit_errors)
@@ -2213,6 +2576,18 @@ def build_parser():
     p_begin.add_argument("--execution-mode", default=None)
     p_begin.add_argument("--independent-context-count", type=int, default=None)
     p_begin.set_defaults(func=cmd_begin_skill)
+
+    p_run_command = sub.add_parser(
+        "run-ashare-command",
+        help="由 gate 执行注册表登记的 ashare 命令并冻结收据",
+    )
+    add_registry(p_run_command)
+    add_run_root(p_run_command)
+    p_run_command.add_argument("--operation", required=True)
+    p_run_command.add_argument("--code", required=True)
+    p_run_command.add_argument("--source", action="append", required=True)
+    p_run_command.add_argument("--timeout", type=int, default=120)
+    p_run_command.set_defaults(func=cmd_run_ashare_command)
 
     p_finish = sub.add_parser("finish-skill", help="单项收口 COMPLETE/BLOCKED")
     add_registry(p_finish)

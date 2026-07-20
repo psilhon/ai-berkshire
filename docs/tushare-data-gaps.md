@@ -8,7 +8,7 @@
 > ⚠️ **积分门槛为估计值**，评估时 tushare.pro 实时文档抓取不可用；接入前请在个人中心最终核对每个接口的积分与权限。
 > 定位：数据集成路线图，供 `tools/ashare_plugin/` 演进参考；不构成投资建议。
 >
-> **单真源提示**：advisory 命令的编排路由（命令 → 消费 skill → 采集层）以 `tools/full_analysis_contract.json` 的 `advisory_command_operations.values`（`feeds`/`layer` 字段）为唯一真源；下表『受益 skill』列是**集成动机**参考，可能比契约 `feeds` 更宽或不同，**不作编排路由依据**。
+> **单真源提示**：条件命令的编排路由（命令 → 消费 skill → 采集层）以 `tools/full_analysis_contract.json` 的 `conditional_command_operations.values`（`capability`/`feeds`/`layer` 字段）为唯一真源；下表『受益 skill』列是**集成动机**参考，可能比契约 `feeds` 更宽或不同，**不作编排路由依据**。
 
 ## 一、现状定性（关键判断）
 

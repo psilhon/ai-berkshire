@@ -141,6 +141,7 @@ class GateWorkspace:
             json.dumps(self.registry, ensure_ascii=False, indent=1),
             encoding="utf-8")
         self._ctr = itertools.count(1)
+        self.env_overrides = {}
 
     def cleanup(self):
         self.tmp.cleanup()
@@ -148,6 +149,8 @@ class GateWorkspace:
     def env(self):
         env = os.environ.copy()
         env["HOME"] = str(self.home)
+        env.pop("TUSHARE_TOKEN", None)
+        env.update(self.env_overrides)
         return env
 
     def gate(self, *args):
@@ -194,12 +197,32 @@ class GateWorkspace:
 
     def finish(self, run_root, name, state="COMPLETE", artifacts=(),
                evidence=None):
-        args = ["finish-skill", "--run-root", run_root, "--skill", name,
-                "--state", state]
+        args = ["finish-skill", "--registry", self.registry_path,
+                "--run-root", run_root, "--skill", name, "--state", state]
         for a in artifacts:
             args += ["--artifact", a]
         if evidence is not None:
             args += ["--evidence-file", self.write_evidence(evidence)]
+        return self.gate(*args)
+
+    def write_fake_ashare_cli(self, exit_code=0):
+        script = self.repo / "tools" / "ashare_data.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            "import sys\n"
+            "print('数据来源: synthetic-source')\n"
+            "print('operation=' + sys.argv[1])\n"
+            f"raise SystemExit({exit_code})\n",
+            encoding="utf-8",
+        )
+        return script
+
+    def run_ashare(self, run_root, operation, code="600519", sources=()):
+        args = ["run-ashare-command", "--registry", self.registry_path,
+                "--run-root", run_root, "--operation", operation,
+                "--code", code]
+        for source in sources:
+            args += ["--source", source]
         return self.gate(*args)
 
     def complete_skill(self, run_root, index, evidence=None, text=ARTIFACT_TEXT):
@@ -305,10 +328,20 @@ class TestInit(GateTestCase):
         data = json.loads(cp.stdout)
         run_root = Path(data["run_root"])
         rel = run_root.resolve().relative_to(ws.repo.resolve())
-        self.assertEqual(rel.parts[:2], ("local", "筛选公司"))
+        self.assertEqual(rel.parts[:2], ("local", "company"))
         run = ws.manifest(run_root)["run"]
         self.assertEqual(run["visibility"], "private")
         self.assertEqual(run["workspace_audit_mode"], "none")
+
+    def test_init_assigns_stable_artifact_ids(self):
+        ws = self.make_ws(registry=make_registry(nskills=1))
+        run_root, _ = ws.init_ok()
+        skill = ws.manifest(run_root)["skills"][0]
+        assigned = skill["assigned_artifacts"]
+        self.assertEqual(len(assigned), 1)
+        self.assertEqual(assigned[0]["path"], artifact_path(1))
+        expected = gate_mod.artifact_id_for("sk01", artifact_path(1))
+        self.assertEqual(assigned[0]["artifact_id"], expected)
 
     def test_missing_visibility_defaults_to_private(self):
         ws = self.make_ws()
@@ -352,14 +385,14 @@ class TestInit(GateTestCase):
         run_root, data = ws.init_ok(extra=("--codes", "600519",
                                            "--listing-status", "listed"))
         self.assertNotIn("已预防越界", data.get("_raw", "") + json.dumps(data))
-        # run_root 落在 local/筛选公司 (private)
+        # run_root 落在 local/company/<公司>/<run_id> (private, 无中间层)
         rel = run_root.resolve().relative_to(ws.repo.resolve())
         self.assertEqual(rel.parts[0], "local")
-        self.assertEqual(rel.parts[1], "筛选公司")
+        self.assertEqual(rel.parts[1], "company")
         self.assertEqual(rel.parts[2], "评测公司")
-        self.assertEqual(rel.parts[3], "全量分析")
         run_id = data["run_id"]
         self.assertRegex(run_id, r"^\d{8}T\d{6}\+\d{4}-评测公司$")
+        self.assertEqual(rel.parts[3], run_id)
         # 目录: 5 stage + 06-负向验收 + evidence/locks
         for d in STAGE_DIRS.values():
             self.assertTrue((run_root / d).is_dir(), d)
@@ -1400,6 +1433,296 @@ class TestEvidenceRules(GateTestCase):
         ws, rr, cp = self._flow(
             [{"kind": "min_judgments_with_falsification", "n": 1}],
             {"judgments": [_judgment("j1")]})
+        self.assertEqual(cp.returncode, 0, out(cp))
+
+    def _conditional_flow(self, *, configured, evidence):
+        rules = [{
+            "kind": "conditional_command_operations",
+            "capability": "tushare_configured",
+            "values": [{"op": "ratios", "feeds": "sk02", "layer": 1}],
+        }]
+        ws = self.make_ws(registry=make_registry(evidence_rules={1: rules}))
+        if configured:
+            ws.env_overrides["TUSHARE_TOKEN"] = "test-placeholder"
+        run_root, _ = ws.init_ok()
+        ws.complete_all(run_root, evidence={1: evidence} if evidence else None)
+        return ws, run_root, ws.finalize(run_root)
+
+    def test_conditional_commands_configured_but_missing_fails(self):
+        ws, run_root, cp = self._conditional_flow(configured=True, evidence={})
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("ratios", json.dumps(read_result(run_root), ensure_ascii=False))
+
+    def test_conditional_commands_configured_but_nonzero_exit_fails(self):
+        receipt = {
+            "command_id": "cmd-ratios", "operation": "ratios",
+            "argv": ["python3", "tools/ashare_data.py", "ratios", "600519"],
+            "exit_code": 1,
+            "started_at": "2026-07-17T12:00:00+08:00",
+            "finished_at": "2026-07-17T12:00:01+08:00",
+            "sources": [], "warnings": ["all sources failed"],
+        }
+        ws, run_root, cp = self._conditional_flow(
+            configured=True, evidence={"command_receipts": [receipt]})
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("exit_code", json.dumps(read_result(run_root), ensure_ascii=False))
+
+    def test_conditional_commands_not_configured_requires_limitation(self):
+        ws, run_root, cp = self._conditional_flow(configured=False, evidence={})
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("tushare_not_configured",
+                      json.dumps(read_result(run_root), ensure_ascii=False))
+
+    def test_conditional_commands_not_configured_with_limitation_is_pwl(self):
+        evidence = {"limitations": [{
+            "code": "tushare_not_configured",
+            "note": "Tushare capability was absent at init",
+        }]}
+        ws, run_root, cp = self._conditional_flow(
+            configured=False, evidence=evidence)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        self.assertEqual(read_result(run_root)["matrix"][0]["computed_status"],
+                         "PASS_WITH_LIMITATIONS")
+
+
+class TestGateOwnedCommandReceipts(GateTestCase):
+
+    def _workspace(self):
+        rules = [{"kind": "required_command_operations", "values": ["quote"]},
+                 {"kind": "min_command_receipts", "n": 1}]
+        registry = make_registry(nskills=1, evidence_rules={1: rules})
+        registry["skills"][0]["name"] = "ashare-data"
+        registry["skills"][0]["spec_source"] = "skills/ashare-data.md"
+        ws = self.make_ws(registry=registry)
+        ws.write_fake_ashare_cli()
+        run_root, _ = ws.init_ok(extra=("--codes", "600519"))
+        self.assertEqual(ws.begin(run_root, "ashare-data").returncode, 0)
+        return ws, run_root
+
+    def test_run_ashare_command_executes_and_freezes_hashed_output(self):
+        ws, run_root = self._workspace()
+        cp = ws.run_ashare(run_root, "quote", sources=("synthetic-source",))
+        self.assertEqual(cp.returncode, 0, out(cp))
+        receipt = ws.manifest(run_root)["skills"][0]["command_receipts"][0]
+        self.assertEqual(receipt["operation"], "quote")
+        self.assertEqual(receipt["exit_code"], 0)
+        self.assertEqual(receipt["receipt_origin"], "gate")
+        self.assertEqual(receipt["argv"][2:], ["quote", "600519"])
+        stdout = run_root / receipt["stdout_path"]
+        stderr = run_root / receipt["stderr_path"]
+        self.assertTrue(stdout.is_file())
+        self.assertTrue(stderr.is_file())
+        self.assertEqual(receipt["stdout_sha256"], hashlib.sha256(
+            stdout.read_bytes()).hexdigest())
+        self.assertEqual(receipt["stderr_sha256"], hashlib.sha256(
+            stderr.read_bytes()).hexdigest())
+
+    def test_finish_rejects_caller_submitted_ashare_receipt(self):
+        ws, run_root = self._workspace()
+        art = artifact_path(1)
+        ws.write_artifact(run_root, art)
+        receipt = {
+            "command_id": "fabricated", "operation": "quote",
+            "argv": ["definitely-not-a-real-command", "quote"],
+            "exit_code": 0,
+            "started_at": "2026-07-17T12:00:00+08:00",
+            "finished_at": "2026-07-17T12:00:01+08:00",
+            "sources": ["fabricated-source"], "warnings": [],
+        }
+        cp = ws.finish(run_root, "ashare-data", artifacts=[art],
+                       evidence={"command_receipts": [receipt]})
+        self.assertEqual(cp.returncode, 2, out(cp))
+        self.assertIn("run-ashare-command", cp.stdout + cp.stderr)
+
+    def test_run_ashare_command_rejects_unregistered_operation(self):
+        ws, run_root = self._workspace()
+        cp = ws.run_ashare(run_root, "valuation",
+                           sources=("synthetic-source",))
+        self.assertEqual(cp.returncode, 2, out(cp))
+        self.assertIn("未登记", cp.stdout + cp.stderr)
+
+    def test_run_ashare_command_requires_source(self):
+        ws, run_root = self._workspace()
+        cp = ws.run_ashare(run_root, "quote")
+        self.assertEqual(cp.returncode, 2, out(cp))
+        self.assertIn("source", cp.stdout + cp.stderr)
+
+    def test_required_operation_with_nonzero_exit_fails_finalize(self):
+        ws, run_root = self._workspace()
+        ws.write_fake_ashare_cli(exit_code=1)
+        cp = ws.run_ashare(run_root, "quote", sources=("synthetic-source",))
+        self.assertEqual(cp.returncode, 1, out(cp))
+        art = artifact_path(1)
+        ws.write_artifact(run_root, art)
+        self.assertEqual(ws.finish(run_root, "ashare-data",
+                                   artifacts=[art]).returncode, 0)
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("exit_code", json.dumps(read_result(run_root),
+                                               ensure_ascii=False))
+
+
+class TestArtifactLineage(GateTestCase):
+
+    def test_finish_accepts_closed_artifact_record(self):
+        ws = self.make_ws(registry=make_registry(nskills=1))
+        run_root, _ = ws.init_ok()
+        self.assertEqual(ws.begin(run_root, "sk01").returncode, 0)
+        art = artifact_path(1)
+        ws.write_artifact(run_root, art)
+        assigned = ws.manifest(run_root)["skills"][0]["assigned_artifacts"][0]
+        fact = _fact("f1", [_src("巨潮", "chain-a", "100")])
+        record = {
+            "artifact_id": assigned["artifact_id"],
+            "artifact_path": art,
+            "input_artifact_ids": [],
+            "fact_ids": ["f1"],
+            "command_ids": [],
+        }
+        cp = ws.finish(run_root, "sk01", artifacts=[art],
+                       evidence={"facts": [fact],
+                                 "artifact_records": [record]})
+        self.assertEqual(cp.returncode, 0, out(cp))
+        stored = ws.manifest(run_root)["skills"][0]["artifact_records"]
+        self.assertEqual(stored, [record])
+
+    def test_finalize_rejects_dangling_lineage_ids(self):
+        ws = self.make_ws(registry=make_registry(nskills=1))
+        run_root, _ = ws.init_ok()
+        self.assertEqual(ws.begin(run_root, "sk01").returncode, 0)
+        art = artifact_path(1)
+        ws.write_artifact(run_root, art)
+        artifact_id = ws.manifest(run_root)["skills"][0]["assigned_artifacts"][0][
+            "artifact_id"]
+        record = {
+            "artifact_id": artifact_id,
+            "artifact_path": art,
+            "input_artifact_ids": ["missing-artifact"],
+            "fact_ids": ["missing-fact"],
+            "command_ids": ["missing-command"],
+        }
+        self.assertEqual(ws.finish(
+            run_root, "sk01", artifacts=[art],
+            evidence={"artifact_records": [record]}).returncode, 0)
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("悬空", json.dumps(read_result(run_root),
+                                         ensure_ascii=False))
+
+    def test_finalize_rejects_backward_artifact_dependency(self):
+        ws = self.make_ws(registry=make_registry(nskills=2))
+        run_root, _ = ws.init_ok()
+        manifest = ws.manifest(run_root)
+        first_id = manifest["skills"][0]["assigned_artifacts"][0]["artifact_id"]
+        second_id = manifest["skills"][1]["assigned_artifacts"][0]["artifact_id"]
+        for index, artifact_id, inputs in (
+                (1, first_id, [second_id]), (2, second_id, [])):
+            name = f"sk{index:02d}"
+            art = artifact_path(index)
+            self.assertEqual(ws.begin(run_root, name).returncode, 0)
+            ws.write_artifact(run_root, art)
+            record = {
+                "artifact_id": artifact_id, "artifact_path": art,
+                "input_artifact_ids": inputs, "fact_ids": [],
+                "command_ids": [],
+            }
+            self.assertEqual(ws.finish(
+                run_root, name, artifacts=[art],
+                evidence={"artifact_records": [record]}).returncode, 0)
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("后向", json.dumps(read_result(run_root),
+                                         ensure_ascii=False))
+
+    def test_ashare_requires_shared_facts_and_artifact_record(self):
+        rules = [{"kind": "required_command_operations", "values": ["quote"]},
+                 {"kind": "min_command_receipts", "n": 1}]
+        registry = make_registry(nskills=1, evidence_rules={1: rules})
+        registry["skills"][0]["name"] = "ashare-data"
+        registry["skills"][0]["spec_source"] = "skills/ashare-data.md"
+        ws = self.make_ws(registry=registry)
+        ws.write_fake_ashare_cli()
+        run_root, _ = ws.init_ok(extra=("--codes", "600519"))
+        self.assertEqual(ws.begin(run_root, "ashare-data").returncode, 0)
+        self.assertEqual(ws.run_ashare(
+            run_root, "quote", sources=("synthetic-source",)).returncode, 0)
+        art = artifact_path(1)
+        ws.write_artifact(run_root, art)
+        self.assertEqual(ws.finish(run_root, "ashare-data",
+                                   artifacts=[art]).returncode, 0)
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        result_text = json.dumps(read_result(run_root), ensure_ascii=False)
+        self.assertIn("artifact_record", result_text)
+        self.assertIn("共享事实", result_text)
+
+    def _feed_flow(self, *, link_consumer):
+        registry = make_registry(nskills=2)
+        registry["skills"][0].update({
+            "name": "ashare-data",
+            "spec_source": "skills/ashare-data.md",
+            "evidence_rules": [
+                {"kind": "required_command_operations", "values": ["quote"]},
+                {"kind": "min_command_receipts", "n": 2},
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured",
+                 "values": [{"op": "ratios", "feeds": "quality-screen",
+                             "layer": 1}]},
+            ],
+        })
+        registry["skills"][1].update({
+            "name": "quality-screen",
+            "spec_source": "skills/quality-screen.md",
+        })
+        ws = self.make_ws(registry=registry)
+        ws.env_overrides["TUSHARE_TOKEN"] = "test-placeholder"
+        ws.write_fake_ashare_cli()
+        run_root, _ = ws.init_ok(extra=("--codes", "600519"))
+        manifest = ws.manifest(run_root)
+        ashare_id = manifest["skills"][0]["assigned_artifacts"][0]["artifact_id"]
+        consumer_id = manifest["skills"][1]["assigned_artifacts"][0]["artifact_id"]
+
+        self.assertEqual(ws.begin(run_root, "ashare-data").returncode, 0)
+        for operation in ("quote", "ratios"):
+            self.assertEqual(ws.run_ashare(
+                run_root, operation, sources=("synthetic-source",)).returncode, 0)
+        command_ids = [receipt["command_id"] for receipt in
+                       ws.manifest(run_root)["skills"][0]["command_receipts"]]
+        ashare_artifact = artifact_path(1)
+        ws.write_artifact(run_root, ashare_artifact)
+        fact = _fact("price-fact", [_src("腾讯", "quote-chain", "100")])
+        ashare_record = {
+            "artifact_id": ashare_id, "artifact_path": ashare_artifact,
+            "input_artifact_ids": [], "fact_ids": ["price-fact"],
+            "command_ids": command_ids,
+        }
+        self.assertEqual(ws.finish(
+            run_root, "ashare-data", artifacts=[ashare_artifact],
+            evidence={"facts": [fact],
+                      "artifact_records": [ashare_record]}).returncode, 0)
+
+        self.assertEqual(ws.begin(run_root, "quality-screen").returncode, 0)
+        consumer_artifact = artifact_path(2)
+        ws.write_artifact(run_root, consumer_artifact)
+        consumer_record = {
+            "artifact_id": consumer_id, "artifact_path": consumer_artifact,
+            "input_artifact_ids": [ashare_id] if link_consumer else [],
+            "fact_ids": [],
+            "command_ids": [command_ids[1]] if link_consumer else [],
+        }
+        self.assertEqual(ws.finish(
+            run_root, "quality-screen", artifacts=[consumer_artifact],
+            evidence={"artifact_records": [consumer_record]}).returncode, 0)
+        return ws, run_root, ws.finalize(run_root)
+
+    def test_conditional_feed_requires_downstream_artifact_lineage(self):
+        ws, run_root, cp = self._feed_flow(link_consumer=False)
+        self.assertEqual(cp.returncode, 1, out(cp))
+        self.assertIn("ratios -> quality-screen",
+                      json.dumps(read_result(run_root), ensure_ascii=False))
+
+    def test_conditional_feed_accepts_linked_downstream_artifact(self):
+        ws, run_root, cp = self._feed_flow(link_consumer=True)
         self.assertEqual(cp.returncode, 0, out(cp))
 
 

@@ -38,6 +38,8 @@ def normalize_code(value: str) -> CodeIdentity:
 
     if explicit_market:
         market = explicit_market
+    elif code.startswith("920"):
+        market = "BJ"
     elif code.startswith(("6", "9", "5")):
         market = "SH"
     elif code.startswith(("4", "8")):

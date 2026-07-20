@@ -62,14 +62,23 @@
       "evidence_rules": [
         {
           "kind": "required_command_operations",
-          "values": ["overview", "financials", "valuation", "history", "equity-history", "announcements", "signals"]
+          "values": ["quote", "financials", "valuation", "history", "equity-history", "announcements", "signals"]
         },
         {
           "kind": "min_command_receipts",
           "n": 7
         },
         {
-          "kind": "advisory_command_operations",
+          "kind": "required_fact_fields",
+          "values": ["price", "market_cap", "revenue"]
+        },
+        {
+          "kind": "min_facts",
+          "n": 3
+        },
+        {
+          "kind": "conditional_command_operations",
+          "capability": "tushare_configured",
           "values": [
             {"op": "ratios", "feeds": "quality-screen", "layer": 1},
             {"op": "mainbz", "feeds": "financial-data", "layer": 1},

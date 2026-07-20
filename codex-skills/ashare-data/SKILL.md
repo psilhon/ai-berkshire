@@ -105,6 +105,12 @@ python3 tools/ashare_data.py signals <代码>
 - 任何失败**宁标"数据不足"，也不用推测填充**；不得用空结果伪装成功。
 - `signals` 是部分成功语义：四块信号任一可用即成功，不可用的块逐条列在警告里——呈现时把不可用块明确说出来，不要只报可用的。
 
+### full-company-analysis 集成
+
+在 `full-company-analysis` 中不得只粘贴命令文本：基础命令由 gate 的 `run-ashare-command` 实际执行并冻结收据；随后至少登记三个可复用核心事实 `price`、`market_cap`、`revenue`。每条事实使用 gate 的 `fact_id/field/subject/period/unit/value/tolerance_pct/sources` 封闭结构，来源保留 publisher、document/URL、acquisition chain 与访问时间；取不到就记录限制，禁止默认值或估算填充。
+
+ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 command IDs 连接到 `assigned_artifacts` 中的 artifact ID。注册表 `conditional_command_operations.values` 指定的下游 `feeds` 必须引用同一 artifact ID 和对应 command ID，不得复制文本后丢失血缘。
+
 ---
 
 ## 数据陷阱（转述数据前必读）

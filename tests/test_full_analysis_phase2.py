@@ -43,6 +43,7 @@ KIND_KEY = {
     "required_fact_fields": "facts",
     "required_judgment_rule_ids": "judgments",
     "required_command_operations": "command_receipts",
+    "conditional_command_operations": "limitations",
 }
 
 
@@ -97,6 +98,7 @@ def build_text(sections, min_bytes):
 # ---------------------------------------------------------------------------
 def green_evidence(item):
     facts, calcs, judgments, role_runs, command_receipts = [], [], [], [], []
+    limitations = []
     for i, rule in enumerate(item.get("evidence_rules", [])):
         kind = rule["kind"]
         n = rule.get("n", 1)
@@ -153,6 +155,12 @@ def green_evidence(item):
                     "sources": ["synthetic-source-a", "synthetic-source-b"],
                     "warnings": [],
                 })
+        elif kind == "conditional_command_operations":
+            ev_limitation = {
+                "code": "tushare_not_configured",
+                "note": "Tushare capability absent in synthetic init",
+            }
+            limitations.append(ev_limitation)
     # 必需角色必须按名字出现
     for role in item.get("role_rule", {}).get("required_roles", []):
         role_runs.append(_role(role, artifact_rule(item)["path"],
@@ -168,6 +176,8 @@ def green_evidence(item):
         ev["role_runs"] = role_runs
     if command_receipts:
         ev["command_receipts"] = command_receipts
+    if limitations:
+        ev["limitations"] = limitations
     policy = artifact_rule(item).get("audit_policy", "none")
     if policy in ("required", "advisory"):
         ev["audit"] = [audit_record(artifact_rule(item)["path"])]
@@ -245,7 +255,11 @@ class TestFullAnalysisPhase2Contracts(unittest.TestCase):
         """
         ws = GateWorkspace(registry=build_single_registry(item))
         try:
-            run_root, _ = ws.init_ok()
+            is_ashare = item["name"] == "ashare-data"
+            if is_ashare:
+                ws.write_fake_ashare_cli()
+            run_root, _ = ws.init_ok(
+                extra=("--codes", "600519") if is_ashare else ())
             name = item["name"]
             rule = artifact_rule(item)
             text = (artifact_text if artifact_text is not None
@@ -254,8 +268,32 @@ class TestFullAnalysisPhase2Contracts(unittest.TestCase):
             cp_begin = ws.begin(run_root, name, extra=begin_extra)
             self.assertEqual(cp_begin.returncode, 0,
                              f"begin 应成功: {out(cp_begin)}")
+            finish_evidence = dict(evidence)
+            if is_ashare:
+                should_run_commands = bool(finish_evidence.pop(
+                    "command_receipts", None))
+                if should_run_commands:
+                    required = next(
+                        rule for rule in item["evidence_rules"]
+                        if rule["kind"] == "required_command_operations")
+                    for operation in required["values"]:
+                        cp_command = ws.run_ashare(
+                            run_root, operation, sources=("synthetic-source",))
+                        self.assertEqual(cp_command.returncode, 0,
+                                         f"run command 应成功: {out(cp_command)}")
+                manifest = ws.manifest(run_root)
+                skill = manifest["skills"][0]
+                finish_evidence["artifact_records"] = [{
+                    "artifact_id": skill["assigned_artifacts"][0]["artifact_id"],
+                    "artifact_path": rule["path"],
+                    "input_artifact_ids": [],
+                    "fact_ids": [fact["fact_id"]
+                                 for fact in finish_evidence.get("facts", [])],
+                    "command_ids": [receipt["command_id"]
+                                    for receipt in skill["command_receipts"]],
+                }]
             cp_finish = ws.finish(run_root, name, artifacts=[rule["path"]],
-                                  evidence=evidence)
+                                  evidence=finish_evidence)
             self.assertEqual(cp_finish.returncode, 0,
                              f"finish 应成功: {out(cp_finish)}")
             cp_final = ws.finalize(run_root)

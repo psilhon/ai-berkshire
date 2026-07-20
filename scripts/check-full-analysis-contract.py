@@ -18,6 +18,7 @@
 """
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -34,8 +35,7 @@ EVIDENCE_RULE_KINDS = {
     "min_judgments_with_falsification", "min_role_runs",
     "min_command_receipts", "required_fact_fields",
     "required_judgment_rule_ids", "required_command_operations",
-    # advisory: token-gated 补充命令; gate 不执法 (缺失不失败), 仅登记预期取数
-    "advisory_command_operations",
+    "conditional_command_operations",
 }
 COUNT_RULE_KINDS = {
     "min_facts", "min_dual_source_facts", "min_calculations",
@@ -63,36 +63,63 @@ def _err(errors, msg):
     errors.append(msg)
 
 
-def _check_advisory_values(errors, label, rule, known_skills):
-    """advisory_command_operations.values = 对象数组 {op, feeds, layer}.
+def _check_conditional_values(errors, label, rule, known_skills):
+    """conditional_command_operations = capability + {op, feeds, layer}[]。
 
     这是"取数命令 → 消费 skill → 采集层"的唯一机器映射 (编排 skill 正文不复述):
     op 非空且唯一; feeds 须属注册表内 skill 名 (防喂养目标 typo); layer 为 1-6 int。
-    gate 不据此执法 (缺失不失败), 仅登记预期取数与路由。
+    gate 按 init 冻结的 capability 决定必须执行或明确 NOT_CONFIGURED。
     """
+    if rule.get("capability") != "tushare_configured":
+        _err(errors, f"{label} conditional capability 仅允许 "
+                     f"tushare_configured: {rule!r}")
     values = rule.get("values")
     if not isinstance(values, list) or not values:
-        _err(errors, f"{label} advisory_command_operations values 必须为非空对象数组: {rule!r}")
+        _err(errors, f"{label} conditional_command_operations values "
+                     f"必须为非空对象数组: {rule!r}")
         return
     ops = []
     for entry in values:
         if not isinstance(entry, dict):
-            _err(errors, f"{label} advisory value 必须为 {{op,feeds,layer}} 对象: {entry!r}")
+            _err(errors, f"{label} conditional value 必须为 "
+                         f"{{op,feeds,layer}} 对象: {entry!r}")
             continue
         op = entry.get("op")
         feeds = entry.get("feeds")
         layer = entry.get("layer")
         if not isinstance(op, str) or not op:
-            _err(errors, f"{label} advisory value op 必须为非空字符串: {entry!r}")
+            _err(errors, f"{label} conditional value op 必须为非空字符串: {entry!r}")
         else:
             ops.append(op)
         if not isinstance(feeds, str) or feeds not in known_skills:
-            _err(errors, f"{label} advisory value feeds 必须为注册表内 skill 名: {entry!r}")
+            _err(errors, f"{label} conditional value feeds 必须为注册表内 skill 名: {entry!r}")
         if not isinstance(layer, int) or isinstance(layer, bool) \
                 or not (1 <= layer <= 6):
-            _err(errors, f"{label} advisory value layer 必须为 1-6 的 int: {entry!r}")
+            _err(errors, f"{label} conditional value layer 必须为 1-6 的 int: {entry!r}")
     if len(ops) != len(set(ops)):
-        _err(errors, f"{label} advisory value op 必须唯一: {sorted(ops)}")
+        _err(errors, f"{label} conditional value op 必须唯一: {sorted(ops)}")
+
+
+def _ashare_cli_commands(repo_root):
+    """静态提取 ashare_data.py 的 argparse add_parser 字面量命令。"""
+    path = repo_root / "tools" / "ashare_data.py"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        return None, f"ashare CLI 不可读或语法非法: {path}: {exc}"
+    commands = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "add_parser":
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            commands.add(first.value)
+    if not commands:
+        return None, f"ashare CLI 未提取到任何 add_parser 命令: {path}"
+    return commands, None
 
 
 def extract_save_paths(text):
@@ -201,6 +228,7 @@ def validate(registry_path: Path, repo_root: Path):
     if dup_names:
         _err(errors, f"name 重复: {sorted(dup_names)}")
     known_skill_names = {n for n in names if isinstance(n, str) and n}
+    ashare_commands = None
 
     seen_paths = {}
     for item in skills:
@@ -294,8 +322,8 @@ def validate(registry_path: Path, repo_root: Path):
                 n = rule.get("n", 1)
                 if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
                     _err(errors, f"{label} evidence_rule n 必须为正 int: {rule!r}")
-            elif rule["kind"] == "advisory_command_operations":
-                _check_advisory_values(errors, label, rule, known_skill_names)
+            elif rule["kind"] == "conditional_command_operations":
+                _check_conditional_values(errors, label, rule, known_skill_names)
             else:
                 values = rule.get("values")
                 if not isinstance(values, list) or not values \
@@ -303,6 +331,28 @@ def validate(registry_path: Path, repo_root: Path):
                         or not all(isinstance(x, str) and x for x in values):
                     _err(errors, f"{label} evidence_rule values 必须为非空唯一"
                                  f"字符串数组: {rule!r}")
+
+        if item.get("name") == "ashare-data":
+            if ashare_commands is None:
+                ashare_commands, cli_error = _ashare_cli_commands(repo_root)
+                if cli_error:
+                    _err(errors, cli_error)
+            registered_ops = set()
+            for rule in ev_rules:
+                if not isinstance(rule, dict):
+                    continue
+                if rule.get("kind") == "required_command_operations":
+                    registered_ops.update(rule.get("values", []))
+                elif rule.get("kind") == "conditional_command_operations":
+                    registered_ops.update(
+                        entry.get("op") for entry in rule.get("values", [])
+                        if isinstance(entry, dict) and entry.get("op")
+                    )
+            if ashare_commands is not None:
+                missing_ops = sorted(registered_ops - ashare_commands)
+                if missing_ops:
+                    _err(errors, f"{label} 注册 operation 不存在于 ashare CLI: "
+                                 f"{missing_ops}")
 
         # §15.3: 标题字符串只能证明结构存在，不能代替可执行领域证据。
         if status == "IMPLEMENTED" and not ev_rules:

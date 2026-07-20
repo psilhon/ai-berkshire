@@ -36,7 +36,7 @@ skills/*.md（Claude Code slash command 源文件，权威）
 - `skills/full-company-analysis.md` — 总控编排层，只调度现有业务 skill 不自己做研究；**Phase 2 完成前仅限内部开发调用**，不得对用户宣称"全量分析可用"
 - `tools/full_analysis_gate.py` — 确定性验收器，生命周期：`init` → 每项 `begin-skill`/`finish-skill` → 每层 `checkpoint` → `set-industry`/`set-review-mode` → `finalize`/`summary`；`contracts` 子命令输出 20 项概览
 
-运行产物按可见性落盘：private（默认）→ `local/筛选公司/<公司>/全量分析/<run_id>/`；public → `筛选公司/<公司>/全量分析/<run_id>/`。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
+运行产物按可见性落盘：private（默认）→ `local/company/<公司>/<run_id>/`；public → `筛选公司/<公司>/全量分析/<run_id>/`。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
 
 ## 常用命令
 
@@ -108,7 +108,7 @@ docs/            — ROADMAP 与专题文档
 | /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
 | /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `reports/bottleneck-map/` |
 | /portfolio-review | `portfolio-latest.md`（持续更新） | 根目录 |
-| /full-company-analysis | `全量分析/<run_id>/` 运行目录（路径由 gate 生成，不接受自定义） | private→`local/筛选公司/{公司名}/`；public→`筛选公司/{公司名}/` |
+| /full-company-analysis | `<run_id>/` 运行目录（路径由 gate 生成，不接受自定义） | private→`local/company/{公司名}/`；public→`筛选公司/{公司名}/全量分析/` |
 
 ## 投研分析核心原则（最高优先级）
 

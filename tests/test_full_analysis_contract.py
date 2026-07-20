@@ -6,6 +6,7 @@
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 VALIDATOR = REPO / "scripts" / "check-full-analysis-contract.py"
 ORCHESTRATOR_SKILL = REPO / "skills" / "full-company-analysis.md"
+ASHARE_SKILL = REPO / "skills" / "ashare-data.md"
 
 STAGE_DIRS = {
     "01-data-screen": "01-数据与快筛",
@@ -35,6 +37,26 @@ class TestOrchestratorUsageContract(unittest.TestCase):
         self.assertNotIn("不得静默默认", text)
         self.assertNotIn("无非 Git fallback", text)
         self.assertNotIn("private 根目录必须被 Git 忽略", text)
+
+    def test_ashare_receipts_are_gate_owned(self):
+        text = ORCHESTRATOR_SKILL.read_text(encoding="utf-8")
+        self.assertIn("run-ashare-command", text)
+        self.assertIn("不接受调用者提交", text)
+        self.assertIn("stdout", text)
+        self.assertIn("SHA-256", text)
+
+    def test_artifact_lineage_contract_is_documented(self):
+        text = ORCHESTRATOR_SKILL.read_text(encoding="utf-8")
+        for token in ("artifact_records", "input_artifact_ids", "fact_ids",
+                      "command_ids", "assigned_artifacts"):
+            self.assertIn(token, text)
+
+    def test_ashare_full_analysis_core_facts_are_documented(self):
+        text = ASHARE_SKILL.read_text(encoding="utf-8")
+        self.assertIn("full-company-analysis", text)
+        self.assertIn("price", text)
+        self.assertIn("market_cap", text)
+        self.assertIn("revenue", text)
 
 
 def make_skill_item(i, name=None, **overrides):
@@ -274,13 +296,14 @@ class TestPhase2EvidenceRules(_ValidatorCase):
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "evidence_rule n")
 
-    def test_advisory_command_operations_kind_passes(self):
-        """advisory_command_operations: op/feeds/layer 对象数组, feeds 属注册表 skill。"""
+    def test_conditional_command_operations_kind_passes(self):
+        """conditional_command_operations: capability + op/feeds/layer。"""
         def mutate(reg):
             reg["skills"][0]["domain_evidence_status"] = "IMPLEMENTED"
             reg["skills"][0]["evidence_rules"] = [
-                {"kind": "required_command_operations", "values": ["overview"]},
-                {"kind": "advisory_command_operations", "values": [
+                {"kind": "required_command_operations", "values": ["quote"]},
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured", "values": [
                     {"op": "ratios", "feeds": "skill-02", "layer": 1},
                     {"op": "mainbz", "feeds": "skill-03", "layer": 2},
                 ]},
@@ -288,47 +311,61 @@ class TestPhase2EvidenceRules(_ValidatorCase):
         proc = self.run_validator(make_registry(mutate=mutate))
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
-    def test_advisory_command_operations_needs_values(self):
+    def test_conditional_command_operations_needs_values(self):
         def mutate(reg):
             reg["skills"][0]["evidence_rules"] = [
-                {"kind": "advisory_command_operations", "n": 3}]
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured", "n": 3}]
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "values")
 
-    def test_advisory_command_operations_rejects_bare_strings(self):
+    def test_conditional_command_operations_rejects_bare_strings(self):
         """裸字符串数组是旧形态, 现须为对象数组 (单真源: op/feeds/layer)。"""
         def mutate(reg):
             reg["skills"][0]["evidence_rules"] = [
-                {"kind": "advisory_command_operations",
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured",
                  "values": ["ratios", "mainbz"]}]
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "对象")
 
-    def test_advisory_command_operations_feeds_must_be_registry_skill(self):
+    def test_conditional_command_operations_feeds_must_be_registry_skill(self):
         """feeds 必须是注册表内 skill 名, 防喂养目标 typo。"""
         def mutate(reg):
             reg["skills"][0]["evidence_rules"] = [
-                {"kind": "advisory_command_operations", "values": [
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured", "values": [
                     {"op": "ratios", "feeds": "no-such-skill", "layer": 1}]}]
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "feeds")
 
-    def test_advisory_command_operations_layer_must_be_valid(self):
+    def test_conditional_command_operations_layer_must_be_valid(self):
         def mutate(reg):
             reg["skills"][0]["evidence_rules"] = [
-                {"kind": "advisory_command_operations", "values": [
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured", "values": [
                     {"op": "ratios", "feeds": "skill-02", "layer": 9}]}]
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "layer")
 
-    def test_advisory_command_operations_op_must_be_unique(self):
+    def test_conditional_command_operations_op_must_be_unique(self):
         def mutate(reg):
             reg["skills"][0]["evidence_rules"] = [
-                {"kind": "advisory_command_operations", "values": [
+                {"kind": "conditional_command_operations",
+                 "capability": "tushare_configured", "values": [
                     {"op": "ratios", "feeds": "skill-02", "layer": 1},
                     {"op": "ratios", "feeds": "skill-03", "layer": 2}]}]
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "op")
+
+    def test_conditional_command_operations_requires_known_capability(self):
+        def mutate(reg):
+            reg["skills"][0]["evidence_rules"] = [
+                {"kind": "conditional_command_operations",
+                 "capability": "unknown_capability", "values": [
+                    {"op": "ratios", "feeds": "skill-02", "layer": 1}]}]
+        self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
+                               "capability")
 
 
 class TestRealRegistry(unittest.TestCase):
@@ -367,6 +404,65 @@ class TestRealRegistry(unittest.TestCase):
                               for r in s.get("evidence_rules", []))]
         self.assertEqual(missing, [],
                          f"缺领域标识 evidence rule: {missing}")
+
+    def test_ashare_registered_operations_exist_in_cli(self):
+        """注册表不得登记 ashare_data.py 实际不存在的命令。"""
+        reg = json.loads((REPO / "tools" / "full_analysis_contract.json")
+                         .read_text(encoding="utf-8"))
+        item = next(skill for skill in reg["skills"]
+                    if skill["name"] == "ashare-data")
+        registered = set()
+        for rule in item.get("evidence_rules", []):
+            if rule.get("kind") == "required_command_operations":
+                registered.update(rule.get("values", []))
+            elif rule.get("kind") == "conditional_command_operations":
+                registered.update(entry["op"] for entry in rule.get("values", []))
+
+        cp = subprocess.run(
+            [sys.executable, str(REPO / "tools" / "ashare_data.py"), "--help"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(cp.returncode, 0, msg=cp.stdout + cp.stderr)
+        usage_match = re.search(r"\{([^}]+)\}", cp.stdout)
+        self.assertIsNotNone(usage_match, cp.stdout)
+        available = set(usage_match.group(1).split(","))
+        self.assertEqual(sorted(registered - available), [],
+                         "注册表含 CLI 不存在的 ashare operation")
+
+    def test_validator_rejects_unknown_ashare_operation(self):
+        """独立注册表校验器也必须阻止 operation/CLI 漂移。"""
+        reg = json.loads((REPO / "tools" / "full_analysis_contract.json")
+                         .read_text(encoding="utf-8"))
+        item = next(skill for skill in reg["skills"]
+                    if skill["name"] == "ashare-data")
+        required = next(rule for rule in item["evidence_rules"]
+                        if rule["kind"] == "required_command_operations")
+        required["values"][0] = "definitely-not-an-ashare-command"
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "contract.json"
+            registry.write_text(json.dumps(reg, ensure_ascii=False),
+                                encoding="utf-8")
+            cp = subprocess.run(
+                [sys.executable, str(VALIDATOR), "--registry", str(registry),
+                 "--repo-root", str(REPO)],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(cp.returncode, 1, msg=cp.stdout + cp.stderr)
+        self.assertIn("ashare CLI", cp.stdout + cp.stderr)
+
+    def test_ashare_contract_requires_shared_core_facts(self):
+        reg = json.loads((REPO / "tools" / "full_analysis_contract.json")
+                         .read_text(encoding="utf-8"))
+        item = next(skill for skill in reg["skills"]
+                    if skill["name"] == "ashare-data")
+        field_rule = next((rule for rule in item["evidence_rules"]
+                           if rule.get("kind") == "required_fact_fields"), None)
+        self.assertIsNotNone(field_rule)
+        self.assertEqual(set(field_rule["values"]),
+                         {"price", "market_cap", "revenue"})
+        self.assertTrue(any(rule.get("kind") == "min_facts"
+                            and rule.get("n", 0) >= 3
+                            for rule in item["evidence_rules"]))
 
     def test_investment_team_requires_four_named_views_and_arbitration(self):
         """最终综合报告必须保留四位投资人的独立观点与仲裁。"""
