@@ -110,7 +110,7 @@ Tushare `MATCH` 计第二源、`CONFLICT` 两值并记不合并、`INSUFFICIENT/
 
 **行情价格双源：** `quote`/`valuation` 已内置腾讯 + 新浪独立第二价源核对，`价格双源` 行的 `MATCH/CONFLICT/UNAVAILABLE` 逐一如实记录，不因价格双源自动把 PE/PB/市值升级为逐字段双源。
 
-**Web 取数兜底纪律（一等公民，非临场救火）：** `WebSearch`/`WebFetch` 后端不可用是常见情形，不得因此判流程失败。命中时按序降级：(1) `curl` 直连东财 datacenter/F10 与巨潮 cninfo 原始 PDF；(2) Browser pane 直接抓取官方页面（如上海航运交易所 SCFI/CCFI、Alphaliner）；(3) 仓库 `tools/ashare_data.py` + Tushare。所得仍为真实公开只读数据，但须在 limitations 显式记"通用新闻检索路径不可用"（券商一致预期等据此置 unverified），不得静默当作已核。
+**Web 取数兜底纪律（一等公民，非临场救火）：** `WebSearch`/`WebFetch` 后端不可用是常见情形，不得因此判流程失败。命中时按序降级：(1) `curl` 直连东财 datacenter/F10 与巨潮 cninfo 原始 PDF；(2) Browser pane 直接抓取官方页面（如上海航运交易所 SCFI/CCFI、Alphaliner）；(3) 仓库 `tools/ashare_data.py` + Tushare。所得仍为真实公开只读数据，但须在 limitations 显式记"通用新闻检索路径不可用"（券商一致预期等据此置 unverified），不得静默当作已核。**判断密集契约（`requires_web_bandwidth` 的 Layer 3-5：industry-research/industry-funnel/bottleneck-hunter/news-pulse）**：兜底阶梯全部耗尽仍取不到任何 web 来源时，必须记 `web_bandwidth_degraded` limitation（封顶 PWL）；既无真实 web 来源事实又不记该限制，gate 判为静默退化 CLI-only = FAIL。
 
 ### Layer 2 先后与去重（强制）
 

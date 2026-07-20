@@ -536,6 +536,7 @@
       "name": "industry-research",
       "stage": "03-industry-opportunity",
       "spec_source": "skills/industry-research.md",
+      "requires_web_bandwidth": true,
       "artifact_rules": [
         {
           "path": "03-行业与机会/10-industry-research.md",
@@ -589,6 +590,7 @@
       "name": "industry-funnel",
       "stage": "03-industry-opportunity",
       "spec_source": "skills/industry-funnel.md",
+      "requires_web_bandwidth": true,
       "artifact_rules": [
         {
           "path": "03-行业与机会/11-industry-funnel.md",
@@ -639,6 +641,7 @@
       "name": "bottleneck-hunter",
       "stage": "03-industry-opportunity",
       "spec_source": "skills/bottleneck-hunter.md",
+      "requires_web_bandwidth": true,
       "artifact_rules": [
         {
           "path": "03-行业与机会/12-bottleneck-hunter.md",
@@ -701,6 +704,7 @@
       "name": "news-pulse",
       "stage": "03-industry-opportunity",
       "spec_source": "skills/news-pulse.md",
+      "requires_web_bandwidth": true,
       "artifact_rules": [
         {
           "path": "03-行业与机会/13-news-pulse.md",

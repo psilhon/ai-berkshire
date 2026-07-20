@@ -1873,5 +1873,72 @@ class TestLocksAndResume(GateTestCase):
         self.assertEqual(cp.returncode, 2, out(cp))
 
 
+# ---------------------------------------------------------------------------
+# 信息带宽层: requires_web_bandwidth 契约禁止静默 CLI-only
+# ---------------------------------------------------------------------------
+class TestWebBandwidth(GateTestCase):
+    """判断密集契约必须有真实 web 来源事实或显式记 web_bandwidth_degraded。"""
+
+    def _drive_all(self, ws, run_root, web_skill, evidence=None):
+        """所有 20 项走 begin/finish; 仅 web_skill 挂 evidence。"""
+        for sk in ws.manifest(run_root)["skills"]:
+            name, path = sk["name"], sk["assigned_artifact_paths"][0]
+            ws.begin(run_root, name)
+            ws.write_artifact(run_root, path)
+            ws.finish(run_root, name, artifacts=[path],
+                      evidence=evidence if name == web_skill else None)
+
+    def test_web_bandwidth_skill_without_web_source_or_limitation_fails(self):
+        reg = make_registry()
+        reg["skills"][9]["requires_web_bandwidth"] = True  # sk10, Layer 3
+        ws = GateWorkspace(registry=reg)
+        self.addCleanup(ws.cleanup)
+        run_root, _ = ws.init_ok()
+        self._drive_all(ws, run_root, "sk10")  # sk10 无 web 事实/限制
+        cp = ws.gate("finalize", "--registry", ws.registry_path,
+                     "--run-root", run_root)
+        self.assertEqual(cp.returncode, 1, f"应 FAIL: {cp.stdout}\n{cp.stderr}")
+        sk10 = next(s for s in ws.manifest(run_root)["skills"]
+                    if s["name"] == "sk10")
+        self.assertEqual(sk10["computed_status"], "FAIL")
+
+    def test_web_bandwidth_degraded_limitation_caps_pwl_not_fail(self):
+        reg = make_registry()
+        reg["skills"][9]["requires_web_bandwidth"] = True  # sk10, Layer 3
+        ws = GateWorkspace(registry=reg)
+        self.addCleanup(ws.cleanup)
+        run_root, _ = ws.init_ok()
+        degraded = {"limitations": [{
+            "code": "web_bandwidth_degraded",
+            "note": "WebSearch/curl/Browser/Tushare 兜底阶梯皆不可用",
+        }]}
+        self._drive_all(ws, run_root, "sk10", evidence=degraded)
+        cp = ws.gate("finalize", "--registry", ws.registry_path,
+                     "--run-root", run_root)
+        self.assertEqual(cp.returncode, 0, f"应准出: {cp.stdout}\n{cp.stderr}")
+        sk10 = next(s for s in ws.manifest(run_root)["skills"]
+                    if s["name"] == "sk10")
+        self.assertEqual(sk10["computed_status"], "PASS_WITH_LIMITATIONS")
+
+    def test_web_bandwidth_skill_with_web_source_fact_passes_clean(self):
+        reg = make_registry()
+        reg["skills"][9]["requires_web_bandwidth"] = True  # sk10, Layer 3
+        ws = GateWorkspace(registry=reg)
+        self.addCleanup(ws.cleanup)
+        run_root, _ = ws.init_ok()
+        web_fact = {"facts": [_fact("webf1", [
+            _src("行业媒体A", "web-chain-a", "100", source_type="web"),
+            _src("行业媒体B", "web-chain-b", "100", source_type="news")])]}
+        self._drive_all(ws, run_root, "sk10", evidence=web_fact)
+        cp = ws.gate("finalize", "--registry", ws.registry_path,
+                     "--run-root", run_root)
+        self.assertEqual(cp.returncode, 0, f"应准出: {cp.stdout}\n{cp.stderr}")
+        sk10 = next(s for s in ws.manifest(run_root)["skills"]
+                    if s["name"] == "sk10")
+        self.assertEqual(sk10["computed_status"], "PASS")
+        cp = ws.summary(run_root)
+        self.assertIn("information_bandwidth=FULL", cp.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

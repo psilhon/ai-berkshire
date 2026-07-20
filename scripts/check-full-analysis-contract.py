@@ -308,6 +308,11 @@ def validate(registry_path: Path, repo_root: Path):
         if status not in ALLOWED_EVIDENCE_STATUS:
             _err(errors, f"{label} domain_evidence_status 非法: {status!r}")
 
+        # 信息带宽层开关: 可选布尔 (与 gate evaluate_web_bandwidth 双实现独立校验)
+        if "requires_web_bandwidth" in item \
+                and not isinstance(item["requires_web_bandwidth"], bool):
+            _err(errors, f"{label} requires_web_bandwidth 必须为布尔")
+
         # Phase 2: evidence_rules 词表校验
         ev_rules = item.get("evidence_rules", [])
         if not isinstance(ev_rules, list):

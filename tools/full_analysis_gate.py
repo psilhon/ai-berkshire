@@ -2099,6 +2099,69 @@ def evaluate_roles(sk, item, registry, run_root, manifest):
     return errors, caps
 
 
+# 真实通用检索/外部带宽来源类型 (WebSearch / 新闻 / 卖方 / 官网 / 监管网页).
+# 判断密集契约 (Layer 3-5) 靠这些来源支撑深度; ashare CLI 的 market_data/filing
+# 等结构化来源不算 web 带宽 —— 只有它们退化成 CLI-only 才是本层要抓的静默降级。
+WEB_SOURCE_TYPES = {"web", "news", "analyst", "official_page", "regulator_web"}
+
+
+def _has_web_source(sk):
+    return any(
+        isinstance(src, dict) and src.get("source_type") in WEB_SOURCE_TYPES
+        for fact in sk.get("facts", []) if isinstance(fact, dict)
+        for src in fact.get("sources", []))
+
+
+def _web_bandwidth_degraded(sk):
+    return any(
+        isinstance(lim, dict) and lim.get("code") == "web_bandwidth_degraded"
+        for lim in sk.get("limitations", []))
+
+
+def evaluate_web_bandwidth(sk, item):
+    """[h] 信息带宽: requires_web_bandwidth 的契约必须有真实 web 来源事实,
+    或显式记 web_bandwidth_degraded 限制 (封顶 PWL); 二者皆无 = FAIL。"""
+    if not item.get("requires_web_bandwidth"):
+        return [], []
+    if _has_web_source(sk):
+        return [], []
+    if _web_bandwidth_degraded(sk):
+        return [], ["信息带宽降级 (web_bandwidth_degraded): 通用检索路径不可用"]
+    return ["信息带宽缺口: 判断密集契约无 web 来源事实且未记 "
+            "web_bandwidth_degraded (静默 CLI-only 不得准出)"], []
+
+
+def compute_information_bandwidth(manifest, registry):
+    """聚合 requires_web_bandwidth 契约的带宽轴: FULL/DEGRADED/CLI_ONLY。
+
+    全部有真实 web 来源=FULL; 存在缺口=CLI_ONLY (已被 evaluate_web_bandwidth
+    判 FAIL); 否则有降级=DEGRADED; 无此类契约=NOT_APPLICABLE。
+    not_applicable 收口的契约不计入 (与 evaluate_skill 的 N/A 短路一致)。
+    """
+    items = {item["name"]: item for item in registry["skills"]}
+    states = []
+    for sk in manifest["skills"]:
+        item = items.get(sk["name"])
+        if not item or not item.get("requires_web_bandwidth"):
+            continue
+        if any(isinstance(lim, dict) and lim.get("code") == "not_applicable"
+               for lim in sk.get("limitations", [])):
+            continue
+        if _has_web_source(sk):
+            states.append("FULL")
+        elif _web_bandwidth_degraded(sk):
+            states.append("DEGRADED")
+        else:
+            states.append("CLI_ONLY")
+    if not states:
+        return "NOT_APPLICABLE"
+    if all(s == "FULL" for s in states):
+        return "FULL"
+    if any(s == "CLI_ONLY" for s in states):
+        return "CLI_ONLY"
+    return "DEGRADED"
+
+
 def parse_porcelain_v2_z(data):
     """解析 git status --porcelain=v2 -z 输出 → [(record, path)]。"""
     tokens = data.split("\0")
@@ -2345,6 +2408,10 @@ def evaluate_skill(sk, item, registry, run_root, calc_schema, manifest):
     errors.extend(role_errors)
     caps.extend(role_caps)
 
+    web_errors, web_caps = evaluate_web_bandwidth(sk, item)
+    errors.extend(web_errors)
+    caps.extend(web_caps)
+
     for lim in sk.get("limitations", []):
         code = lim.get("code") if isinstance(lim, dict) else str(lim)
         caps.append(f"已记录 limitation: {code}")
@@ -2423,6 +2490,7 @@ def cmd_finalize(args):
 
     completion = "COMPLETE"
     assurance = compute_assurance(manifest, registry)
+    information_bandwidth = compute_information_bandwidth(manifest, registry)
 
     review_mode = manifest.get("run", {}).get("review_mode")
     if review_mode not in {"independent_context", "user", "self_review"}:
@@ -2437,6 +2505,7 @@ def cmd_finalize(args):
     run["completion_status"] = completion
     run["validation_result"] = validation
     run["assurance_level"] = assurance
+    run["information_bandwidth"] = information_bandwidth
     run["phase"] = "FINALIZED"
 
     result = {
@@ -2444,6 +2513,7 @@ def cmd_finalize(args):
         "completion_status": completion,
         "validation_result": validation,
         "assurance_level": assurance,
+        "information_bandwidth": information_bandwidth,
         "review_mode": review_mode,
         "workspace_audit_mode": workspace_audit_mode,
         "industry": manifest.get("company", {}).get("industry"),
@@ -2457,7 +2527,8 @@ def cmd_finalize(args):
     release_lock(run_root)
 
     print(f"finalize: completion_status={completion} "
-          f"validation_result={validation} assurance_level={assurance}")
+          f"validation_result={validation} assurance_level={assurance} "
+          f"information_bandwidth={information_bandwidth}")
     problems = [e for row in matrix for e in row["errors"]] + run_errors
     if problems:
         print(f"验收失败 {len(problems)} 项:")
@@ -2479,6 +2550,8 @@ def cmd_summary(args):
     print(f"completion_status={result['completion_status']}")
     print(f"validation_result={result['validation_result']}")
     print(f"assurance_level={result['assurance_level']}")
+    print("information_bandwidth="
+          + result.get("information_bandwidth", "NOT_APPLICABLE"))
     print(f"review_mode={result['review_mode']}")
     print("workspace_audit_mode=" + result.get("workspace_audit_mode", "git"))
     print("industry=" + json.dumps(result.get("industry"), ensure_ascii=False,

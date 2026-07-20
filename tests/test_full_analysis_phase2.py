@@ -165,6 +165,12 @@ def green_evidence(item):
     for role in item.get("role_rule", {}).get("required_roles", []):
         role_runs.append(_role(role, artifact_rule(item)["path"],
                                context_id=f"required-{role}"))
+    # 信息带宽层 (Layer 3-5): requires_web_bandwidth 契约的 happy path 是真实
+    # web 来源事实 (双源交叉), 否则 gate 判静默 CLI-only = FAIL。
+    if item.get("requires_web_bandwidth"):
+        facts.append(_fact("web-bandwidth", [
+            _src("行业媒体A", "web-chain-a", "100", source_type="web"),
+            _src("行业媒体B", "web-chain-b", "100", source_type="news")]))
     ev = {}
     if facts:
         ev["facts"] = facts
