@@ -874,6 +874,67 @@ class TestFullFlow(GateTestCase):
         # sk05 min_ctx=2 但 count=0 → 不满足 → assurance 不得为 INDEPENDENT
         self.assertIn(m["run"]["assurance_level"], ("MIXED", "SINGLE_CONTEXT"))
 
+    def _na_assurance_run(self, sk10_contexts):
+        """构造: sk05 (min_ctx=2) 合法 N/A 收口 + sk10 (min_ctx=2) 为唯一适用的
+        多上下文契约; 返回 finalize 结果。默认公司无 A 股代码 → is_a_share 为假,
+        使 sk05 的 not_applicable 收口合法 (NOT_APPLICABLE_PASS)。"""
+        role_rules = {
+            5: {"required_roles": [], "min_independent_contexts": 2,
+                "sequential_cap": "PASS_WITH_LIMITATIONS"},
+            10: {"required_roles": [], "min_independent_contexts": 2,
+                 "sequential_cap": "PASS_WITH_LIMITATIONS"},
+        }
+        registry = make_registry(role_rules=role_rules)
+        registry["skills"][4]["applicability_rule"] = {
+            "predicate_id": "is_a_share", "alternative": "negative-acceptance"}
+        ws = GateWorkspace(registry=registry)
+        self.addCleanup(ws.cleanup)
+        run_root, _ = ws.init_ok()
+        ws.complete_all(run_root, skip=(5, 10))
+        # sk05: min_ctx=2 但合法 N/A 收口 (单上下文 count=0)
+        self.assertEqual(ws.begin(run_root, "sk05").returncode, 0)
+        cp = ws.finish(run_root, "sk05", evidence={
+            "facts": [_fact("f-na5", [_src("source-a", "chain-a", "0")],
+                            value="0")],
+            "limitations": [{"code": "not_applicable",
+                             "predicate_id": "is_a_share",
+                             "input_facts": ["f-na5"],
+                             "alternative": "negative-acceptance"}],
+        })
+        self.assertEqual(cp.returncode, 0, out(cp))
+        (run_root / "06-负向验收" / "05-sk05.md").write_text(
+            "# 负向验收\n\npredicate_id: is_a_share\n"
+            "input_facts: f-na5\nalternative: negative-acceptance\n",
+            encoding="utf-8")
+        # sk10: 唯一适用的多上下文契约
+        extra = (("--independent-context-count", str(sk10_contexts))
+                 if sk10_contexts else ())
+        self.assertEqual(ws.begin(run_root, "sk10", extra=extra).returncode, 0)
+        ws.write_artifact(run_root, artifact_path(10))
+        self.assertEqual(
+            ws.finish(run_root, "sk10",
+                      artifacts=[artifact_path(10)]).returncode, 0)
+        cp = ws.finalize(run_root)
+        self.assertEqual(cp.returncode, 0, out(cp))
+        res = read_result(run_root)
+        sk05_row = [r for r in res["matrix"] if r["index"] == 5][0]
+        self.assertEqual(sk05_row["computed_status"], "NOT_APPLICABLE_PASS",
+                         out(cp))
+        return res
+
+    def test_na_multi_context_skill_excluded_from_assurance(self):
+        """合法 N/A 收口的 min_ctx>0 契约不参与保障轴: 唯一适用的多上下文契约
+        (sk10) 达 2 上下文时整轮应为 INDEPENDENT。修复前 N/A 的 sk05 count=0
+        被计入 → 误降级 MIXED (这是本用例的 RED)。"""
+        res = self._na_assurance_run(sk10_contexts=2)
+        self.assertEqual(res["assurance_level"], "INDEPENDENT")
+
+    def test_na_excluded_single_context_applicable_not_independent(self):
+        """排除 N/A 后, 唯一适用的多上下文契约 (sk10) 仍单上下文时不得判
+        INDEPENDENT (锁定'适用契约单上下文仍降级', 防排除逻辑误放行)。"""
+        res = self._na_assurance_run(sk10_contexts=0)
+        self.assertEqual(res["assurance_level"], "SINGLE_CONTEXT")
+
 
 class TestRunContextCommands(GateTestCase):
 

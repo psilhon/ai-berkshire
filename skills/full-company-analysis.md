@@ -122,8 +122,10 @@ Tushare `MATCH` 计第二源、`CONFLICT` 两值并记不合并、`INSUFFICIENT/
 | investment-team | 4 | interpreter-duan/buffett/munger/li | — |
 | earnings-team | 6 | 4 大师 + editor + reader | — |
 | news-pulse | 4 | company/regulatory/industry/sentiment scout | 是 |
-| private-company-research | 6 | business/financial/industry/governance/technology/alternative-data | 是 |
+| private-company-research | 6 | business/financial/industry/governance/technology/alternative-data | 按需（未强制）※ |
 | industry-research / industry-funnel / bottleneck-hunter | 按需 | 产业链/候选池/瓶颈视角 | 是 |
+
+※ private-company-research 属 `04-thesis-boundary` 阶段（非 Layer 3-5），注册表**未**登记 `requires_web_bandwidth`；仍是 6 视角真独立并行契约，但 web 取数按需使用、gate 不对其做带宽封顶（不同于 news-pulse 等 `requires_web_bandwidth` 契约的强制）。
 
 收口落点：`begin-skill --skill <name> --execution-mode independent_contexts --independent-context-count <实际数>` → 各子代理产出各自 artifact → `finish-skill --skill <name> --evidence-file <json>`（evidence 的 `role_runs` 每条含 role + artifact_paths，见封闭 schema）。子代理继承全部 HARD-GATE，不得自行外部写入。**实际独立上下文数如实记录**，不按平台名假设；无子代理能力平台才回落到「多角色能力与降级」的顺序单上下文 fallback。
 

@@ -2105,11 +2105,18 @@ def evaluate_roles(sk, item, registry, run_root, manifest):
 WEB_SOURCE_TYPES = {"web", "news", "analyst", "official_page", "regulator_web"}
 
 
+def _has_na_limitation(sk):
+    """该 skill 是否以合法 not_applicable 收口 (即真 N/A, 不参与保障/带宽聚合)。"""
+    return any(isinstance(lim, dict) and lim.get("code") == "not_applicable"
+               for lim in sk.get("limitations", []))
+
+
 def _has_web_source(sk):
     return any(
         isinstance(src, dict) and src.get("source_type") in WEB_SOURCE_TYPES
         for fact in sk.get("facts", []) if isinstance(fact, dict)
-        for src in fact.get("sources", []))
+        for src in (fact.get("sources")
+                    if isinstance(fact.get("sources"), list) else []))
 
 
 def _web_bandwidth_degraded(sk):
@@ -2144,8 +2151,7 @@ def compute_information_bandwidth(manifest, registry):
         item = items.get(sk["name"])
         if not item or not item.get("requires_web_bandwidth"):
             continue
-        if any(isinstance(lim, dict) and lim.get("code") == "not_applicable"
-               for lim in sk.get("limitations", [])):
+        if _has_na_limitation(sk):
             continue
         if _has_web_source(sk):
             states.append("FULL")
@@ -2429,7 +2435,11 @@ def compute_assurance(manifest, registry):
     for sk in manifest["skills"]:
         rr = items.get(sk["name"], {}).get("role_rule", {})
         min_ctx = rr.get("min_independent_contexts", 0)
-        if min_ctx:
+        # 合法 N/A 收口的契约不参与保障轴 (与 compute_information_bandwidth 的
+        # N/A 短路一致): 否则对不适用该契约的公司 (如上市公司对 is_unlisted 契约),
+        # 其 count=0 恒为 False 会令 INDEPENDENT 永不可达。PWL 单上下文契约无 N/A
+        # 限制, 仍计入并如实降级。
+        if min_ctx and not _has_na_limitation(sk):
             multi.append(sk.get("independent_context_count", 0) >= min_ctx)
     if not multi:
         return "SINGLE_CONTEXT"
