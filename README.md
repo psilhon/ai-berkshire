@@ -348,7 +348,7 @@ REM 可选：安装 Codex slash prompts
 # 持仓管理
 /portfolio-review 腾讯30%, 美团20%, 茅台20%, 现金30%
 /thesis-tracker 拼多多
-/thesis-drift 拼多多 reports/拼多多-thesis-2025Q4.md reports/拼多多-thesis-2026Q1.md
+/thesis-drift 拼多多 local/reports/拼多多-thesis-2025Q4.md reports/拼多多-thesis-2026Q1.md
 /news-pulse 腾讯
 
 # 思维工具
@@ -551,7 +551,7 @@ REM 可选：安装 Codex slash prompts
 
 **关键发现**：AI 应用层最大赢家不是 AI Native 公司，而是有渠道+数据+工作流嵌入度的成熟巨头——这呼应了 1995-2000 互联网泡沫"卖铲子"的历史规律（亚马逊和苹果赢，Pets.com 输）。
 
-完整报告：[AI 算力](reports/AI算力-funnel-20260509.md) · [AI 模型](reports/AI模型-funnel-20260509.md) · [AI 应用](reports/AI应用-funnel-20260509.md) · [AI 基建电力](reports/AI基建电力-funnel-20260509.md)
+完整报告：[AI 算力](local/reports/AI算力-funnel-20260509.md) · [AI 模型](local/reports/AI模型-funnel-20260509.md) · [AI 应用](local/reports/AI应用-funnel-20260509.md) · [AI 基建电力](local/reports/AI基建电力-funnel-20260509.md)
 
 ---
 
@@ -644,10 +644,10 @@ REM 可选：安装 Codex slash prompts
 
 | 公司 | 使用 Skill | 核心结论 | 报告链接 |
 |------|-----------|---------|---------|
-| 拼多多 (PDD) | `/investment-team` | 综合3.4/5，极度便宜但10年确定性不足，适合中等仓位 | [查看报告](reports/拼多多/) |
-| 腾讯控股 (0700.HK) | `/investment-research` | 社交垄断+资本配置卓越，14x前瞻PE合理偏低 | [查看报告](reports/腾讯/) |
-| 7家公司对比 | `/investment-checklist` | 茅台、腾讯通过；英伟达、美团、快手有条件通过；拼多多、泡泡玛特灰色 | [查看报告](reports/多公司对比-checklist-20260408.md) |
-| 大师持仓追踪 | 自定义研究 | 巴菲特/李录/段永平最新13F持仓+PDD成本分析 | [查看报告](reports/大师持仓追踪-research-20260408.md) |
+| 拼多多 (PDD) | `/investment-team` | 综合3.4/5，极度便宜但10年确定性不足，适合中等仓位 | [查看报告](local/reports/拼多多/) |
+| 腾讯控股 (0700.HK) | `/investment-research` | 社交垄断+资本配置卓越，14x前瞻PE合理偏低 | [查看报告](local/reports/腾讯/) |
+| 7家公司对比 | `/investment-checklist` | 茅台、腾讯通过；英伟达、美团、快手有条件通过；拼多多、泡泡玛特灰色 | [查看报告](local/reports/多公司对比-checklist-20260408.md) |
+| 大师持仓追踪 | 自定义研究 | 巴菲特/李录/段永平最新13F持仓+PDD成本分析 | [查看报告](local/reports/大师持仓追踪-research-20260408.md) |
 
 > *更多报告将持续添加。欢迎 PR 提交你用本框架生成的研究报告。*
 

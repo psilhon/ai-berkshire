@@ -338,7 +338,7 @@ Invoke directly in Claude Code:
 # Portfolio Management
 /portfolio-review Tencent 30%, Meituan 20%, Moutai 20%, Cash 30%
 /thesis-tracker Pinduoduo
-/thesis-drift Pinduoduo reports/PDD-thesis-2025Q4.md reports/PDD-thesis-2026Q1.md
+/thesis-drift Pinduoduo local/reports/PDD-thesis-2025Q4.md reports/PDD-thesis-2026Q1.md
 /news-pulse Tencent
 
 # Thinking Tools
@@ -542,7 +542,7 @@ Recommended Portfolio (Core / Satellite / Option) + Action Signals
 
 **Key Insight**: The biggest winners in the AI application layer aren't AI-native companies — they're established giants with distribution, data, and workflow embeddedness. This echoes the 1995–2000 Internet bubble's "sell the picks and shovels" pattern (Amazon and Apple won; Pets.com didn't).
 
-Full reports: [AI Compute](reports/AI算力-funnel-20260509.md) · [AI Models](reports/AI模型-funnel-20260509.md) · [AI Applications](reports/AI应用-funnel-20260509.md) · [AI Infrastructure & Power](reports/AI基建电力-funnel-20260509.md)
+Full reports: [AI Compute](local/reports/AI算力-funnel-20260509.md) · [AI Models](local/reports/AI模型-funnel-20260509.md) · [AI Applications](local/reports/AI应用-funnel-20260509.md) · [AI Infrastructure & Power](local/reports/AI基建电力-funnel-20260509.md)
 
 ---
 
@@ -635,10 +635,10 @@ Usage:
 
 | Company | Skill Used | Core Conclusion | Report |
 |---------|-----------|----------------|--------|
-| Pinduoduo (PDD) | `/investment-team` | Composite 3.4/5 — extremely cheap but 10-year certainty insufficient; suitable for moderate position | [View Report](reports/拼多多/) |
-| Tencent (0700.HK) | `/investment-research` | Social monopoly + superior capital allocation; 14x forward P/E is reasonable-to-low | [View Report](reports/腾讯/) |
-| 7-Company Comparison | `/investment-checklist` | Moutai & Tencent pass; NVIDIA, Meituan & Kuaishou conditional; Pinduoduo & Pop Mart gray zone | [View Report](reports/多公司对比-checklist-20260408.md) |
-| Master Holdings Tracker | Custom Research | Buffett / Li Lu / Duan Yongping latest 13F holdings + PDD cost-basis analysis | [View Report](reports/大师持仓追踪-research-20260408.md) |
+| Pinduoduo (PDD) | `/investment-team` | Composite 3.4/5 — extremely cheap but 10-year certainty insufficient; suitable for moderate position | [View Report](local/reports/拼多多/) |
+| Tencent (0700.HK) | `/investment-research` | Social monopoly + superior capital allocation; 14x forward P/E is reasonable-to-low | [View Report](local/reports/腾讯/) |
+| 7-Company Comparison | `/investment-checklist` | Moutai & Tencent pass; NVIDIA, Meituan & Kuaishou conditional; Pinduoduo & Pop Mart gray zone | [View Report](local/reports/多公司对比-checklist-20260408.md) |
+| Master Holdings Tracker | Custom Research | Buffett / Li Lu / Duan Yongping latest 13F holdings + PDD cost-basis analysis | [View Report](local/reports/大师持仓追踪-research-20260408.md) |
 
 > *More reports will be added continuously. PRs submitting your own research reports generated with this framework are welcome.*
 

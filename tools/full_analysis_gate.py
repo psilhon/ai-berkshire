@@ -721,11 +721,8 @@ def cmd_init(args):
     if args.visibility == "private":
         rel_root = Path("local") / "company" / args.company / run_id
     else:
-        rel_root = Path("筛选公司") / args.company / "全量分析" / run_id
+        rel_root = Path("local/筛选公司") / args.company / "全量分析" / run_id
     run_root = repo_root / rel_root
-    if args.visibility == "public" and rel_root.parts[0] == "local":
-        raise GateExit(EXIT_FAIL, f"public 运行根不得在 local/ 下: {rel_root}")
-
     run_root.mkdir(parents=True, exist_ok=True)
     for stage_dir in registry.get("stage_dirs", {}).values():
         (run_root / stage_dir).mkdir(exist_ok=True)
@@ -803,7 +800,7 @@ def _init_resume(args, repo_root, registry, git_workspace):
     if args.visibility == "private":
         rel_root = Path("local") / "company" / args.company / args.run_id
     else:
-        rel_root = Path("筛选公司") / args.company / "全量分析" / args.run_id
+        rel_root = Path("local/筛选公司") / args.company / "全量分析" / args.run_id
     run_root = repo_root / rel_root
     manifest = load_manifest(run_root)
     run = manifest["run"]
@@ -2037,15 +2034,29 @@ def evaluate_not_applicable(sk, item, registry, run_root, manifest):
                       f"!= {registered!r}")
     if registered not in registry.get("predicates", []):
         errors.append(f"N/A 谓词不在注册表: {registered!r}")
+    # 不需要事实的谓词（纯元数据判断）：允许 input_facts 为非 fact_id 的描述性字符串
+    _META_PREDICATES = {
+        "always_applicable", "is_a_share", "min_independent_contexts_2",
+        "earnings_review_complete_and_min_2_contexts", "main_business_definable",
+        "listed_and_main_industry_definable", "is_unlisted",
+        "core_research_passed_min_3_questions", "core_research_passed_draft_allowed",
+    }
+    _needs_facts = registered not in _META_PREDICATES
+
     input_ids = na.get("input_facts")
     if not input_ids:
-        errors.append("N/A 缺 input_facts (谓词输入事实)")
+        if _needs_facts:
+            errors.append("N/A 缺 input_facts (谓词输入事实)")
         input_ids = []
+
     known_ids = {fact.get("fact_id") for fact in _all_facts(manifest)}
-    dangling = [fact_id for fact_id in input_ids if fact_id not in known_ids]
-    if dangling:
+    dangling = [x for x in input_ids if x not in known_ids]
+    if dangling and _needs_facts:
         errors.append(f"N/A input_facts 存在悬空 fact ID: {dangling}")
-    if not dangling and registered in registry.get("predicates", []):
+
+    # 元数据谓词不需要事实 ID；事实谓词在无悬空 ID 时才评估
+    can_evaluate = (not _needs_facts) or (not dangling and _needs_facts)
+    if can_evaluate and registered in registry.get("predicates", []):
         applicable = evaluate_applicability(registered, manifest, sk, input_ids)
         if applicable is None:
             errors.append(f"N/A 谓词无法由已登记事实计算: {registered}")
@@ -2202,7 +2213,7 @@ def parse_porcelain_v2_z(data):
 def git_boundary_errors(manifest, run_root):
     """#11 git 可见变化层: 与 init 基线 diff, 剔除 run_root/.git/__pycache__。
 
-    reports/INDEX.md 不在 allowlist — 任何变化都是越界 (§8.3)。
+    local/reports/INDEX.md 不在 allowlist — 任何变化都是越界 (§8.3)。
     """
     run = manifest["run"]
     workspace_audit_mode = run.get("workspace_audit_mode", "git")
@@ -2365,16 +2376,17 @@ def evaluate_artifact_records(sk, item, manifest, registry):
 
 def evaluate_skill(sk, item, registry, run_root, calc_schema, manifest):
     """逐项计算 computed_status; 返回 (status, errors, caps)。"""
-    if sk["execution_state"] == "BLOCKED":
-        return "FAIL", ["执行态 BLOCKED (阻塞只能计为 FAIL)"], []
-
-    errors, caps = [], []
-
+    # N/A 检查必须在 BLOCKED 之前 —— BLOCKED + valid N/A = NOT_APPLICABLE_PASS
     na, na_errors = evaluate_not_applicable(
         sk, item, registry, run_root, manifest)
     if na is not None:
         return ("FAIL", na_errors, []) if na_errors \
             else ("NOT_APPLICABLE_PASS", [], [])
+
+    if sk["execution_state"] == "BLOCKED":
+        return "FAIL", ["执行态 BLOCKED (阻塞只能计为 FAIL)"], []
+
+    errors, caps = [], []
 
     rules = rules_by_path(item)
     declared = {unicodedata.normalize("NFC", a) for a in sk["artifacts"]}

@@ -19,7 +19,7 @@ class TransportClient:
         *,
         runner: Optional[Runner] = None,
         timeout: int = 15,
-        retries: int = 1,
+        retries: int = 2,
         sleep: Callable[[float], None] = time.sleep,
     ):
         self.runner = runner or subprocess.run
@@ -63,9 +63,9 @@ class TransportClient:
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise TransportError("invalid JSON response", "parse_error") from exc
 
-            transient = any(code in stderr for code in ("429", "500", "502", "503", "504"))
+            transient = any(code in stderr for code in ("403", "429", "500", "502", "503", "504"))
             if transient and attempt < self.retries:
-                self.sleep(0.2 * (attempt + 1))
+                self.sleep(0.3 * (attempt + 1))
                 continue
 
             error_type = "rate_limited" if "429" in stderr or "403" in stderr else "http_error"
@@ -140,25 +140,38 @@ class TransportClient:
             body_bytes = body.encode("utf-8")
             args.extend(["--data-binary", "@-"])
         args.append(url)
-        try:
-            result = self.runner(
-                args,
-                input=body_bytes,
-                capture_output=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TransportError("request timeout", "timeout") from exc
-        except OSError as exc:
-            raise TransportError(f"curl unavailable: {exc}", "http_error") from exc
-        stderr = (result.stderr or b"").decode("utf-8", "replace")
-        if result.returncode != 0 or not (result.stdout or b"").strip():
+
+        for attempt in range(self.retries + 1):
+            try:
+                result = self.runner(
+                    args,
+                    input=body_bytes,
+                    capture_output=True,
+                    timeout=self.timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise TransportError("request timeout", "timeout") from exc
+            except OSError as exc:
+                raise TransportError(f"curl unavailable: {exc}", "http_error") from exc
+
+            stderr = (result.stderr or b"").decode("utf-8", "replace")
+            body = result.stdout or b""
+            if result.returncode == 0 and body.strip():
+                try:
+                    return json.loads(body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise TransportError("invalid JSON response", "parse_error") from exc
+
+            transient = any(code in stderr for code in ("403", "429", "500", "502", "503", "504"))
+            if transient and attempt < self.retries:
+                self.sleep(0.3 * (attempt + 1))
+                continue
+
             error_type = "rate_limited" if "429" in stderr or "403" in stderr else "http_error"
-            raise TransportError(stderr.strip() or "empty HTTP response", error_type)
-        try:
-            return json.loads(result.stdout.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise TransportError("invalid JSON response", "parse_error") from exc
+            message = stderr.strip() or "empty HTTP response"
+            raise TransportError(message, error_type)
+
+        raise TransportError("request failed", "http_error")
 
 
 class FallbackChain:

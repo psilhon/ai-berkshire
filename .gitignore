@@ -6,8 +6,6 @@ __pycache__/
 .worktrees/
 /tmp/
 logs/command-log.jsonl
-reports/美团/command-log.jsonl
-
 # 雪球爬虫登录态缓存（含 cookies，本地使用）
 /tmp/xueqiu_state.json
 
@@ -20,9 +18,6 @@ reports/美团/command-log.jsonl
 *.mov
 
 # ===== 本地资料区：不打算公开的文件放这个目录，永不入库 =====
+# 筛选公司/ 实盘记录/ reports/ research/ 均已移入 local/，由 /local/ 规则统一覆盖
+# 原始账本（含股数/金额）在 local/实盘记录-原始/
 /local/
-
-# 组合报告只存本地，不公开
-reports/portfolio-latest.md
-
-# 实盘记录/ 公开权重口径版；原始账本（含股数/金额）在 local/实盘记录-原始/（已被 /local/ 规则覆盖）

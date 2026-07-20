@@ -20,7 +20,7 @@
   python3 xueqiu_scraper.py \\
       --user-id 1247347556 \\
       --keywords 拼多多,PDD,Temu,黄峥 \\
-      --output ../reports/拼多多/段永平雪球发言-PDD相关.md
+      --output ../local/reports/拼多多/段永平雪球发言-PDD相关.md
 
   # 其他用户 + 其他关键词
   python3 xueqiu_scraper.py --user-id 6784593966 --keywords 茅台 --output /tmp/out.md

@@ -217,4 +217,4 @@ git add tests/test_ashare_data.py tools/ashare_data.py
 git commit -m "fix: 统一A股旧命令失败退出语义"
 ```
 
-确认报告、`reports/INDEX.md`、`tools/star_history_chart.py` 和远端状态未被修改。
+确认报告、`local/reports/INDEX.md`、`tools/star_history_chart.py` 和远端状态未被修改。

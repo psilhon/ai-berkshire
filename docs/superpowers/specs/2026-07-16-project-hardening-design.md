@@ -53,7 +53,7 @@
 
 以下现有内容不属于本轮修改，不覆盖、不暂存、不提交：
 
-- `reports/INDEX.md` 的现有修改。
+- `local/reports/INDEX.md` 的现有修改。
 - `tools/star_history_chart.py` 的执行权限变更。
 - 现有未跟踪设计文档和研究报告。
 

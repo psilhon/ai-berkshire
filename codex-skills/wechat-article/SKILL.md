@@ -227,9 +227,9 @@ This skill is generated from `skills/wechat-article.md` so Claude Code and Codex
 
 | 类型 | 路径 | 命名格式 |
 |------|------|---------|
-| 技术主题 | `reports/AI产业研究/` | `公众号-{主题关键词}-{YYYYMMDD}.md` |
-| 投资主题 | `reports/{公司名}/` | `{公司名}-公众号-{YYYYMMDD}.md` |
-| 通用主题 | `reports/` | `公众号-{主题关键词}-{YYYYMMDD}.md` |
+| 技术主题 | `local/reports/AI产业研究/` | `公众号-{主题关键词}-{YYYYMMDD}.md` |
+| 投资主题 | `local/reports/{公司名}/` | `{公司名}-公众号-{YYYYMMDD}.md` |
+| 通用主题 | `local/reports/` | `公众号-{主题关键词}-{YYYYMMDD}.md` |
 
 ---
 

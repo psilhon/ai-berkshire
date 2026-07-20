@@ -12,7 +12,7 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
 - `codex-prompts/*.md`: generated Codex custom prompts for slash-command
   style entry points. These are a compatibility layer; skills remain preferred.
 - `tools/*.py`: shared financial validation and data tools used by both systems.
-- `reports/`: research outputs. Do not rewrite unrelated reports while changing
+- `local/reports/`: research outputs. Do not rewrite unrelated reports while changing
   tooling or skills.
 - `scripts/sync-codex-skills.py`: regenerates Codex skills from `skills/*.md`.
 - `scripts/install-codex-skills.sh` / `scripts/install-codex-skills.bat`:
@@ -60,9 +60,8 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
 This repository is public. The following stay local-only and must never be
 moved into tracked paths (already excluded via .gitignore):
 
-- `local/` — anything not meant to be public.
-- `reports/portfolio-latest.md` — portfolio report, local only.
-- `实盘记录/` contains the public weight-based view; the raw ledger
+- `local/` — anything not meant to be public（含 local/reports/ local/实盘记录/ 等）.
+- `local/实盘记录/` contains the public weight-based view; the raw ledger
   (share counts / amounts) lives in `local/实盘记录-原始/`.
 
 ## Editing Rules

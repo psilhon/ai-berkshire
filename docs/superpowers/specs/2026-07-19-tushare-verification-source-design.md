@@ -240,7 +240,7 @@ Tushare 验证层至少区分：
 - 实施后通过 `scripts/sync-codex-skills.py` 生成对应 Codex Skill，并通过 `scripts/sync-codex-prompts.py` 同步对应兼容提示词。
 - 两个平台调用同一 `tools/ashare_data.py` 与 `tools/ashare_plugin/`，不得复制平台专用验证逻辑。
 - 同步检查必须证明生成物无漂移；本地安装只更新本次涉及的 Skill/命令。
-- 默认产物继续本地化保存，不要求 Git，也不自动改写无关 `reports/` 内容。
+- 默认产物继续本地化保存，不要求 Git，也不自动改写无关 `local/reports/` 内容。
 
 ## 12. 预计实施边界
 

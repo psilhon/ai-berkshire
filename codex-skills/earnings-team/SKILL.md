@@ -414,7 +414,7 @@ This skill is generated from `skills/earnings-team.md` so Claude Code and Codex 
 ## 输出文件
 
 ```
-reports/{公司名}/
+local/reports/{公司名}/
 ├── {公司名}-earnings-{期间}.md           ← 最终公众号文章（定稿）
 ├── {公司名}-earnings-{期间}-研究底稿.md   ← 四大师合成研究报告（自用）
 ├── {公司名}-earnings-{期间}-段永平.md     ← 生意本质解读
@@ -430,7 +430,7 @@ reports/{公司名}/
 
 ```bash
 python3 tools/report_audit.py extract \
-  --report reports/{公司名}/{公司名}-earnings-{期间}.md
+  --report local/reports/{公司名}/{公司名}-earnings-{期间}.md
 
 python3 tools/report_audit.py verdict \
   --results '<填好的JSON>' \

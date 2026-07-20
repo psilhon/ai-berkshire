@@ -184,7 +184,7 @@ class TestRegistryStructure(_ValidatorCase):
     def test_glob_in_legacy_pattern_fails(self):
         # §8.3: reports/** 这类过宽模式不能算覆盖证明 → 直接非法
         def mutate(reg):
-            reg["skills"][0]["legacy_output_patterns"] = ["reports/**"]
+            reg["skills"][0]["legacy_output_patterns"] = ["local/reports/**"]
         self.assert_fails_with(self.run_validator(make_registry(mutate=mutate)),
                                "*")
 
@@ -210,8 +210,8 @@ class TestSavePathCoverage(_ValidatorCase):
     """§15.2#12: 从 skill 保存语义章节提取硬编码路径, 每条必须被具体模板覆盖。"""
 
     SKILL_WITH_SAVE = (
-        "# skill-01\n\n## 分析流程\n\n参考样例 `reports/别家公司.md` 不算写入目标。\n\n"
-        "## 保存报告\n\n将最终报告写入 `reports/{公司名}/{公司名}-research-{YYYYMMDD}.md`。\n"
+        "# skill-01\n\n## 分析流程\n\n参考样例 `local/reports/别家公司.md` 不算写入目标。\n\n"
+        "## 保存报告\n\n将最终报告写入 `local/reports/{公司名}/{公司名}-research-{YYYYMMDD}.md`。\n"
     )
 
     def test_uncovered_extracted_path_fails(self):
@@ -223,14 +223,14 @@ class TestSavePathCoverage(_ValidatorCase):
     def test_covered_extracted_path_passes(self):
         def mutate(reg):
             reg["skills"][0]["legacy_output_patterns"] = [
-                "reports/{company}/{company}-research-{date}.md"]
+                "local/reports/{company}/{company}-research-{date}.md"]
         proc = self.run_validator(make_registry(mutate=mutate),
                                   skill_texts={"skills/skill-01.md": self.SKILL_WITH_SAVE})
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
     def test_path_outside_save_section_not_extracted(self):
         # 非保存章节里的路径 (参考样本) 不得被提取 → 无需覆盖也通过
-        text = "# skill-01\n\n## 分析流程\n\n对比 `reports/参考样本.md` 与年报。\n"
+        text = "# skill-01\n\n## 分析流程\n\n对比 `local/reports/参考样本.md` 与年报。\n"
         proc = self.run_validator(make_registry(),
                                   skill_texts={"skills/skill-01.md": text})
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)

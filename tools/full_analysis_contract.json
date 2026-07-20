@@ -248,7 +248,7 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/{company}-checklist-{date}.md",
+        "local/reports/{company}/{company}-checklist-{date}.md",
         "~/巴菲特Checklist-{company}.md"
       ]
     },
@@ -302,7 +302,7 @@
       },
       "legacy_output_patterns": [
         "~/{company}投资研究报告.md",
-        "reports/{company}/{company}-research-{date}.md"
+        "local/reports/{company}/{company}-research-{date}.md"
       ]
     },
     {
@@ -362,7 +362,7 @@
           "interpreter-li"
         ],
         "min_independent_contexts": 2,
-        "sequential_cap": "NOT_APPLICABLE_PASS"
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
         "~/{company}投资研究报告_{date}.md"
@@ -418,8 +418,8 @@
         "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/{company}-management-{date}.md",
-        "reports/{company}-management-{date}.md"
+        "local/reports/{company}/{company}-management-{date}.md",
+        "local/reports/{company}-management-{date}.md"
       ]
     },
     {
@@ -471,8 +471,8 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/{company}-earnings-{period}.md",
-        "reports/{company}/{company}-earnings-{period}.md"
+        "local/reports/{company}-earnings-{period}.md",
+        "local/reports/{company}/{company}-earnings-{period}.md"
       ]
     },
     {
@@ -524,11 +524,11 @@
           "reader"
         ],
         "min_independent_contexts": 2,
-        "sequential_cap": "NOT_APPLICABLE_PASS"
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/{company}-earnings-{period}.md",
-        "reports/{company}/"
+        "local/reports/{company}/{company}-earnings-{period}.md",
+        "local/reports/{company}/"
       ]
     },
     {
@@ -581,7 +581,7 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/{industry}-industry-{date}.md",
+        "local/reports/{industry}-industry-{date}.md",
         "~/{industry}产业链投资研究报告.md"
       ]
     },
@@ -633,7 +633,7 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/{industry}-funnel-{date}.md"
+        "local/reports/{industry}-funnel-{date}.md"
       ]
     },
     {
@@ -688,15 +688,15 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/bottleneck-map/{company}-bottleneck-{date}.md",
-        "reports/bottleneck-map/{date}/",
-        "reports/bottleneck-map/{date}/HH-MM-标的代码1-标的代码2.md",
-        "reports/bottleneck-map/{date}/09-00-FORM-IBDN.md",
-        "reports/bottleneck-map/{date}/HH-MM-信号扫描.md",
-        "reports/bottleneck-map/{date}/14-00-信号扫描.md",
-        "reports/bottleneck-map/daily/{date}.md",
-        "reports/bottleneck-map/master-map.md",
-        "reports/bottleneck-map/watchlist.md"
+        "local/reports/bottleneck-map/{company}-bottleneck-{date}.md",
+        "local/reports/bottleneck-map/{date}/",
+        "local/reports/bottleneck-map/{date}/HH-MM-标的代码1-标的代码2.md",
+        "local/reports/bottleneck-map/{date}/09-00-FORM-IBDN.md",
+        "local/reports/bottleneck-map/{date}/HH-MM-信号扫描.md",
+        "local/reports/bottleneck-map/{date}/14-00-信号扫描.md",
+        "local/reports/bottleneck-map/daily/{date}.md",
+        "local/reports/bottleneck-map/master-map.md",
+        "local/reports/bottleneck-map/watchlist.md"
       ]
     },
     {
@@ -756,8 +756,8 @@
         "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/{company}-news-{date}.md",
-        "reports/{company}/"
+        "local/reports/{company}/{company}-news-{date}.md",
+        "local/reports/{company}/"
       ]
     },
     {
@@ -805,8 +805,8 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/{company}-thesis.md",
-        "reports/{company}-thesis.md"
+        "local/reports/{company}/{company}-thesis.md",
+        "local/reports/{company}-thesis.md"
       ]
     },
     {
@@ -901,7 +901,7 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/portfolio-latest.md"
+        "local/reports/portfolio-latest.md"
       ]
     },
     {
@@ -958,7 +958,7 @@
         "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/{company}-private-{date}.md"
+        "local/reports/{company}/{company}-private-{date}.md"
       ]
     },
     {
@@ -1007,9 +1007,9 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/{company}/《看懂{company}》-{date}/",
-        "reports/{company}/《看懂{company}》/0X-XX.md",
-        "reports/{company}/《看懂{company}》/"
+        "local/reports/{company}/《看懂{company}》-{date}/",
+        "local/reports/{company}/《看懂{company}》/0X-XX.md",
+        "local/reports/{company}/《看懂{company}》/"
       ]
     },
     {
@@ -1110,11 +1110,11 @@
         "sequential_cap": "PASS"
       },
       "legacy_output_patterns": [
-        "reports/",
-        "reports/AI产业研究/",
-        "reports/AI产业研究/公众号-{industry}-{date}.md",
-        "reports/{company}/",
-        "reports/{company}/{company}-公众号-{date}.md"
+        "local/reports/",
+        "local/reports/AI产业研究/",
+        "local/reports/AI产业研究/公众号-{industry}-{date}.md",
+        "local/reports/{company}/",
+        "local/reports/{company}/{company}-公众号-{date}.md"
       ]
     }
   ]

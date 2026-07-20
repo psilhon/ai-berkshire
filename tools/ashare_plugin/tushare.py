@@ -56,7 +56,10 @@ class TushareClient:
                 TUSHARE_URL, data=payload, json_body=True
             )
         except TransportError as exc:
-            return failure_result("tushare", exc.error_type, "Tushare 网络请求失败")
+            return failure_result(
+                "tushare", exc.error_type,
+                f"Tushare {api_name} 请求失败: {exc}"
+            )
 
         if not isinstance(response, dict):
             return failure_result("tushare", "schema_error", "Tushare 响应不是对象")

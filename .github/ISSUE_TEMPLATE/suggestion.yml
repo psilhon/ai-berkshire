@@ -14,7 +14,7 @@ body:
       label: 你观察到的问题 + 具体出处（必填）
       description: 在哪份报告、哪一段或哪张表看到的？请贴链接或截图，最好把有问题的原文片段贴出来。
       placeholder: |
-        reports/全球AI赛道10家核心标的筛选-20260628.md 的市值对比表，
+        local/reports/全球AI赛道10家核心标的筛选-20260628.md 的市值对比表，
         同一列里 NVIDIA 用美元、SK海力士用韩元，没法横向比大小。
     validations:
       required: true

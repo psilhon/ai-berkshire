@@ -49,7 +49,7 @@ This skill is generated from `skills/full-company-analysis.md` so Claude Code an
 
 ```text
 private → <repo>/local/company/<规范公司名>/<run_id>/
-public  → <repo>/筛选公司/<规范公司名>/全量分析/<run_id>/
+public  → <repo>/local/筛选公司/<规范公司名>/全量分析/<run_id>/
 ```
 
 Git 不是运行前提，也不需要初始化仓库、暂存或提交。若当前目录恰好是 Git 工作树，gate 只使用只读状态做额外越界审计；没有 Git 时继续运行，并把 `workspace_audit_mode=none` 与工作区级审计缺失记为运行限制。public 模式禁止读取私人组合、原始台账或 `local/` 任何内容。
@@ -144,13 +144,13 @@ Tushare `MATCH` 计第二源、`CONFLICT` 两值并记不合并、`INSUFFICIENT/
 
 调度每个子 Skill 时，必须把注册表为该项分配的**精确目标路径**写进指令，并附带以下声明：
 
-> 本次运行的输出目标路径是 `<run_root>/<注册表分配路径>`。**此路径覆盖你自身规范内的任何历史默认保存路径（`reports/...` 或 `~/...`）**；不得写入任何其他位置。
+> 本次运行的输出目标路径是 `<run_root>/<注册表分配路径>`。**此路径覆盖你自身规范内的任何历史默认保存路径（`local/reports/...` 或 `~/...`）**；不得写入任何其他位置。
 
 同时：
 
-- 子流程所有 shell 命令以 `cwd=run_root` 执行，注入 `FULL_ANALYSIS_OUTPUT_ROOT` 与当前 artifact path；相对 `reports/...` 因 cwd 落入运行根。
+- 子流程所有 shell 命令以 `cwd=run_root` 执行，注入 `FULL_ANALYSIS_OUTPUT_ROOT` 与当前 artifact path；相对 `local/reports/...` 因 cwd 落入运行根。
 - **不重绑 HOME**——那会改变凭据、配置和工具缓存查找路径，不能当安全边界；home 绝对路径越界交给 legacy watchlist 侦测（watchlist 变化立即终止该 Skill 并 FAIL，不等 finalize）。
-- `reports/INDEX.md` 不在 allowlist：全程只允许 `python3 scripts/build_report_index.py --check`，不得重写索引。
+- `local/reports/INDEX.md` 不在 allowlist：全程只允许 `python3 scripts/build_report_index.py --check`，不得重写索引。
 - Skill 不要求 Git，也不执行 `git init/add/commit`；未经当前对话明确授权不执行 push、PR、发布或任何外部写入，内容生产只出本地草稿。
 
 ## 自动继续与暂停

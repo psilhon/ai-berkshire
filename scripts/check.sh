@@ -2,7 +2,7 @@
 # 统一本地检查入口：改 tools/ 或 skills/ 后必跑
 #   1) tests/ 单元测试（financial_rigor / report_audit 行为回归）
 #   2) codex-skills / codex-prompts 生成物是否与权威源 skills/*.md 同步
-#   3) reports/INDEX.md 报告索引是否与 reports/ 实际内容同步
+#   3) local/reports/INDEX.md 报告索引是否与 local/reports/ 实际内容同步
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

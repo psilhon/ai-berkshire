@@ -150,7 +150,7 @@ def extract_save_paths(text):
             # 围栏块内只取锚定 token (reports/... 或 ~/...), 目录树叶子等裸名跳过
             for tok in re.findall(r"\S+", line):
                 tok = tok.strip("`,;，。()（）<>")
-                if tok.startswith("reports/") or tok.startswith("~/"):
+                if tok.startswith("local/reports/") or tok.startswith("~/"):
                     candidates.append(tok)
         else:
             for span in re.findall(r"`([^`]+)`", line):
@@ -159,7 +159,7 @@ def extract_save_paths(text):
                     continue  # 含空格 = 命令/句子, 非路径
                 if s.startswith(_INFRA_PREFIXES):
                     continue
-                if (s.startswith("reports/") or s.startswith("~")
+                if (s.startswith("local/reports/") or s.startswith("~")
                         or s.startswith("local/")
                         or s.endswith(".md") or s.endswith("/")):
                     candidates.append(s)

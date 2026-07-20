@@ -19,8 +19,8 @@ body:
     id: source
     attributes:
       label: 出现问题的 Skill 或报告
-      description: 哪个 skill 生成的、或 reports/ 下哪份报告（贴路径或链接）。
-      placeholder: "reports/腾讯/腾讯-research-20260408.md，或 /investment-research"
+      description: 哪个 skill 生成的、或 local/reports/ 下哪份报告（贴路径或链接）。
+      placeholder: "local/reports/腾讯/腾讯-research-20260408.md，或 /investment-research"
     validations:
       required: true
   - type: textarea

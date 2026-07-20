@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build reports/INDEX.md — 报告索引，便于在 2000+ 份研究产出中检索。
+"""Build local/reports/INDEX.md — 报告索引，便于在 2000+ 份研究产出中检索。
 
 用法：
     python3 scripts/build_report_index.py            # 重建索引
@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORTS = ROOT / 'reports'
+REPORTS = ROOT / 'local' / 'reports'
 OUT = REPORTS / 'INDEX.md'
 
 _DATE_RE = re.compile(r'(20\d{6})')
@@ -65,9 +65,9 @@ def _link(rel_to_reports: Path, text: str) -> str:
 def build_index():
     """构建索引内容，返回 (content, total, folder_count)。"""
     all_md = [p for p in sorted(REPORTS.rglob('*.md')) if p != OUT]
-    ignored = _gitignored(all_md)
-    all_md = [p for p in all_md
-              if str(p) not in ignored and p.name not in _LOCAL_ONLY_NAMES]
+    # reports/ 已整体移入 local/（gitignored），不再逐个 check-ignore；
+    # 仅通过 _LOCAL_ONLY_NAMES 排除特定文件
+    all_md = [p for p in all_md if p.name not in _LOCAL_ONLY_NAMES]
 
     groups = {}
     root_files = []
@@ -112,7 +112,7 @@ def main():
 
     if '--check' in sys.argv[1:]:
         if OUT.exists() and OUT.read_text(encoding='utf-8') == content:
-            print(f'reports/INDEX.md 与当前 {total} 份报告一致')
+            print(f'local/reports/INDEX.md 与当前 {total} 份报告一致')
             return 0
         print('索引已漂移，运行 python3 scripts/build_report_index.py 重建',
               file=sys.stderr)

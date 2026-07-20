@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 不新增 Python 或系统运行时依赖。
-- 不修改研究报告、`reports/INDEX.md`、现有未跟踪文件或 `tools/star_history_chart.py` 的内容/权限。
+- 不修改研究报告、`local/reports/INDEX.md`、现有未跟踪文件或 `tools/star_history_chart.py` 的内容/权限。
 - 不 push、不创建 PR、不发布；只允许本地提交。
 - 所有网络相关测试必须离线运行。
 - 生产代码变更必须先有能复现问题的失败测试。

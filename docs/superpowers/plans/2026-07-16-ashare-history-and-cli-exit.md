@@ -13,7 +13,7 @@
 - 不新增 Python 外部依赖。
 - 不改变现有 `quote`、`financials`、`valuation`、`search` 命令的用户可见行为。
 - 不使用财务主表的 `TOTAL_SHARE` 作为历史股本。
-- 不修改用户现有报告、`reports/INDEX.md` 或 `tools/star_history_chart.py`。
+- 不修改用户现有报告、`local/reports/INDEX.md` 或 `tools/star_history_chart.py`。
 - 只提交本计划列出的文件，不执行 push、PR 或其他外部写入。
 
 ---
@@ -471,4 +471,4 @@ git add README.md skills/quality-screen.md \
 git commit -m "docs: 使用正式A股历史数据命令"
 ```
 
-最后确认 `reports/INDEX.md`、用户新增报告和 `tools/star_history_chart.py` 未被本次提交包含。
+最后确认 `local/reports/INDEX.md`、用户新增报告和 `tools/star_history_chart.py` 未被本次提交包含。

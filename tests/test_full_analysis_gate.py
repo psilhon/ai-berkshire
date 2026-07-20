@@ -380,7 +380,7 @@ class TestInit(GateTestCase):
 
     def test_init_structure_manifest_lock_baseline(self):
         legacy = {1: ["~/{company}投资研究报告_{date}.md"],
-                  2: ["reports/{company}-earnings-{period}.md"]}
+                  2: ["local/reports/{company}-earnings-{period}.md"]}
         ws = self.make_ws(registry=make_registry(legacy=legacy))
         run_root, data = ws.init_ok(extra=("--codes", "600519",
                                            "--listing-status", "listed"))
@@ -459,7 +459,7 @@ class TestInit(GateTestCase):
         self.assertEqual(len(param), 1)
         self.assertEqual(param[0]["kind"], "parameterized")
         self.assertEqual(Path(param[0]["watch_path"]).resolve(),
-                         (ws.repo / "reports").resolve())
+                         (ws.repo / "local" / "reports").resolve())
 
     def test_monitored_constant_for_both_platforms(self):
         for platform in ("codex", "claude_code"):
@@ -1281,16 +1281,16 @@ class TestBoundaryDetection(GateTestCase):
 
     def test_new_repo_file_and_index_change_boundary_fail(self):
         ws = self.make_ws()
-        (ws.repo / "reports").mkdir()
-        (ws.repo / "reports" / "INDEX.md").write_text("# 索引\n",
+        (ws.repo / "local" / "reports").mkdir(parents=True)
+        (ws.repo / "local" / "reports" / "INDEX.md").write_text("# 索引\n",
                                                       encoding="utf-8")
-        ws.git("add", "reports/INDEX.md")
+        ws.git("add", "-f", "local/reports/INDEX.md")
         ws.git("commit", "-q", "-m", "索引基线")
         run_root, _ = ws.init_ok()
         ws.complete_all(run_root)
         (ws.repo / "越界新文件.md").write_text("运行中越界写入\n",
                                               encoding="utf-8")
-        (ws.repo / "reports" / "INDEX.md").write_text("# 索引\n被改了\n",
+        (ws.repo / "local" / "reports" / "INDEX.md").write_text("# 索引\n被改了\n",
                                                       encoding="utf-8")
         cp = ws.finalize(run_root)
         self.assertEqual(cp.returncode, 1, out(cp))
@@ -1349,10 +1349,10 @@ class TestBoundaryDetection(GateTestCase):
     def test_parameterized_reports_watch_ignores_index_rebuild(self):
         # 回归: reports/ 参数化项不得因 INDEX.md / 无关报告变化误报
         # (build_report_index --check 场景); 只有匹配 {industry}-industry 才算。
-        legacy = {1: ["reports/{industry}-industry-{date}.md"]}
+        legacy = {1: ["local/reports/{industry}-industry-{date}.md"]}
         ws = self.make_ws(registry=make_registry(legacy=legacy))
         run_root, _ = ws.init_ok()
-        reports = ws.repo / "reports"
+        reports = ws.repo / "local" / "reports"
         reports.mkdir(exist_ok=True)
         (reports / "INDEX.md").write_text("# 索引\n无关重建\n", encoding="utf-8")
         (reports / "别的公司-research-20260718.md").write_text(
