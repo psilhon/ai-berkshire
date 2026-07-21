@@ -1,8 +1,8 @@
 # Skills 使用指南（Claude Code）
 
-本文档是 20 个投研 Skill 在 Claude Code 环境下的完整使用说明：调用格式、参数、执行流程、产出位置与注意事项。Codex 用户请参考 [AGENTS.md](AGENTS.md) 与 `codex-skills/`（由 `skills/*.md` 自动生成，工作流一致）。
+本文档覆盖本仓库的全部 **21 个** canonical Skill：`skills/*.md` 中的 20 个投研业务 Skill + 1 个编排层 `full-company-analysis`（详见末尾「🎛 编排层」）。Codex 用户请参考 [AGENTS.md](AGENTS.md) 与 `codex-skills/`（由 `skills/*.md` 自动生成，工作流一致，为 Codex 侧规范目标）。
 
-> 数据截止：2026-07-17，基于 `skills/*.md` 当前版本整理。Skill 源文件更新后，以源文件为准。
+> 数据截止：2026-07-21，基于 `skills/*.md` 当前版本整理。Skill 源文件更新后，以源文件为准。
 
 ## 目录
 
@@ -12,6 +12,8 @@
 - [🏭 行业筛选类](#-行业筛选类)：industry-research / industry-funnel / quality-screen / bottleneck-hunter / investment-checklist
 - [📈 持仓管理类](#-持仓管理类)：portfolio-review / thesis-tracker / thesis-drift / news-pulse
 - [🧠 思维工具类](#-思维工具类)：dyp-ask / financial-data / ashare-data / wechat-article
+- [🧭 选型决策路由表](#-选型决策路由表)：重叠 Skill 该选哪个
+- [🎛 编排层](#-编排层)：full-company-analysis（Phase2-gated，不计入 20 项业务集合）
 - [典型工作流串联](#典型工作流串联)
 
 ---
@@ -26,6 +28,21 @@ bash scripts/install-claude-commands.sh
 ```
 
 之后在 Claude Code 里用 `/skill名 参数` 调用，skill 文件中的 `$ARGUMENTS` 即斜杠命令后跟的文字。在本仓库工作区内可直接调用，无需安装。
+
+### Skill 元信息规范（必填）
+
+每个 `skills/<name>.md` 文件头必须带 YAML frontmatter，且至少包含以下字段（由 `scripts/check-skill-frontmatter.py` 在 `check.sh` 中卡点校验，缺失或非法则失败）：
+
+| 字段 | 含义 | 取值 |
+|------|------|------|
+| `name` | kebab-case 调用入口，须与文件名一致 | 同文件名 |
+| `description` | 触发场景 + 输入 + 产出，利于自动匹配 | 自由文本 |
+| `owner` | 维护者 | `psilhon` |
+| `category` | 研究分类 | 深度公司研究 / 财报分析 / 行业与筛选 / 持仓与论文管理 / 数据与思维工具 / 编排层 |
+| `maturity` | 成熟度 | `stable` / `beta` / `governed(Phase2-gated)` |
+| `review-cadence` | 复核节奏 | `per-release` / `on-change` / `quarterly` / `annual` |
+
+新增 / 修改 skill 后必跑 `bash scripts/check.sh` 通过全部检查（含本项 frontmatter 校验、Codex 生成物同步、注册表校验）。
 
 ### 权限准备
 
@@ -331,6 +348,55 @@ bash scripts/install-claude-commands.sh
 - **产出**：技术主题 `local/reports/AI产业研究/公众号-{主题}-{YYYYMMDD}.md`；投资主题 `local/reports/{公司名}/{公司名}-公众号-{YYYYMMDD}.md`；配图存 `assets/{主题简称}/`
 - **注意**：不虚构数据（无来源标"估计"）；禁 AI 腔套话；公式 LaTeX 格式且每个配大白话翻译；配图必须实际插入（论文类从 PDF 提取 ≥500KB 高清图，禁止 [图X] 占位符）；段落不超 4 行、不用 emoji
 - **依赖**：论文解读类需 `pdftoppm` 与 PIL 做配图提取
+
+---
+
+---
+
+## 🧭 选型决策路由表
+
+面对一个研究需求，先按「意图」在此表定位该用哪个 Skill，再跳转对应小节。重叠项已写明「不要选」与原因，专治"到底该用哪个"的选择困难。
+
+| 你的意图 | 首选 Skill | 不要选 | 为什么 |
+|---------|-----------|-------|--------|
+| 单家公司系统研究（细致、可控、单人） | `/investment-research` | `/investment-team`、`/full-company-analysis` | 单线八步已够；team 更快但更重，编排层是端到端总控而非单项研究 |
+| 要最快拿到最全的多视角结论（可接受高成本） | `/investment-team` | `/investment-research` | 4 Agent 并行，几分钟出四维评分 + 分报告 |
+| 一家公司管理层到底靠不靠谱 | `/management-deep-dive` | 通用研究 skill | 专注"买股票就是买人"，诚信一票否决 |
+| 未上市公司（蚂蚁 / 小红书 / SpaceX…） | `/private-company-research` | 上市研究的 skill | 信息稀缺，需拼图式还原 |
+| 对外发《看懂 XX》系列长文 | `/deep-company-series` | 单篇研究 | 3-8 篇教科书级长文，量级最大 |
+| 读一份财报（一手、单人） | `/earnings-review` | `/earnings-team` | 日常财报精读已够 |
+| 重仓公司的关键财报，要公众号成稿 | `/earnings-team` | `/earnings-review` | 四大师 + 编辑 + 读者，产出可直接发布 |
+| 看一个行业 / 超级趋势的全产业链 | `/industry-research` | `/industry-funnel` | 产业链全景 + 组合配置 |
+| 从全市场筛 3 家标的 | `/industry-funnel` | `/industry-research` | 漏斗精选，每层留淘汰理由 |
+| 先快速排除烂公司 | `/quality-screen` | 直接进入深研 | 7 条硬指标去劣，通过 ≠ 买入 |
+| 找供应链卡脖子环节与套利标的 | `/bottleneck-hunter` | 行业研究 | 物理供应链咽喉反向挖掘 |
+| 买入前最后把关 | `/investment-checklist` | — | 巴菲特六关，10 分钟级 |
+| 单日 ±5% / 一周 ±10% 异动归因 | `/news-pulse` | 深研 | 快速情报，不陷深度 |
+| 持仓组合体检 / 再平衡 | `/portfolio-review` | — | 组合层分析，仅存本地 |
+| 买入后跟踪投资论文 | `/thesis-tracker` | — | 建论文 + 季度检查 |
+| 对比两份报告有无漂移 | `/thesis-drift` | — | 只比证据不比文风 |
+| 段永平式思维陪练 | `/dyp-ask` | — | 最轻量，不联网 |
+| 取 A 股数据 | `/ashare-data` | — | 零依赖 curl 直连 |
+| 财务数据双源交叉验证规范 | `/financial-data` | — | 所有取数环节引用的底座规范 |
+| 单篇公众号文章（技术 / 投资主题） | `/wechat-article` | `/deep-company-series` | 三 Agent 协作成稿 |
+| 单一公司全量端到端（内部开发） | `/full-company-analysis` | 上面任意单项 | Phase2-gated；只服务"单公司 + 全套流程"，日常勿用 |
+
+---
+
+## 🎛 编排层
+
+### /full-company-analysis — 全量公司分析总控编排（Phase2-gated）
+
+```
+/full-company-analysis 腾讯控股
+```
+
+- **参数**：单公司名或代码
+- **定位**：编排层，**不自己做研究**，按注册表 `tools/full_analysis_contract.json` 调度现有业务 Skill（investment-research / earnings-review / thesis-tracker 等 20 项），用确定性验收器 `tools/full_analysis_gate.py` 收口状态、跑报告审计
+- **触发语义**："全量分析 XX""完整研究 XX，跑完全部 Skill""端到端投研"才路由到此；只做单项研究请用对应业务 Skill（`/investment-research`）、只取数用 `/ashare-data`、跨公司行业筛选用 `/industry-funnel`
+- **重要约束（Phase 2 完成前）**：本 Skill 仅限内部开发调用，不得对用户宣称"全量分析可用"，任何一次运行结果不得当作已验证的生产输出
+- **产出**：由所调度的业务 Skill 各自落盘（路径见各业务 Skill 小节），编排层只做状态收口
+- **注意**：本 Skill **不计入**注册表的 20 项业务集合；20 项集合、产物路径、谓词、角色与审计要求的唯一机器真源是 `tools/full_analysis_contract.json`，本文不维护第二份清单
 
 ---
 

@@ -59,5 +59,4 @@ if [ -n "$ONLY" ]; then
 else
   echo "Installed Codex skills to $DEST"
 fi
-echo "Run ./scripts/install-codex-prompts.sh if you want slash-command prompts."
 echo "Restart Codex to pick up new skills."

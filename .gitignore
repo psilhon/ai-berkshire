@@ -21,3 +21,12 @@ logs/command-log.jsonl
 # 筛选公司/ 实盘记录/ reports/ research/ 均已移入 local/，由 /local/ 规则统一覆盖
 # 原始账本（含股数/金额）在 local/实盘记录-原始/
 /local/
+
+# ===== 项目本地状态 / 缓存 / 打包产物：保持本地私有，不入库 =====
+# .workbuddy/ 为本项目工作记忆与本地配置，非临时缓存，按约定不公开
+.workbuddy/
+# .codegraph/ 为代码索引缓存
+.codegraph/
+# 打包产物（如 skills_*.zip）
+*.zip
+

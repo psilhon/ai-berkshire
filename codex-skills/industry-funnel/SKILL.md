@@ -1,6 +1,10 @@
 ---
 name: industry-funnel
-description: "AI Berkshire skill: 行业漏斗筛选：从全市场到 3 家的价值投资精选流程. Source: skills/industry-funnel.md."
+description: 行业漏斗筛选：对一个行业/投资方向执行漏斗式价值投资筛选，从全市场（A股/港股/美股/未上市）逐层精选到 3 家终选标的，每层有明确留弃标准可复盘。输入行业或方向。
+owner: psilhon
+category: 行业与筛选
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

@@ -1,6 +1,10 @@
 ---
 name: investment-research
-description: "AI Berkshire skill: 投资研究：巴菲特-芒格-段永平-李录 四大师综合分析框架. Source: skills/investment-research.md."
+description: 投资研究：以巴菲特-芒格-段永平-李录四大师综合分析框架对单一公司做系统化研究，含 AI 研究偏见自觉前置步骤，按七模块顺序执行。输入公司名，单公司标准研究入口。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

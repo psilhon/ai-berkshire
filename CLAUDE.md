@@ -18,13 +18,11 @@ GitHub: xbtlin/ai-berkshire。本仓库既是个人投研工作区（local/repor
 ```
 skills/*.md（Claude Code slash command 源文件，权威）
    │ python3 scripts/sync-codex-skills.py
-   ├──► codex-skills/*/SKILL.md（生成的 Codex skill 包）
-   │ python3 scripts/sync-codex-prompts.py
-   └──► codex-prompts/*.md（生成的 Codex slash prompt 兼容层）
+   └──► codex-skills/*/SKILL.md（生成的 Codex skill 包，Codex 侧规范目标）
 ```
 
-- **改了 `skills/` 下任何文件后必须跑** `python3 scripts/sync-codex-skills.py`（涉及 slash prompt 时再跑 `sync-codex-prompts.py`）
-- 校验生成物是否最新（不重写文件）：`python3 scripts/sync-codex-skills.py --check` / `sync-codex-prompts.py --check`
+- **改了 `skills/` 下任何文件后必须跑** `python3 scripts/sync-codex-skills.py`
+- 校验生成物是否最新（不重写文件）：`python3 scripts/sync-codex-skills.py --check`
 - **不要手改生成的 `codex-skills/*/SKILL.md`**；仅 Codex-only 手写包例外（需明确标注，且不得存在同名 `skills/*.md`）
 - Codex 侧行为规则见 `AGENTS.md`（本文件管 Claude Code，AGENTS.md 管 Codex，改流程时两边同步）
 
@@ -34,7 +32,7 @@ skills/*.md（Claude Code slash command 源文件，权威）
 
 - `tools/full_analysis_contract.json` — 20 项业务契约注册表，是契约集合/产物路径/谓词/角色要求的**唯一机器真源**；任何文档（含编排 skill 本身）都不维护第二份清单
 - `skills/full-company-analysis.md` — 总控编排层，只调度现有业务 skill 不自己做研究；**Phase 2 完成前仅限内部开发调用**，不得对用户宣称"全量分析可用"
-- `tools/full_analysis_gate.py` — 确定性验收器，生命周期：`init` → 每项 `begin-skill`/`finish-skill` → 每层 `checkpoint` → `set-industry`/`set-review-mode` → `finalize`/`summary`；`contracts` 子命令输出 20 项概览
+- `tools/full_analysis_gate.py` — 确定性验收器（v1.4），生命周期：`init` → 每项 `begin-skill` →（数据类项由 gate 代跑 `run-ashare-command` 冻结收据）→ `finish-skill` → 每层 `checkpoint` → `set-industry`/`set-review-mode` → `finalize`/`summary`；`contracts` 子命令输出 20 项概览
 
 运行产物按可见性落盘：private（默认）→ `local/company/<公司>/<run_id>/`；public → `local/筛选公司/<公司>/全量分析/<run_id>/`。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
 
@@ -86,7 +84,6 @@ python3 tools/ashare_data.py ratios 600519       # 财务比率全景（quality-
 ```
 skills/          — Skill 权威源（.md）
 codex-skills/    — 生成物，勿手改
-codex-prompts/   — 生成物，勿手改
 scripts/         — sync-* 生成脚本 + install-* 安装脚本
 tools/           — 金融计算/数据/审计工具（python3）；ashare_plugin/ 是 A股数据实现包
 tests/           — unittest 单测（financial_rigor / report_audit / ashare_plugin 等）
@@ -100,7 +97,7 @@ docs/            — ROADMAP 与专题文档
 
 ## 报告目录与命名规范
 
-公司相关报告放 `local/reports/{公司名}/` 文件夹内；行业/漏斗/主题/组合/多公司报告放 `reports/` 根目录。
+公司相关报告放 `local/reports/{公司名}/` 文件夹内；行业/漏斗/主题/组合/多公司报告放 `local/reports/` 根目录（下表"根目录"均指此处；旧 `reports/` 根目录已在 v1.0 全量迁移至 `local/reports/`）。
 
 | Skill | 文件命名格式 | 位置 |
 |------|---------|------|

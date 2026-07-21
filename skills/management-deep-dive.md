@@ -1,3 +1,12 @@
+---
+name: management-deep-dive
+description: 管理层纵深研究：以“买股票就是买人”为核心对公司管理层做深度研究。输入“公司名”或“人名 公司名”（如“王兴 美团”“黄仁勋 英伟达”）。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
+---
+
 # 管理层纵深研究：买股票就是买人
 
 对 $ARGUMENTS 进行管理层深度研究。

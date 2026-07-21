@@ -1,3 +1,12 @@
+---
+name: deep-company-series
+description: 深度公司系列：为一家公司撰写《看懂XX》3-8 篇深度长文系列（按复杂度定），从认知重置到决策框架完整闭环，含教科书级事实核查标准，供公众号/视频号公开发布。输入公司名。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
+---
+
 # 看懂XX公司（深度公司系列）：3-8 篇长文拆一家公司
 
 为 $ARGUMENTS 撰写一个《看懂XX》深度长文系列（3-8 篇，按公司复杂度定，见"篇数适配"），发布在公众号/视频号等公开渠道。**核心 IP 不是"会写"，而是"会改"——99% 的财经文章在违反本 skill 的事实核查标准**。

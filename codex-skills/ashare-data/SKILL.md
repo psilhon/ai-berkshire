@@ -1,6 +1,10 @@
 ---
 name: ashare-data
 description: A股数据管线统一入口：实时行情/近5年财务/估值/10年年报史/股本变动/公告/龙虎榜资金流解禁等市场信号。零依赖走腾讯行情+东方财富+巨潮（curl 直连），结果标注主源/备用源/数据时间/警告。输入六位代码或公司名即可取数。
+owner: psilhon
+category: 数据与思维工具
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

@@ -1,3 +1,12 @@
+---
+name: thesis-drift
+description: 投资论文漂移检测：对比两份研究报告/论文快照，分清“事实变化”与“措辞变化”。输入“公司名 旧报告 新报告”或仅“公司名”自动查找历史快照。
+owner: psilhon
+category: 持仓与论文管理
+maturity: stable
+review-cadence: per-release
+---
+
 # 投资论文漂移检测：分清事实变化与措辞变化
 
 对 $ARGUMENTS 执行投资论文漂移检测。

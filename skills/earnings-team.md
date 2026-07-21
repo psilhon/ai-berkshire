@@ -1,3 +1,12 @@
+---
+name: earnings-team
+description: 财报精读团队：四大师并行解读财报 + 编辑润色 + 读者评审，产出可直接发布的公众号文章。输入“公司名 季度”。极重量级多 Agent 工作流。
+owner: psilhon
+category: 财报分析
+maturity: stable
+review-cadence: per-release
+---
+
 # 财报精读团队：四大师并行解读 + 公众号发布
 
 对 $ARGUMENTS 进行团队化财报精读分析。四位大师并行解读财报，编辑润色成文，读者评审把关质量，最终产出可直接发布的公众号文章。

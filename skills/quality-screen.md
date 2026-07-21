@@ -1,3 +1,12 @@
+---
+name: quality-screen
+description: 去劣筛选：用 7 条指标快速排除非一流公司。支持个股/行业/市场指数/主题四种输入（如“腾讯,美团”“沪深300”“全球AI算力链”），行业模式额外输出通过率与排名。中量级初筛。
+owner: psilhon
+category: 行业与筛选
+maturity: stable
+review-cadence: per-release
+---
+
 # 去劣筛选：7条指标快速排除非一流公司
 
 对 $ARGUMENTS 执行去劣指标筛选，快速排除不符合一流公司标准的标的。

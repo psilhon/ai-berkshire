@@ -1,6 +1,10 @@
 ---
 name: investment-checklist
-description: "AI Berkshire skill: 巴菲特价值投资买入前 Checklist. Source: skills/investment-checklist.md."
+description: 巴菲特价值投资买入前 Checklist：对一家或多家公司执行买入前清单核查。输入单个或多个公司（逗号/空格分隔，如“腾讯,茅台,英伟达”），逐家给出清单结论。
+owner: psilhon
+category: 行业与筛选
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

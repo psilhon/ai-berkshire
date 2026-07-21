@@ -1,6 +1,10 @@
 ---
 name: earnings-team
-description: "AI Berkshire skill: 财报精读团队：四大师并行解读 + 公众号发布. Source: skills/earnings-team.md."
+description: 财报精读团队：四大师并行解读财报 + 编辑润色 + 读者评审，产出可直接发布的公众号文章。输入“公司名 季度”。极重量级多 Agent 工作流。
+owner: psilhon
+category: 财报分析
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

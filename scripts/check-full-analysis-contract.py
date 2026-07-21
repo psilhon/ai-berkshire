@@ -56,7 +56,7 @@ _CANDIDATE_PLACEHOLDER_RE = re.compile(
     r"\{趋势名\}|\{主题\}|\{name\}")
 # 仓库基础设施前缀: 交叉引用, 不是保存目标
 _INFRA_PREFIXES = ("skills/", "tools/", "scripts/", "tests/", "data/", "docs/",
-                   "codex-skills/", "codex-prompts/")
+                   "codex-skills/")
 
 
 def _err(errors, msg):

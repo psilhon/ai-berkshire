@@ -1,6 +1,11 @@
 ---
 name: full-company-analysis
 description: Use when 用户要求对单一公司做全量、完整或端到端投研，并希望自动执行全部业务契约、证据校验、报告审计与最终状态收口；仅限单公司全流程——单项研究走 investment-research、只取数走 ashare-data、行业筛选走 industry-funnel，均不路由至此。
+owner: psilhon
+category: 编排层
+maturity: governed(Phase2-gated)
+review-cadence: per-release
+registry-schema: v1
 ---
 
 ## Codex adapter note
@@ -12,8 +17,6 @@ This skill is generated from `skills/full-company-analysis.md` so Claude Code an
 - Use shared project tools from `tools/` in this repository. Prefer running commands from the repository root with paths like `python3 tools/financial_rigor.py ...`; if the current thread starts outside the repo, locate the actual checkout path first instead of assuming a fixed home-directory path.
 - Before starting research, run the `date` command to confirm today's date; treat it as the baseline for "latest" data and state the data cutoff date in the report header. Never assume the current date from training data.
 - Preserve the research quality rules from `AGENTS.md`: cross-check financial data, use exact arithmetic tools for valuation/math, and clearly label uncertainty and source gaps.
-
-<!-- owner: psilhon · review-cadence: per-release · registry-schema: v1 · maturity: governed(Phase2-gated) -->
 
 # 全量公司分析：总控编排 Skill
 

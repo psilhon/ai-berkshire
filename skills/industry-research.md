@@ -1,3 +1,12 @@
+---
+name: industry-research
+description: 行业投资研究：从投资主题出发做系统化产业链全景扫描，验证逻辑链、绘制产业链全景图、扫描全球上市公司，并对各环节头部执行四大师框架分析，输出行业级组合配置建议。输入行业名。
+owner: psilhon
+category: 行业与筛选
+maturity: stable
+review-cadence: per-release
+---
+
 # 行业投资研究：产业链全景扫描 + 四大师个股分析框架
 
 对 $ARGUMENTS 行业进行系统化产业链投资研究。

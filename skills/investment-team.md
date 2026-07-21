@@ -1,3 +1,12 @@
+---
+name: investment-team
+description: 投研团队：用 Team 工具创建真正的多 Agent 并行研究团队，四位投资方法并行分析同一公司。输入公司名，启动前强制 WebSearch 权限预检。极重量级。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
+---
+
 # 投研团队：四位投资方法并行分析框架
 
 对 $ARGUMENTS 进行团队化投资研究分析。使用 Team 工具创建真正的多Agent并行研究团队。

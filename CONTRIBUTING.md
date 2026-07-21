@@ -25,7 +25,7 @@
 1. 一个 PR 只做一件事，保持 diff 聚焦。
 2. 描述里写清楚：改了什么、为什么改、怎么验证的。涉及 skill 的改动，请附上你在 Claude Code 或 Codex 里实际运行的效果。
 3. 中文或英文均可。
-4. 改动 README.md 中影响内容的部分时，请同步更新 README_EN.md（反之亦然）；纯排版修正可以只改一边。
+4. 文档以中文 `README.md` 为唯一对外说明，改动后无需再同步其他语言版本。
 
 ## 提交 Issue
 
@@ -73,7 +73,7 @@ Thanks for your interest in AI Berkshire. This project grew out of my personal i
 1. One PR does one thing.
 2. Describe what changed, why, and how you verified it. For skill changes, include results from an actual run in Claude Code or Codex.
 3. Chinese or English are both fine.
-4. Substantive edits to README.md should be mirrored in README_EN.md (and vice versa).
+4. `README.md` (Chinese) is the single canonical project README; no other language versions are maintained, so no cross-language sync is required.
 
 ## Issues
 

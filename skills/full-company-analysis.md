@@ -1,9 +1,12 @@
 ---
 name: full-company-analysis
 description: Use when 用户要求对单一公司做全量、完整或端到端投研，并希望自动执行全部业务契约、证据校验、报告审计与最终状态收口；仅限单公司全流程——单项研究走 investment-research、只取数走 ashare-data、行业筛选走 industry-funnel，均不路由至此。
+owner: psilhon
+category: 编排层
+maturity: governed(Phase2-gated)
+review-cadence: per-release
+registry-schema: v1
 ---
-<!-- owner: psilhon · review-cadence: per-release · registry-schema: v1 · maturity: governed(Phase2-gated) -->
-
 # 全量公司分析：总控编排 Skill
 
 对 $ARGUMENTS 执行端到端全量公司分析编排。本 Skill 是**编排层**，不自己做研究：它按注册表 `tools/full_analysis_contract.json` 调度现有业务 Skill，用确定性验收器 `tools/full_analysis_gate.py` 收口状态。

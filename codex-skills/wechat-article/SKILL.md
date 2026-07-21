@@ -1,6 +1,10 @@
 ---
 name: wechat-article
-description: "AI Berkshire skill: 微信公众号文章：作者-编辑-读者三Agent协作. Source: skills/wechat-article.md."
+description: 微信公众号文章：作者-编辑-读者三 Agent 协作，对一个主题做深度研究并产出可直接发布的公众号文章。输入主题描述（如“为什么巴菲特不买科技股”）。
+owner: psilhon
+category: 数据与思维工具
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

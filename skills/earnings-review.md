@@ -1,3 +1,12 @@
+---
+name: earnings-review
+description: 财报精读：基于一手原始财报对单一公司做深度解读，不依赖卖方研报。输入“公司名 季度”（如“腾讯 2025Q4”“美团 最新”），产出结构化财报解读。
+owner: psilhon
+category: 财报分析
+maturity: stable
+review-cadence: per-release
+---
+
 # 财报精读：一手资料深度解读
 
 对 $ARGUMENTS 进行财报精读分析。

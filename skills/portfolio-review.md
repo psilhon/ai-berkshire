@@ -1,3 +1,12 @@
+---
+name: portfolio-review
+description: 组合管理：对投资组合做审视与优化，从“研究公司”升级到“管理组合”。输入持仓清单（含权重或股数成本）或“我的持仓”读取已存组合文件。
+owner: psilhon
+category: 持仓与论文管理
+maturity: stable
+review-cadence: per-release
+---
+
 # 组合管理：从"研究公司"到"管理组合"
 
 对 $ARGUMENTS 执行投资组合审视与优化。

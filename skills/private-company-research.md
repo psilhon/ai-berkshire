@@ -1,3 +1,12 @@
+---
+name: private-company-research
+description: 未上市公司研究：多 Agent 并行深度研究框架，专为蚂蚁、小红书、SpaceX、Stripe 等未上市公司设计，在信息稀缺下用拼图式方法还原真实价值（融资轮次/可比公司/情景推演）。输入公司名，极重量级。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
+---
+
 # 未上市公司研究：多Agent并行深度研究框架
 
 对 $ARGUMENTS 进行团队化深度研究分析。专为蚂蚁集团、小红书、SpaceX、Stripe 等未上市公司设计。

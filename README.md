@@ -1,5 +1,3 @@
-中文 | [English](README_EN.md) | [日本語](README_JA.md)
-
 [![GitHub Trending](https://trendshift.io/api/badge/repositories/63696)](https://trendshift.io/repositories/63696)
 
 # AI Berkshire - AI 时代的价值投资研究框架
@@ -303,10 +301,6 @@ git clone https://github.com/xbtlin/ai-berkshire.git
 # 生成并安装 Codex skills 到 ~/.codex/skills
 cd ai-berkshire
 ./scripts/install-codex-skills.sh
-
-# 可选：安装 Codex slash prompts 到 ~/.codex/prompts
-# 用于获得接近 Claude Code 的 /investment-research 体验
-./scripts/install-codex-prompts.sh
 ```
 
 Codex 用户安装（Windows PowerShell / Command Prompt）：
@@ -315,12 +309,9 @@ Codex 用户安装（Windows PowerShell / Command Prompt）：
 git clone https://github.com/xbtlin/ai-berkshire.git
 cd ai-berkshire
 .\scripts\install-codex-skills.bat
-
-REM 可选：安装 Codex slash prompts
-.\scripts\install-codex-prompts.bat
 ```
 
-仓库同时维护三套入口：`skills/*.md` 是 Claude Code command 源文件；`codex-skills/*/SKILL.md` 是 Codex skill 包，由 `scripts/sync-codex-skills.py` 从 `skills/*.md` 生成；`codex-prompts/*.md` 是可选的 Codex slash prompt 兼容层。
+仓库维护两套入口：`skills/*.md` 是 Claude Code command 权威源；`codex-skills/*/SKILL.md` 是 Codex skill 包，由 `scripts/sync-codex-skills.py` 从 `skills/*.md` 自动生成，为 Codex 侧规范目标。
 
 ### 3. 使用
 

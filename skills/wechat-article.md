@@ -1,3 +1,12 @@
+---
+name: wechat-article
+description: 微信公众号文章：作者-编辑-读者三 Agent 协作，对一个主题做深度研究并产出可直接发布的公众号文章。输入主题描述（如“为什么巴菲特不买科技股”）。
+owner: psilhon
+category: 数据与思维工具
+maturity: stable
+review-cadence: per-release
+---
+
 # 微信公众号文章：作者-编辑-读者三Agent协作
 
 对 $ARGUMENTS 进行深度研究，产出一篇可直接发布的微信公众号文章。三个Agent各司其职：作者写深度初稿，编辑精修结构和表达，读者从目标受众视角审读。

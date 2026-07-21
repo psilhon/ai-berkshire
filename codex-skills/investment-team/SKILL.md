@@ -1,6 +1,10 @@
 ---
 name: investment-team
-description: "AI Berkshire skill: 投研团队：四位投资方法并行分析框架. Source: skills/investment-team.md."
+description: 投研团队：用 Team 工具创建真正的多 Agent 并行研究团队，四位投资方法并行分析同一公司。输入公司名，启动前强制 WebSearch 权限预检。极重量级。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

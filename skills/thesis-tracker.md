@@ -1,3 +1,12 @@
+---
+name: thesis-tracker
+description: 投资论文追踪：买入后的纪律系统，建立并持续跟踪投资论文。输入“公司名”（首次建立、后续追踪）、“公司名 建立论文”或“公司名 季度检查”。
+owner: psilhon
+category: 持仓与论文管理
+maturity: stable
+review-cadence: per-release
+---
+
 # 投资论文追踪：买入后的纪律系统
 
 对 $ARGUMENTS 执行投资论文追踪检查。

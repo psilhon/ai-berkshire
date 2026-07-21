@@ -1,6 +1,10 @@
 ---
 name: financial-data
-description: "AI Berkshire skill: 财务数据获取与交叉验证规范. Source: skills/financial-data.md."
+description: 财务数据获取与交叉验证规范：所有涉及企业财务数据研究的通用底层规范，规定美股/港股/A股数据源优先级、双来源交叉验证（误差>1% 须标记）与 A 股数据插件用法，供其他研究 skill 引用。
+owner: psilhon
+category: 数据与思维工具
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

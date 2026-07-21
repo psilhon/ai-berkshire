@@ -1,6 +1,10 @@
 ---
 name: deep-company-series
-description: "AI Berkshire skill: 看懂XX公司（深度公司系列）：3-8 篇长文拆一家公司. Source: skills/deep-company-series.md."
+description: 深度公司系列：为一家公司撰写《看懂XX》3-8 篇深度长文系列（按复杂度定），从认知重置到决策框架完整闭环，含教科书级事实核查标准，供公众号/视频号公开发布。输入公司名。
+owner: psilhon
+category: 深度公司研究
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note

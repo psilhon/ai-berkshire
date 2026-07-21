@@ -1,6 +1,10 @@
 ---
 name: quality-screen
-description: "AI Berkshire skill: 去劣筛选：7条指标快速排除非一流公司. Source: skills/quality-screen.md."
+description: 去劣筛选：用 7 条指标快速排除非一流公司。支持个股/行业/市场指数/主题四种输入（如“腾讯,美团”“沪深300”“全球AI算力链”），行业模式额外输出通过率与排名。中量级初筛。
+owner: psilhon
+category: 行业与筛选
+maturity: stable
+review-cadence: per-release
 ---
 
 ## Codex adapter note
