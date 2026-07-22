@@ -275,3 +275,25 @@ python3 tools/report_audit.py verdict \
 ```
 
 **【准出】** 全部抽检点双源核验通过 → 可发布；**【证据不足】** 有未核验/单一来源/两源冲突点 → 补齐第二来源后重跑；**【打回】** 有不通过 → 修正后重审。
+
+---
+
+## Tushare 数据引用
+
+| 命令 | 数据内容 | 用途 | 层级 |
+|------|---------|------|:--:|
+| `industry-pe` | 行业 PE/PB 基准（申万 sw_daily） | 行业估值比较——标的 PE vs 行业历史分位 | 推荐 |
+| `sector-peers` | 同花顺概念成分股（1725 概念） | 全球公司扫描可用结构化概念板块替代手工 WebSearch | 推荐 |
+| `sector-flow` | 板块资金流向（ths/dc） | 行业资金热度——哪个板块在吸金 | 可选 |
+
+> **数据源优先级**：Tushare > WebSearch。行业估值基准和概念成分股以 Tushare 结构化数据为准。
+
+## 依赖与资源清单
+
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+
+| 依赖项 | 路径 | 用途 | 可达性 |
+|--------|------|------|--------|
+| report_audit.py | `tools/report_audit.py` | 报告质量门（审计/证据充分性/打回重审） | ✅ |
+
+> **自检**：所有路径均为 `$BERKSHIRE_ROOT` 仓库内文件，已确认存在。新增依赖需同步更新本清单。

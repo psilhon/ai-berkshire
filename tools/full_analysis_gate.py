@@ -1643,8 +1643,11 @@ def evaluate_evidence_rules(sk, item, manifest, run_root):
             capability = rule.get("capability")
             configured = bool(manifest.get("run", {}).get("capabilities", {})
                               .get(capability))
-            required_ops = [entry.get("op") for entry in rule.get("values", [])
-                            if isinstance(entry, dict) and entry.get("op")]
+            entries = [e for e in rule.get("values", [])
+                       if isinstance(e, dict) and e.get("op")]
+            # optional ops are best-effort and never block validation
+            required_entries = [e for e in entries if not e.get("optional")]
+            required_ops = [e.get("op") for e in required_entries]
             if configured:
                 by_operation = {}
                 for receipt in receipts:
@@ -1654,6 +1657,31 @@ def evaluate_evidence_rules(sk, item, manifest, run_root):
                           if op in by_operation and not any(
                               receipt.get("exit_code") == 0
                               for receipt in by_operation[op])]
+                # tolerance: ops with a documented limitation are excused
+                tol_missing = rule.get("tolerate_missing_with_limitation", False)
+                tol_failed = rule.get("tolerate_failed_with_limitation", False)
+                if tol_missing or tol_failed:
+                    limitation_codes = {
+                        limitation.get("code") for limitation in sk.get("limitations", [])
+                        if isinstance(limitation, dict)
+                    }
+                    if tol_missing:
+                        missing = [op for op in missing
+                                   if f"cond_op:{op}" not in limitation_codes]
+                    if tol_failed:
+                        failed = [op for op in failed
+                                  if f"cond_op:{op}" not in limitation_codes]
+                # ratio gate on non-optional ops
+                min_ratio = rule.get("min_satisfied_ratio")
+                if min_ratio is not None and required_ops:
+                    satisfied = [op for op in required_ops
+                                 if op in by_operation and any(
+                                     r.get("exit_code") == 0
+                                     for r in by_operation[op])]
+                    if len(satisfied) / len(required_ops) < min_ratio:
+                        errors.append(
+                            f"条件命令满足率 {len(satisfied)}/{len(required_ops)} "
+                            f"低于阈值 {min_ratio} ({capability}=true)")
                 if missing:
                     errors.append(f"条件命令缺失 ({capability}=true): {missing}")
                 if failed:
@@ -1667,6 +1695,8 @@ def evaluate_evidence_rules(sk, item, manifest, run_root):
                 if "tushare_not_configured" not in limitation_codes:
                     errors.append("条件命令未配置时必须记录 limitation: "
                                   "tushare_not_configured")
+            return errors
+
     return errors
 
 

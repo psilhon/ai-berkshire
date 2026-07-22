@@ -59,9 +59,11 @@ review-cadence: per-release
 
 ### 第一步：确认标的与需求
 
-1. 跑 `date` 确认今天日期（CLAUDE.md 投研核心原则），作为"最新数据"基线。
+1. 跑 `date` 确认今天日期（项目投研核心原则（数据基准日约定）），作为"最新数据"基线。
 2. 输入是公司名 → 先 `python3 tools/ashare_data.py search {关键词}` 定码；多个匹配列出候选让用户确认。
 3. 用户没指定数据类型 → 默认取概览三件套（quote + valuation + financials），**不要默默把八个命令全跑一遍**。
+
+🔴 STOP / 检查点：在按用户未明确指定的范围自动扩展取数（如默默把八个命令全跑一遍、或在 full-company-analysis 中自动触发 Tushare 增强集）前，必须先向用户确认（给出明确选项：如"仅取概览三件套""按研究需要取指定命令""触发 Tushare 交叉验证"），获得明确同意后再继续；未经确认不得自主扩大取数范围。
 
 ### 第二步：按需取数
 
@@ -99,6 +101,8 @@ python3 tools/ashare_data.py signals <代码>
 - 任何失败**宁标"数据不足"，也不用推测填充**；不得用空结果伪装成功。
 - `signals` 是部分成功语义：四块信号任一可用即成功，不可用的块逐条列在警告里——呈现时把不可用块明确说出来，不要只报可用的。
 
+🔴 STOP / 检查点：在把取数结果写入报告文件、artifact 记录或对外发布/外发前，必须先向用户确认（给出明确选项：如"仅对话内呈现不落盘""确认写入并标注来源""暂不发布"），获得明确同意后再继续；未经确认不得自主落盘或外发。
+
 ### full-company-analysis 集成
 
 在 `full-company-analysis` 中不得只粘贴命令文本：基础命令由 gate 的 `run-ashare-command` 实际执行并冻结收据；随后至少登记三个可复用核心事实 `price`、`market_cap`、`revenue`。每条事实使用 gate 的 `fact_id/field/subject/period/unit/value/tolerance_pct/sources` 封闭结构，来源保留 publisher、document/URL、acquisition chain 与访问时间；取不到就记录限制，禁止默认值或估算填充。
@@ -128,16 +132,41 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 - 行情为盘中快照，管线不缓存；财务数据随东财披露更新。
 - `search` 用东财公开 token，可用环境变量 `EASTMONEY_SEARCH_TOKEN` 覆盖。
 
+## 数据源优先级体系
+
+本 skill 是 A 股数据的唯一切入点。所有 consuming skill 的数据请求必须通过本管线，按以下优先级获取：
+
+| 层级 | 数据源 | 性质 | 命令数 | 使用规则 |
+|:--:|------|------|:--:|------|
+| **Tier 0** | Tushare Pro（付费） | 独立结构化，可审计可冻结 | 47 | **最高优先级**。与任何其他源冲突时以 Tushare 为准。用于三大报表、PE分位、资金面、龙虎榜、券商研报、高管增持、质押等 |
+| **Tier 1** | 腾讯行情 + 东方财富（免费） | 基础层，零 token 依赖 | 7 | 实时行情、核心财务摘要、估值指标。价格双源验证（腾讯+新浪） |
+| **Tier 2** | WebSearch / WebFetch（免费） | 非结构化，不可冻结，有知识截止 | ∞ | 仅在 Tushare 和 Tier 1 无法覆盖时使用。行业定性信息、管理层公开信息、竞对动态 |
+| **Tier 3** | financial_rigor.py / report_audit.py（内部） | 确定性计算/审计 | 8+3 | Decimal 精确验算、三情景建模、报告质量门 |
+
+**冲突解决**：Tier 0(Tushare) > Tier 1(东财/腾讯) > Tier 2(WebSearch)。价格类的 CONFLICT 自动以 Tushare 值覆盖；财务类（期间/单位/口径不一致）不自动覆盖，标注双源差异。
+
+**Tushare 配置**：仅检查 `TUSHARE_TOKEN` 是否存在。不要在对话、命令参数、报告或仓库中粘贴 token。
+
 ## Tushare 可选交叉验证
 
-- 工具只检查 `TUSHARE_TOKEN` 是否存在；不要在对话、命令参数、报告或仓库中粘贴 token。
-- 未配置时输出 `NOT_CONFIGURED` 且不发起 Tushare 请求；现有主数据流程和退出码不受影响。
-- 已配置时，八个命令自动附加 Tushare 验证摘要：`MATCH`、`CONFLICT` 或 `INSUFFICIENT`。
-- Tushare 不是传输 fallback；但在 `quote`、`valuation` 等同主体、同交易日、同单位的市场结构化字段发生 `CONFLICT` 时，输出以 Tushare 值为有效值，并逐项保留“主数据原值 → Tushare 值”的覆盖记录。
-- 财务、公告、重大事项、文本名称、市场信号及任何期间/单位不一致字段不适用上述覆盖，仍保留原始披露或主数据值；接口无权限、限流或空数据时也不得覆盖。
-- 实时腾讯行情只与同一交易日已更新的 Tushare 日终数据比较；日期不同必须为 `INSUFFICIENT`。
-- `MATCH` 只代表对应字段在相同标的、期间、单位和报告版本下偏差不超过 1%，不代表整份报告自动完成双源核验。
-- **扩展字段（`quote`/`valuation`）**：Tushare `daily_basic` 额外取 `pe_ttm`（对齐腾讯"动态PE"口径，可定位 `pe` 冲突是否只是 TTM vs 静态差）、`dv_ratio`（股息率）、`dv_ttm`、`ps_ttm`。`valuation` 会显示 Tushare `dv_ratio` 股息率，但**其口径可能含上一周期高分红、非前瞻收益率**，须按分红期间自行核对，不能直接当作研究报告的前瞻股息率第二源。
+- 未配置 token 时输出 `NOT_CONFIGURED` 且不发起 Tushare 请求；主数据流程不受影响。
+- 已配置时，八个基础命令自动附加 Tushare 验证摘要：`MATCH`、`CONFLICT` 或 `INSUFFICIENT`。
+- 在 `quote`/`valuation` 等同主体、同交易日、同单位的市场结构化字段发生 `CONFLICT` 时，输出以 Tushare 值为有效值，逐项保留覆盖记录。
+- 财务、公告、重大事项、文本名称、市场信号及任何期间/单位不一致字段不适用覆盖，仍保留原始披露或主数据值。
+- 实时腾讯行情只与同一交易日已更新的 Tushare 日终数据比较；日期不同为 `INSUFFICIENT`。
+- `MATCH` 只代表对应字段在相同标的、期间、单位和报告版本下偏差不超过 1%。
+
+## 扩展 Tushare 命令参考（47 个条件命令）
+
+以下命令仅在 `TUSHARE_TOKEN` 配置时可用，由 `full-company-analysis` 流程中的 `tushare-enrich` 自动按合约 feeds 映射执行。各 consuming skill 的 SKILL.md 中有详细引用表。
+
+**财务深度**：`income-stmt` `balance-sheet` `cash-flow` `ratios` `mainbz` `audit` `express` `consensus`
+**估值**：`pe-band` `kline` `weekly` `monthly` `stk-factor` `factors`
+**治理**：`shareholders` `insider-trades` `management` `managers` `repurchase` `pledge`
+**资金面**：`money-flow` `top-list` `limit-list` `limit-price` `ths-hot` `block-trade`
+**北向**：`north-hold` `hsgt-flow` `hsgt-top10`
+**行业**：`peers` `industry-pe` `sector-peers` `sector-flow` `index-val`
+**宏观/其他**：`macro` `research-visits` `broker-recommend` `analyst-reports` `disclosure-calendar` `news` `divident` `name-history` `suspend` `unblock` `cyq-chips` `margin` `holder-num`
 
 ## 独立价格第二源（新浪）
 
@@ -149,10 +178,83 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 
 ---
 
+🔴 STOP / 检查点：在基于取数结果输出任何买入/卖出倾向或投资建议前，必须先向用户确认（给出明确选项：如"仅呈现数据与来源不附带倾向""输出中性分析"），获得明确同意后再继续；本 skill 只产数据证据，未经确认不得自主下投资结论。
+
 ## 关键原则
 
-1. **遵循 `CLAUDE.md` 客观性原则**——只呈现数据与来源，不加买卖倾向
+1. **遵循 数据客观性原则（只呈现数据与来源，不加买卖倾向）**
 2. **关键数据双源交叉验证**——市场结构化字段的合格 Tushare 冲突按本节优先级选择有效值并保留冲突证据；财务与披露类冲突仍按 `skills/financial-data.md` 核对巨潮原始披露
 3. **来源、数据时间、警告三要素随数据一起呈现**——备用源降级必须明示
 4. **宁标"数据不足"，不用推测填充**
 5. **不替用户做决策**——本 skill 只产数据证据；本项目用于学习研究，不构成投资建议
+
+---
+
+## 反例与红线（不要做）
+
+- 不要替用户决定取数范围：用户没指定数据类型时默认只取概览三件套，不要默默把八个命令全跑一遍来增加外部调用或误导。
+- 不要把备用源当主源静默使用：结果标明"备用源"时必须明示"数据来自备用源"，不得伪装成主源数据。
+- 不要用推测填充空数据：任何命令失败或返回空，宁标"数据不足"，不得用估算值伪装成功。
+- 不要在对话、命令参数、报告或仓库中粘贴 TUSHARE_TOKEN 或任何凭据。
+- 不要在用户未明确授权时把取数结果落盘为报告或对外发布：本 skill 只产数据证据，落盘/发布须过 D4 检查点。
+- 🔴 **全量分析语境下取全量数据**：在全量公司分析（full-company-analysis）中，取数范围由编排器决定——包括 quote/financials/valuation/history/equity-history/announcements/signals 全部模块，报告必须覆盖所有已取模块，不得只写概览。
+- 🔴 **报告必须覆盖所有已执行命令**：evidence/commands/ 中有 stdout 的每条命令，报告中必须有对应的完整章节（含数据表、来源标注、Tushare 交叉验证结果），不得丢弃数据。
+
+---
+
+## 失败处理（如果 X 失败 → Y）
+
+- 如果 CLI 退出码 1（接口失败/无数据）→ 执行：标记"数据不足"，可用 WebSearch 补充，补充数据仍按 financial-data 双源规范验证；不编造。
+- 如果 CLI 退出码 2（参数错误，如 `--years` 超 1-50）→ 执行：修正参数后重试，不绕过预校验。
+- 如果 Tushare 接口无权限/限流/空数据 → 执行：输出 `NOT_CONFIGURED`/`INSUFFICIENT`，不强行覆盖主数据，不把它当第二来源。
+- 如果 `signals` 仅部分成功 → 执行：逐条把不可用块列在警告里，不静默只报可用块。
+- 如果 用户输入含糊（如公司名多匹配）→ 执行：列出候选请用户确认，不默默选一个。
+
+---
+
+## 依赖与资源清单
+
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+
+| 依赖项 | 路径 | 用途 | 可达性 |
+|--------|------|------|--------|
+| ashare_data.py | `tools/ashare_data.py` | 主数据管线（零外部依赖，腾讯行情+东方财富+巨潮curl直连） | ✅ |
+| ashare_plugin/ | `tools/ashare_plugin/` | 插件目录 | ✅ |
+
+> **自检**：所有路径均为 `$BERKSHIRE_ROOT` 仓库内文件，已确认存在。新增依赖需同步更新本清单。
+
+---
+
+## 标准化数据引用模板（供其他 skill 复用）
+
+每个 consuming skill 应在 SKILL.md 中按以下模板声明其使用的 Tushare 数据：
+
+```markdown
+## Tushare 数据引用（付费数据源，优先级高于 WebSearch）
+
+本 skill 应优先使用以下 Tushare 结构化命令获取可审计可冻结的数据。
+
+| 命令 | 数据内容 | 在本 skill 中的使用方式 | 层级 |
+|------|---------|----------------------|:--:|
+| `xxx` | 数据说明 | 具体用途 | **必须** |
+| `yyy` | 数据说明 | 具体用途 | 推荐 |
+| `zzz` | 数据说明 | 具体用途 | 可选 |
+
+> **数据源优先级**：Tushare（可审计可冻结） > 东财/腾讯（基础层） > WebSearch（补充层）。
+> Tushare 与任何源冲突时以 Tushare 为准。
+> **执行方式**：在 `full-company-analysis` 流程中，本 skill 的数据通过
+> `tushare-enrich` 或 `finish-skill` 自动补跑冻结收据后使用。
+```
+
+**层级定义**：
+- **必须**：没有这个数据，skill 的核心分析无法完成（如 investment-research 缺三大报表=无法独立验证利润质量）
+- **推荐**：有则显著提升分析质量，无则可降级但不影响核心结论
+- **可选**：锦上添花，有额外价值但不影响主要判断
+
+**产物报告头部统一格式**：
+
+```markdown
+**数据截止日**: YYYY-MM-DD | **数据来源优先级**: Tushare > 东财 > WebSearch | **仅供学习研究，不构成投资建议**
+```
+
+> 产物验证（`finish-skill` 质量门）会检查以上声明是否存在于报告中。

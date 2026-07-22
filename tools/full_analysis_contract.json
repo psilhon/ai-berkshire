@@ -62,7 +62,15 @@
       "evidence_rules": [
         {
           "kind": "required_command_operations",
-          "values": ["quote", "financials", "valuation", "history", "equity-history", "announcements", "signals"]
+          "values": [
+            "quote",
+            "financials",
+            "valuation",
+            "history",
+            "equity-history",
+            "announcements",
+            "signals"
+          ]
         },
         {
           "kind": "min_command_receipts",
@@ -70,7 +78,11 @@
         },
         {
           "kind": "required_fact_fields",
-          "values": ["price", "market_cap", "revenue"]
+          "values": [
+            "price",
+            "market_cap",
+            "revenue"
+          ]
         },
         {
           "kind": "min_facts",
@@ -80,18 +92,260 @@
           "kind": "conditional_command_operations",
           "capability": "tushare_configured",
           "values": [
-            {"op": "ratios", "feeds": "quality-screen", "layer": 1},
-            {"op": "mainbz", "feeds": "financial-data", "layer": 1},
-            {"op": "peers", "feeds": "industry-funnel", "layer": 1},
-            {"op": "managers", "feeds": "management-deep-dive", "layer": 2},
-            {"op": "repurchase", "feeds": "investment-research", "layer": 2},
-            {"op": "pledge", "feeds": "thesis-tracker", "layer": 2},
-            {"op": "audit", "feeds": "management-deep-dive", "layer": 2},
-            {"op": "express", "feeds": "earnings-review", "layer": 2},
-            {"op": "holder-num", "feeds": "investment-research", "layer": 2},
-            {"op": "north-hold", "feeds": "news-pulse", "layer": 3},
-            {"op": "kline", "feeds": "thesis-drift", "layer": 4}
-          ]
+            {
+              "op": "pe-band",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "ratios",
+              "feeds": "quality-screen",
+              "layer": 1
+            },
+            {
+              "op": "mainbz",
+              "feeds": "financial-data",
+              "layer": 1
+            },
+            {
+              "op": "peers",
+              "feeds": "industry-funnel",
+              "layer": 1
+            },
+            {
+              "op": "insider-trades",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "shareholders",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "managers",
+              "feeds": "management-deep-dive",
+              "layer": 2
+            },
+            {
+              "op": "management",
+              "feeds": "management-deep-dive",
+              "layer": 2
+            },
+            {
+              "op": "repurchase",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "pledge",
+              "feeds": "thesis-tracker",
+              "layer": 2
+            },
+            {
+              "op": "audit",
+              "feeds": "management-deep-dive",
+              "layer": 2
+            },
+            {
+              "op": "express",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "consensus",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "holder-num",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "north-hold",
+              "feeds": "news-pulse",
+              "layer": 3
+            },
+            {
+              "op": "kline",
+              "feeds": "thesis-drift",
+              "layer": 4
+            },
+            {
+              "op": "research-visits",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "dividend",
+              "feeds": "investment-checklist",
+              "layer": 1
+            },
+            {
+              "op": "disclosure-calendar",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "news",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "industry-pe",
+              "feeds": "industry-research",
+              "layer": 3
+            },
+            {
+              "op": "index-val",
+              "feeds": "portfolio-review",
+              "layer": 4,
+              "optional": true
+            },
+            {
+              "op": "income-stmt",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "balance-sheet",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "cash-flow",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "money-flow",
+              "feeds": "news-pulse",
+              "layer": 3
+            },
+            {
+              "op": "factors",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "sector-peers",
+              "feeds": "industry-research",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "macro",
+              "feeds": "portfolio-review",
+              "layer": 4,
+              "optional": true
+            },
+            {
+              "op": "name-history",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "limit-price",
+              "feeds": "news-pulse",
+              "layer": 3
+            },
+            {
+              "op": "suspend",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "weekly",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "monthly",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "broker-recommend",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "cyq-chips",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "stk-factor",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "limit-list",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "top-list",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "ths-hot",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "unblock",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "block-trade",
+              "feeds": "investment-research",
+              "layer": 2,
+              "optional": true
+            },
+            {
+              "op": "analyst-reports",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "hsgt-flow",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "hsgt-top10",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "sector-flow",
+              "feeds": "industry-research",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "margin",
+              "feeds": "investment-research",
+              "layer": 2
+            }
+          ],
+          "min_satisfied_ratio": 0.7,
+          "tolerate_missing_with_limitation": true,
+          "tolerate_failed_with_limitation": true
         }
       ],
       "domain_evidence_status": "IMPLEMENTED",
@@ -132,7 +386,9 @@
       "evidence_rules": [
         {
           "kind": "required_fact_fields",
-          "values": ["revenue"]
+          "values": [
+            "revenue"
+          ]
         },
         {
           "kind": "min_dual_source_facts",
@@ -180,7 +436,15 @@
       "evidence_rules": [
         {
           "kind": "required_fact_fields",
-          "values": ["quality_metric_1", "quality_metric_2", "quality_metric_3", "quality_metric_4", "quality_metric_5", "quality_metric_6", "quality_metric_7"]
+          "values": [
+            "quality_metric_1",
+            "quality_metric_2",
+            "quality_metric_3",
+            "quality_metric_4",
+            "quality_metric_5",
+            "quality_metric_6",
+            "quality_metric_7"
+          ]
         },
         {
           "kind": "min_facts",
@@ -226,7 +490,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["checklist_final_decision"]
+          "values": [
+            "checklist_final_decision"
+          ]
         },
         {
           "kind": "min_calculations",
@@ -279,7 +545,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["investment_thesis"]
+          "values": [
+            "investment_thesis"
+          ]
         },
         {
           "kind": "min_dual_source_facts",
@@ -342,7 +610,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["contrarian_synthesis"]
+          "values": [
+            "contrarian_synthesis"
+          ]
         },
         {
           "kind": "min_role_runs",
@@ -396,7 +666,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["management_integrity"]
+          "values": [
+            "management_integrity"
+          ]
         },
         {
           "kind": "min_role_runs",
@@ -449,7 +721,11 @@
       "evidence_rules": [
         {
           "kind": "required_fact_fields",
-          "values": ["income_statement", "balance_sheet", "cash_flow"]
+          "values": [
+            "income_statement",
+            "balance_sheet",
+            "cash_flow"
+          ]
         },
         {
           "kind": "min_facts",
@@ -502,7 +778,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["earnings_editorial_review"]
+          "values": [
+            "earnings_editorial_review"
+          ]
         },
         {
           "kind": "min_role_runs",
@@ -559,7 +837,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["industry_scope"]
+          "values": [
+            "industry_scope"
+          ]
         },
         {
           "kind": "min_facts",
@@ -611,7 +891,11 @@
       "evidence_rules": [
         {
           "kind": "required_fact_fields",
-          "values": ["funnel_universe", "funnel_top10", "funnel_final3"]
+          "values": [
+            "funnel_universe",
+            "funnel_top10",
+            "funnel_final3"
+          ]
         },
         {
           "kind": "min_facts",
@@ -666,7 +950,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["physical_bottleneck"]
+          "values": [
+            "physical_bottleneck"
+          ]
         },
         {
           "kind": "min_facts",
@@ -729,7 +1015,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["price_move_attribution"]
+          "values": [
+            "price_move_attribution"
+          ]
         },
         {
           "kind": "min_role_runs",
@@ -787,7 +1075,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["core_thesis"]
+          "values": [
+            "core_thesis"
+          ]
         },
         {
           "kind": "min_judgments_with_falsification",
@@ -834,7 +1124,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["snapshot_drift"]
+          "values": [
+            "snapshot_drift"
+          ]
         },
         {
           "kind": "min_calculations",
@@ -879,7 +1171,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["portfolio_action"]
+          "values": [
+            "portfolio_action"
+          ]
         },
         {
           "kind": "min_calculations",
@@ -933,7 +1227,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["private_company_conclusion"]
+          "values": [
+            "private_company_conclusion"
+          ]
         },
         {
           "kind": "min_role_runs",
@@ -985,7 +1281,11 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["series_question_1", "series_question_2", "series_question_3"]
+          "values": [
+            "series_question_1",
+            "series_question_2",
+            "series_question_3"
+          ]
         },
         {
           "kind": "min_facts",
@@ -1039,7 +1339,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["dyp_method_simulation"]
+          "values": [
+            "dyp_method_simulation"
+          ]
         },
         {
           "kind": "min_facts",
@@ -1088,7 +1390,9 @@
       "evidence_rules": [
         {
           "kind": "required_judgment_rule_ids",
-          "values": ["publication_revision_closure"]
+          "values": [
+            "publication_revision_closure"
+          ]
         },
         {
           "kind": "min_role_runs",

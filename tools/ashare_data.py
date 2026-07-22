@@ -19,7 +19,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_EVEN
+from decimal import Decimal
 
 try:
     from tools.ashare_plugin.transport import TransportClient
@@ -619,8 +619,7 @@ def cmd_equity_history(code: str):
 def cmd_search(keyword: str):
     """搜索股票代码。"""
     url = "https://searchadapter.eastmoney.com/api/suggest/get"
-    # Use env var or fall back to the public eastmoney search token
-    token = os.environ.get("EASTMONEY_SEARCH_TOKEN") or "D43BF722C8E33BDC906FB84D85E326E8"
+    token = os.environ.get("EASTMONEY_SEARCH_TOKEN", "")
     params = {
         "input": keyword,
         "type": "14",
@@ -719,6 +718,653 @@ def _get_tushare_client():
         print("   请设置环境变量 TUSHARE_TOKEN", file=sys.stderr)
         return None
     return client
+
+
+# === Phase 0: 三大报表 + 资金面 + 概念 + 宏观 + 更名 + 因子 ===
+
+def _format_fin_stmt(rows, title, code):
+    """通用三大报表格式化输出。"""
+    if not rows:
+        print(f"无数据")
+        return
+    print(f"{'='*60}")
+    print(f"{title}: {code}")
+    print(f"数据来源: Tushare，共 {len(rows)} 期")
+    print(f"{'='*60}\n")
+    for row in rows:
+        end_date = row.get("end_date", row.get("f_ann_date", "?"))[:10]
+        print(f"  --- {end_date} ---")
+        for k, v in row.items():
+            if k in ("ts_code", "end_date", "ann_date", "f_ann_date", "report_type", "comp_type"):
+                continue
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+                if abs(fv) >= 1e8:
+                    print(f"  {k:30s}: {fv/1e8:>12.2f}亿")
+                elif abs(fv) >= 1e4:
+                    print(f"  {k:30s}: {fv/1e4:>12.2f}万")
+                else:
+                    print(f"  {k:30s}: {fv:>12.4f}")
+            except (ValueError, TypeError):
+                print(f"  {k:30s}: {str(v):>12s}")
+        print()
+
+
+def cmd_income_stmt(code: str, years: int = 5, json_output: bool = False):
+    """利润表原始数据 — Tushare income"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
+    all_rows = []
+    for ey in end_years:
+        r = client.query("income", params={"ts_code": f"{code}.SH", "end_date": ey}, fields=[])
+        if r.get("ok"):
+            all_rows.extend(r["data"])
+    if json_output:
+        print(json.dumps(all_rows, ensure_ascii=False, indent=2))
+    else:
+        _format_fin_stmt(all_rows, "利润表", code)
+    return True
+
+
+def cmd_balance_sheet(code: str, years: int = 5, json_output: bool = False):
+    """资产负债表 — Tushare balancesheet"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
+    all_rows = []
+    for ey in end_years:
+        r = client.query("balancesheet", params={"ts_code": f"{code}.SH", "end_date": ey}, fields=[])
+        if r.get("ok"):
+            all_rows.extend(r["data"])
+    if json_output:
+        print(json.dumps(all_rows, ensure_ascii=False, indent=2))
+    else:
+        _format_fin_stmt(all_rows, "资产负债表", code)
+    return True
+
+
+def cmd_cash_flow(code: str, years: int = 5, json_output: bool = False):
+    """现金流量表 — Tushare cashflow"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
+    all_rows = []
+    for ey in end_years:
+        r = client.query("cashflow", params={"ts_code": f"{code}.SH", "end_date": ey}, fields=[])
+        if r.get("ok"):
+            all_rows.extend(r["data"])
+    if json_output:
+        print(json.dumps(all_rows, ensure_ascii=False, indent=2))
+    else:
+        _format_fin_stmt(all_rows, "现金流量表", code)
+    return True
+
+
+def cmd_money_flow(code: str, trade_date: str = None):
+    """个股资金流向 — Tushare moneyflow"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("moneyflow", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ Tushare moneyflow 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"资金流向: {code} ({trade_date})")
+    print(f"数据来源: Tushare moneyflow")
+    print(f"{'='*60}\n")
+    for d in r["data"]:
+        print(f"  小单买入: {_fmt_yi(d.get('buy_sm_amount'))}  小单卖出: {_fmt_yi(d.get('sell_sm_amount'))}")
+        print(f"  中单买入: {_fmt_yi(d.get('buy_md_amount'))}  中单卖出: {_fmt_yi(d.get('sell_md_amount'))}")
+        print(f"  大单买入: {_fmt_yi(d.get('buy_lg_amount'))}  大单卖出: {_fmt_yi(d.get('sell_lg_amount'))}")
+        print(f"  超大单买入: {_fmt_yi(d.get('buy_elg_amount'))}  超大单卖出: {_fmt_yi(d.get('sell_elg_amount'))}")
+        net_mf = float(d.get('net_mf_amount', 0) or 0)
+        direction = "主力净流入" if net_mf > 0 else "主力净流出"
+        print(f"  {direction}: {_fmt_yi(abs(net_mf))}")
+    return True
+
+
+def cmd_factors(code: str, trade_date: str = None):
+    """量化因子 — Tushare stk_factor_pro"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("stk_factor_pro", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ Tushare stk_factor_pro 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"量化因子: {code} ({trade_date})")
+    print(f"数据来源: Tushare stk_factor_pro")
+    print(f"{'='*60}\n")
+    for k, v in d.items():
+        if k in ("ts_code", "trade_date"):
+            continue
+        if v is None:
+            continue
+        print(f"  {k:25s}: {v}")
+
+
+def cmd_sector_peers(code: str, json_output: bool = False):
+    """同花顺概念成分股 — Tushare ths_member"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    r = client.query("ths_member", params={"ts_code": code}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ Tushare ths_member 查询失败: {r.get('message', '未知')}")
+        return False
+    if json_output:
+        print(json.dumps(r["data"], ensure_ascii=False, indent=2))
+    else:
+        print(f"{'='*60}")
+        print(f"同花顺概念成分股: {code}")
+        print(f"数据来源: Tushare ths_member，共 {len(r['data'])} 只")
+        print(f"{'='*60}\n")
+        for row in r["data"]:
+            print(f"  {row.get('ts_code','?')}  {row.get('name','?')}  {row.get('con_code','')}")
+    return True
+
+
+def cmd_macro(indicator: str, period: str = None):
+    """宏观经济指标 — Tushare cn_gdp/cn_cpi/cn_m/shibor"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    api_map = {
+        "gdp": ("cn_gdp", {}),
+        "cpi": ("cn_cpi", {"m": period or datetime.now().strftime("%Y%m")}),
+        "m2": ("cn_m", {"m": period or datetime.now().strftime("%Y%m")}),
+        "shibor": ("shibor", {"date": period or datetime.now().strftime("%Y%m%d")}),
+    }
+    api_name, params = api_map[indicator]
+    r = client.query(api_name, params=params, fields=[])
+    if not r.get("ok"):
+        print(f"❌ Tushare {api_name} 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"宏观经济: {indicator.upper()}")
+    print(f"数据来源: Tushare {api_name}")
+    print(f"{'='*60}\n")
+    for row in r["data"][:5]:
+        for k, v in row.items():
+            if v is not None and str(v).strip():
+                print(f"  {k}: {v}")
+        print()
+    return True
+
+
+def cmd_name_history(code: str):
+    """历史更名 — Tushare namechange"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    r = client.query("namechange", params={"ts_code": f"{code}.SH"}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ Tushare namechange 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"历史名称变更: {code}")
+    print(f"数据来源: Tushare namechange，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for row in r["data"]:
+        print(f"  {row.get('start_date','?')[:10]} ~ {row.get('end_date','?')[:10] if row.get('end_date') else '至今'}  "
+              f"{row.get('name','?')}")
+    return True
+
+
+# === Tier 1 高价值 API（基于 Tushare 完整数据审计） ===
+
+def cmd_limit_price(code: str, trade_date: str = None):
+    """涨跌停价格 — Tushare stk_limit"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("stk_limit", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ stk_limit 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"涨跌停价格: {code} ({trade_date})")
+    print(f"数据来源: Tushare stk_limit")
+    print(f"{'='*60}\n")
+    up = float(d.get("up_limit", 0))
+    dn = float(d.get("down_limit", 0))
+    close = float(d.get("close", 0)) if d.get("close") else 0
+    print(f"  涨停价: {up:.2f}  跌停价: {dn:.2f}")
+    if close:
+        pct_to_up = (up - close) / close * 100
+        pct_to_dn = (dn - close) / close * 100
+        print(f"  收盘价: {close:.2f}  距涨停: {pct_to_up:+.2f}%  距跌停: {pct_to_dn:+.2f}%")
+    return True
+
+
+def cmd_suspend(trade_date: str = None):
+    """停复牌信息 — Tushare suspend_d"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("suspend_d", params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ suspend_d 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"停复牌信息: {trade_date}")
+    print(f"数据来源: Tushare suspend_d，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:30]:
+        print(f"  {d.get('ts_code','?')}  {d.get('name','?')}  类型={d.get('suspend_type','?')}  "
+              f"{d.get('suspend_timing','')}")
+    if len(r["data"]) > 30:
+        print(f"  ... 共 {len(r['data'])} 条，仅显示前 30")
+    return True
+
+
+def cmd_weekly(code: str, trade_date: str = None):
+    """周线行情 — Tushare weekly"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("weekly", params={"ts_code": f"{code}.SH", "trade_date": trade_date, "fields": "ts_code,trade_date,open,high,low,close,vol,amount"}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ weekly 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"周线行情: {code} (周止 {trade_date})")
+    print(f"数据来源: Tushare weekly")
+    print(f"{'='*60}\n")
+    for k, v in d.items():
+        if k in ("ts_code",):
+            continue
+        try:
+            fv = float(v)
+            print(f"  {k:15s}: {fv}")
+        except (ValueError, TypeError):
+            print(f"  {k:15s}: {v}")
+
+
+def cmd_monthly(code: str, trade_date: str = None):
+    """月线行情 — Tushare monthly"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("monthly", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ monthly 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"月线行情: {code} (月止 {trade_date})")
+    print(f"数据来源: Tushare monthly")
+    print(f"{'='*60}\n")
+    for k, v in d.items():
+        if k in ("ts_code",):
+            continue
+        try:
+            fv = float(v)
+            print(f"  {k:15s}: {fv}")
+        except (ValueError, TypeError):
+            print(f"  {k:15s}: {v}")
+
+
+def cmd_broker_recommend(month: str = None):
+    """券商月度金股 — Tushare broker_recommend"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not month:
+        month = datetime.now().strftime("%Y%m")
+    r = client.query("broker_recommend", params={"month": month}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ broker_recommend 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"券商月度金股推荐: {month}")
+    print(f"数据来源: Tushare broker_recommend，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:30]:
+        print(f"  {d.get('ts_code','?')}  {d.get('name','?')}  "
+              f"券商={d.get('broker','?')}  月度={d.get('month','')}")
+    if len(r["data"]) > 30:
+        print(f"  ... 共 {len(r['data'])} 条")
+    return True
+
+
+def cmd_cyq_chips(code: str, trade_date: str = None):
+    """每日筹码分布 — Tushare cyq_perf"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("cyq_perf", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ cyq_perf 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"每日筹码分布: {code} ({trade_date})")
+    print(f"数据来源: Tushare cyq_perf")
+    print(f"{'='*60}\n")
+    for k, v in d.items():
+        if k in ("ts_code", "trade_date"):
+            continue
+        try:
+            fv = float(v)
+            if abs(fv) >= 1e8:
+                print(f"  {k:20s}: {fv/1e8:>10.2f}亿")
+            elif abs(fv) >= 1e4:
+                print(f"  {k:20s}: {fv/1e4:>10.2f}万")
+            else:
+                print(f"  {k:20s}: {fv:>10.4f}")
+        except (ValueError, TypeError):
+            print(f"  {k:20s}: {v}")
+    return True
+
+
+def cmd_limit_list(trade_date: str = None):
+    """涨跌停数据 — Tushare limit_list_d"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("limit_list_d", params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ limit_list_d 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"涨跌停数据: {trade_date}")
+    print(f"数据来源: Tushare limit_list_d，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:30]:
+        is_up = d.get("limit") == "U"
+        is_dt = d.get("limit") == "D"
+        emoji = "🟥" if is_up else ("🟩" if is_dt else "⬜")
+        print(f"  {emoji} {d.get('ts_code','?')}  {d.get('name','?')}  "
+              f"涨{d.get('pct_chg','?')}%  成交{d.get('amount','?')}")
+    if len(r["data"]) > 30:
+        print(f"  ... 共 {len(r['data'])} 条")
+    return True
+
+
+def cmd_top_list(trade_date: str = None):
+    """龙虎榜 — Tushare top_list"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("top_list", params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ top_list 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"龙虎榜: {trade_date}")
+    print(f"数据来源: Tushare top_list，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:20]:
+        print(f"  {d.get('ts_code','?')}  {d.get('name','?')}  "
+              f"净买={d.get('net_amount','?')}万  涨跌幅={d.get('pct_change','?')}%")
+    if len(r["data"]) > 20:
+        print(f"  ... 共 {len(r['data'])} 条")
+    return True
+
+
+def cmd_unblock(code: str, end_date: str = None, limit: int = 10):
+    """限售股解禁 — Tushare share_float"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not end_date:
+        end_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("share_float", params={"ts_code": f"{code}.SH", "end_date": end_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ share_float 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"限售股解禁: {code}")
+    print(f"数据来源: Tushare share_float，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:limit]:
+        print(f"  {d.get('float_date','?')}  解禁{d.get('float_share','?')}股  "
+              f"占比{d.get('float_ratio','?')}%  类型={d.get('share_type','?')}")
+    if len(r["data"]) > limit:
+        print(f"  ... 共 {len(r['data'])} 条，仅显示前 {limit}")
+    return True
+
+
+def cmd_block_trade(code: str, trade_date: str = None):
+    """大宗交易 — Tushare block_trade"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("block_trade", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ block_trade 查询失败: {r.get('message', '未知')}")
+        return False
+    if not r["data"]:
+        print(f"无大宗交易")
+        return True
+    print(f"{'='*60}")
+    print(f"大宗交易: {code} ({trade_date})")
+    print(f"数据来源: Tushare block_trade")
+    print(f"{'='*60}\n")
+    for d in r["data"]:
+        print(f"  {d.get('trade_date','?')}  价{d.get('price','?')}  "
+              f"量{d.get('vol','?')}万  买方={d.get('buyer','?','')}  卖方={d.get('seller','?','')}")
+    return True
+
+
+def cmd_ths_hot(trade_date: str = None):
+    """同花顺热榜 — Tushare ths_hot"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("ths_hot", params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ ths_hot 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"同花顺热榜: {trade_date}")
+    print(f"数据来源: Tushare ths_hot，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:20]:
+        print(f"  {d.get('ts_code','?')}  {d.get('name','?')}  排名={d.get('rank','?')}  "
+              f"涨{d.get('pct_change','?')}%  热度={d.get('hot_value','')}")
+    if len(r["data"]) > 20:
+        print(f"  ... 共 {len(r['data'])} 条")
+    return True
+
+
+def cmd_stk_factor(code: str, trade_date: str = None):
+    """股票技术面因子(基础版) — Tushare stk_factor"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("stk_factor", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ stk_factor 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"技术因子: {code} ({trade_date})")
+    print(f"数据来源: Tushare stk_factor")
+    print(f"{'='*60}\n")
+    for k, v in d.items():
+        if k in ("ts_code", "trade_date"):
+            continue
+        try:
+            fv = float(v)
+            if abs(fv) >= 1e8:
+                print(f"  {k:20s}: {fv/1e8:>10.2f}亿")
+            else:
+                print(f"  {k:20s}: {fv:>10.4f}")
+        except (ValueError, TypeError):
+            print(f"  {k:20s}: {v}")
+    return True
+
+
+# === Tier 1b: 券商研报/北向资金/融资融券/板块资金流 ===
+
+def cmd_analyst_reports(code: str, limit: int = 20):
+    """券商研报 — Tushare report_rc"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    r = client.query("report_rc", params={"ts_code": f"{code}.SH"}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ report_rc 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"券商研报: {code}")
+    print(f"数据来源: Tushare report_rc，共 {len(r['data'])} 篇")
+    print(f"{'='*60}\n")
+    for d in r["data"][:limit]:
+        print(f"  [{d.get('report_date','?')[:10]}] {d.get('org_name','?')}")
+        print(f"    标题: {str(d.get('report_title',''))[:60]}")
+        print(f"    评级: {d.get('rating','?')}  目标价: {d.get('tp','?')}  "
+              f"EPS: {d.get('eps','?')}  PE: {d.get('pe','?')}")
+        print()
+    if len(r["data"]) > limit:
+        print(f"  ... 共 {len(r['data'])} 篇，仅显示前 {limit}")
+    return True
+
+
+def cmd_hsgt_flow(trade_date: str = None):
+    """沪深港通资金流向 — Tushare moneyflow_hsgt"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("moneyflow_hsgt", params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ moneyflow_hsgt 查询失败: {r.get('message', '未知')}")
+        return False
+    d = r["data"][0]
+    print(f"{'='*60}")
+    print(f"沪深港通资金流向: {trade_date}")
+    print(f"数据来源: Tushare moneyflow_hsgt")
+    print(f"{'='*60}\n")
+    north = float(d.get("north_money", 0) or 0)
+    south = float(d.get("south_money", 0) or 0)
+    print(f"  北向资金净流入: {north/1e4:.2f}亿元")
+    print(f"  南向资金净流入: {south/1e4:.2f}亿元")
+    print(f"  沪股通: {float(d.get('hgt',0))/1e4:.2f}亿  深股通: {float(d.get('sgt',0))/1e4:.2f}亿")
+    print(f"  港股通(沪): {float(d.get('ggt_ss',0))/1e4:.2f}亿  港股通(深): {float(d.get('ggt_sz',0))/1e4:.2f}亿")
+    return True
+
+
+def cmd_hsgt_top10(trade_date: str = None):
+    """沪深港通十大成交股 — Tushare hsgt_top10"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    r = client.query("hsgt_top10", params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ hsgt_top10 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"沪深港通十大成交股: {trade_date}")
+    print(f"数据来源: Tushare hsgt_top10，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:20]:
+        amt = float(d.get("amount", 0) or 0)
+        print(f"  {d.get('name','?'):10s}  净买={amt/1e4:.2f}亿  通道={d.get('channel','')}")
+    return True
+
+
+def cmd_sector_flow(source: str = "ths", trade_date: str = None):
+    """板块资金流向 — Tushare moneyflow_ths/moneyflow_dc"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    api = f"moneyflow_{source}"
+    r = client.query(api, params={"trade_date": trade_date}, fields=[])
+    if not r.get("ok"):
+        print(f"❌ {api} 查询失败: {r.get('message', '未知')}")
+        return False
+    print(f"{'='*60}")
+    print(f"板块资金流向({source.upper()}): {trade_date}")
+    print(f"数据来源: Tushare {api}，共 {len(r['data'])} 个板块")
+    print(f"{'='*60}\n")
+    # Sort by net inflow
+    sorted_data = sorted(r["data"], key=lambda x: float(x.get("net_amount", 0) or 0), reverse=True)
+    print("  --- 净流入前 15 ---")
+    for d in sorted_data[:15]:
+        net = float(d.get("net_amount", 0) or 0)
+        name = d.get("name", "?")
+        print(f"  {name:20s}  净流入={net/1e4:+.2f}亿")
+    print("\n  --- 净流出前 15 ---")
+    for d in sorted_data[-15:]:
+        net = float(d.get("net_amount", 0) or 0)
+        name = d.get("name", "?")
+        print(f"  {name:20s}  净流入={net/1e4:+.2f}亿")
+    return True
+
+
+def cmd_margin(code: str = None, trade_date: str = None):
+    """融资融券 — Tushare margin/margin_detail"""
+    client = _get_tushare_client()
+    if not client:
+        return False
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y%m%d")
+    if code:
+        # 个股融资融券明细
+        r = client.query("margin_detail", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+        if not r.get("ok"):
+            # fallback to summary
+            r = client.query("margin", params={"trade_date": trade_date}, fields=[])
+        title = f"融资融券: {code} ({trade_date})"
+    else:
+        r = client.query("margin", params={"trade_date": trade_date}, fields=[])
+        title = f"融资融券汇总: {trade_date}"
+    if not r.get("ok"):
+        print(f"❌ margin 查询失败: {r.get('error_type', r.get('message', '未知'))}")
+        print(f"  (可能该日非交易日或无数据)")
+        return True  # Not a hard error
+    print(f"{'='*60}")
+    print(title)
+    print(f"数据来源: Tushare margin/margin_detail，共 {len(r['data'])} 条")
+    print(f"{'='*60}\n")
+    for d in r["data"][:15]:
+        rzye = float(d.get("rzye", 0) or 0)
+        rqye = float(d.get("rqye", 0) or 0)
+        print(f"  {d.get('ts_code','汇总'):12s}  融资余额={rzye/1e8:.2f}亿  融券余额={rqye/1e8:.2f}亿")
+    return True
 
 
 def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
@@ -2455,6 +3101,113 @@ def main():
     p_ann.add_argument("code", help="股票代码")
     p_ann.add_argument("--limit", type=int, default=20, help="返回数量，默认 20")
 
+    # Phase 0: 三大报表 — 原始财务报表独立交叉验证源
+    p_income = sub.add_parser("income-stmt", help="利润表原始数据（Tushare income）")
+    p_income.add_argument("code", help="股票代码")
+    p_income.add_argument("--years", type=_positive_years, default=5, help="年度数量，默认 5")
+    p_income.add_argument("--json", action="store_true", help="JSON 输出")
+
+    p_bs = sub.add_parser("balance-sheet", help="资产负债表（Tushare balancesheet）")
+    p_bs.add_argument("code", help="股票代码")
+    p_bs.add_argument("--years", type=_positive_years, default=5, help="年度数量，默认 5")
+    p_bs.add_argument("--json", action="store_true", help="JSON 输出")
+
+    p_cf = sub.add_parser("cash-flow", help="现金流量表（Tushare cashflow）")
+    p_cf.add_argument("code", help="股票代码")
+    p_cf.add_argument("--years", type=_positive_years, default=5, help="年度数量，默认 5")
+    p_cf.add_argument("--json", action="store_true", help="JSON 输出")
+
+    # Phase 0b: 资金面+量化因子
+    p_mf = sub.add_parser("money-flow", help="个股资金流向 主力/散户（Tushare moneyflow）")
+    p_mf.add_argument("code", help="股票代码")
+    p_mf.add_argument("--date", default=None, help="交易日期 YYYYMMDD，默认最近交易日")
+
+    p_factor = sub.add_parser("factors", help="量化因子 换手率/量比/PE分位（Tushare stk_factor_pro）")
+    p_factor.add_argument("code", help="股票代码")
+    p_factor.add_argument("--date", default=None, help="交易日期 YYYYMMDD，默认最近交易日")
+
+    # Phase 0c: 同花顺概念板块
+    p_ths = sub.add_parser("sector-peers", help="同花顺概念成分股（Tushare ths_member）")
+    p_ths.add_argument("code", help="同花顺概念代码 如 885800.TI（半导体设备）")
+    p_ths.add_argument("--json", action="store_true", help="JSON 输出")
+
+    # Phase 0d: 宏观数据
+    p_macro = sub.add_parser("macro", help="宏观经济指标 GDP/CPI/M2/Shibor（Tushare cn_*）")
+    p_macro.add_argument("indicator", choices=["gdp", "cpi", "m2", "shibor"],
+                         help="指标: gdp/cpi/m2/shibor")
+    p_macro.add_argument("--period", default=None, help="期间 YYYY/YYYYMM，默认最近")
+
+    # Phase 0e: 历史更名
+    p_nc = sub.add_parser("name-history", help="历史证券名称变更（Tushare namechange）")
+    p_nc.add_argument("code", help="股票代码")
+
+    # Tier 1: 行情扩展
+    p_lp = sub.add_parser("limit-price", help="涨跌停价格（Tushare stk_limit）")
+    p_lp.add_argument("code", help="股票代码")
+    p_lp.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_sus = sub.add_parser("suspend", help="停复牌信息（Tushare suspend_d）")
+    p_sus.add_argument("--date", default=None, help="交易日期 YYYYMMDD，默认最近")
+
+    p_w = sub.add_parser("weekly", help="周线行情（Tushare weekly）")
+    p_w.add_argument("code", help="股票代码")
+    p_w.add_argument("--date", default=None, help="周结束日 YYYYMMDD")
+
+    p_m = sub.add_parser("monthly", help="月线行情（Tushare monthly）")
+    p_m.add_argument("code", help="股票代码")
+    p_m.add_argument("--date", default=None, help="月结束日 YYYYMMDD")
+
+    # Tier 1: 特色/特色
+    p_br = sub.add_parser("broker-recommend", help="券商月度金股推荐（Tushare broker_recommend）")
+    p_br.add_argument("--month", default=None, help="月份 YYYYMM")
+
+    p_cyq = sub.add_parser("cyq-chips", help="每日筹码分布（Tushare cyq_perf）")
+    p_cyq.add_argument("code", help="股票代码")
+    p_cyq.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_sf = sub.add_parser("stk-factor", help="技术因子基础版（Tushare stk_factor）")
+    p_sf.add_argument("code", help="股票代码")
+    p_sf.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    # Tier 1: 打板专题
+    p_ll = sub.add_parser("limit-list", help="涨跌停清单（Tushare limit_list_d）")
+    p_ll.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_tl = sub.add_parser("top-list", help="龙虎榜（Tushare top_list）")
+    p_tl.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_hot = sub.add_parser("ths-hot", help="同花顺热榜（Tushare ths_hot）")
+    p_hot.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    # Tier 1: 参考数据
+    p_ub = sub.add_parser("unblock", help="限售股解禁（Tushare share_float）")
+    p_ub.add_argument("code", help="股票代码")
+    p_ub.add_argument("--end-date", default=None, help="截止日期 YYYYMMDD")
+    p_ub.add_argument("--limit", type=int, default=10, help="返回条数")
+
+    p_bt = sub.add_parser("block-trade", help="大宗交易（Tushare block_trade）")
+    p_bt.add_argument("code", help="股票代码")
+    p_bt.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    # Tier 1b: 券商研报/北向资金/融资融券/板块资金流
+    p_ar = sub.add_parser("analyst-reports", help="券商研报 目标价/评级/EPS（Tushare report_rc）")
+    p_ar.add_argument("code", help="股票代码")
+    p_ar.add_argument("--limit", type=int, default=20, help="返回数量，默认 20")
+
+    p_hf = sub.add_parser("hsgt-flow", help="沪深港通资金流向 北向/南向（Tushare moneyflow_hsgt）")
+    p_hf.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_ht = sub.add_parser("hsgt-top10", help="沪深港通十大成交股（Tushare hsgt_top10）")
+    p_ht.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_sf = sub.add_parser("sector-flow", help="板块资金流向（Tushare moneyflow_ths/moneyflow_dc）")
+    p_sf.add_argument("--source", default="ths", choices=["ths", "dc"], help="数据源 ths/dc，默认 ths")
+    p_sf.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
+    p_mg = sub.add_parser("margin", help="融资融券 余额/明细（Tushare margin/margin_detail）")
+    p_mg.add_argument("code", nargs="?", default=None, help="股票代码（缺省查全市场汇总）")
+    p_mg.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+
     # Phase 1: Tushare 10,000积分增强命令
     p_pe = sub.add_parser("pe-band", help="历史PE/PB分位（Tushare daily_basic）")
     p_pe.add_argument("code", help="股票代码")
@@ -2590,6 +3343,37 @@ def main():
         "peers": lambda: cmd_peers(args.code, args.level),
         "north-hold": lambda: cmd_north_hold(args.code),
         "index-val": lambda: cmd_index_val(args.index),
+        # Phase 0: 三大报表+资金面+概念+宏观+更名+因子
+        "income-stmt": lambda: cmd_income_stmt(args.code, args.years, args.json),
+        "balance-sheet": lambda: cmd_balance_sheet(args.code, args.years, args.json),
+        "cash-flow": lambda: cmd_cash_flow(args.code, args.years, args.json),
+        "money-flow": lambda: cmd_money_flow(args.code, args.date),
+        "factors": lambda: cmd_factors(args.code, args.date),
+        "sector-peers": lambda: cmd_sector_peers(args.code, args.json),
+        "macro": lambda: cmd_macro(args.indicator, args.period),
+        "name-history": lambda: cmd_name_history(args.code),
+        # Tier 1: 行情
+        "limit-price": lambda: cmd_limit_price(args.code, args.date),
+        "suspend": lambda: cmd_suspend(args.date),
+        "weekly": lambda: cmd_weekly(args.code, args.date),
+        "monthly": lambda: cmd_monthly(args.code, args.date),
+        # Tier 1: 特色
+        "broker-recommend": lambda: cmd_broker_recommend(args.month),
+        "cyq-chips": lambda: cmd_cyq_chips(args.code, args.date),
+        "stk-factor": lambda: cmd_stk_factor(args.code, args.date),
+        # Tier 1: 打板
+        "limit-list": lambda: cmd_limit_list(args.date),
+        "top-list": lambda: cmd_top_list(args.date),
+        "ths-hot": lambda: cmd_ths_hot(args.date),
+        # Tier 1: 参考
+        "unblock": lambda: cmd_unblock(args.code, args.end_date, args.limit),
+        "block-trade": lambda: cmd_block_trade(args.code, args.date),
+        # Tier 1b: 券商研报/北向资金/融资融券/板块资金流
+        "analyst-reports": lambda: cmd_analyst_reports(args.code, args.limit),
+        "hsgt-flow": lambda: cmd_hsgt_flow(args.date),
+        "hsgt-top10": lambda: cmd_hsgt_top10(args.date),
+        "sector-flow": lambda: cmd_sector_flow(args.source, args.date),
+        "margin": lambda: cmd_margin(args.code, args.date),
     }
     try:
         outcome = cmds[args.command]()

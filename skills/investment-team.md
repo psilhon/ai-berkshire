@@ -44,7 +44,7 @@ review-cadence: per-release
 
 在创建团队、启动任何后台 Agent **之前**，必须先确认 WebSearch 权限已放行。
 
-**为什么必须预检**：本 skill 用 `run_in_background: true` 启动 4 个后台子 Agent，而**后台 Agent 无法向用户弹出交互式权限确认**。若 `WebSearch` 未在 `.claude/settings.local.json` 的 `permissions.allow` 白名单中，子 Agent 的联网搜索会被**静默拦截**，导致其退化为仅凭训练知识（有知识截止日期）作答，却仍按框架输出一份"看起来完整、实则未联网"的伪研究——这是本 skill 最危险的失败模式（见 issue #58）。
+**为什么必须预检**：本 skill 用 `run_in_background: true` 启动 4 个后台子 Agent，而**后台 Agent 无法向用户弹出交互式权限确认**。若 `WebSearch` 未加入运行时权限白名单（如 `settings.local.json` 的 `permissions.allow`），子 Agent 的联网搜索会被**静默拦截**，导致其退化为仅凭训练知识（有知识截止日期）作答，却仍按框架输出一份"看起来完整、实则未联网"的伪研究——这是本 skill 最危险的失败模式（见 issue #58）。
 
 **预检步骤**：
 1. 用 Bash 检查白名单是否含 WebSearch：
@@ -52,7 +52,7 @@ review-cadence: per-release
    grep -l '"WebSearch"' .claude/settings.local.json ~/.claude/settings.local.json 2>/dev/null
    ```
 2. 若两处都未命中（即未放行）→ **停下来，不要启动 Agent**，提示用户：
-   > ⚠️ 检测到 WebSearch 未在权限白名单中。后台研究 Agent 无法联网，会退化成仅凭训练知识作答。请先在 `.claude/settings.local.json` 的 `permissions.allow` 加入 `"WebSearch"`（或运行 `/permissions` 勾选），再重跑本命令。
+   > ⚠️ 检测到 WebSearch 未在权限白名单中。后台研究 Agent 无法联网，会退化成仅凭训练知识作答。请先在运行时权限白名单配置（如 `settings.local.json` 的 `permissions.allow`）中加入 `"WebSearch"`（或运行 `/permissions` 勾选），再重跑本命令。
 3. 命中 → 正常继续。
 
 ### 第二步：创建团队
@@ -115,6 +115,8 @@ review-cadence: per-release
   7. 长期确定性：10年后公司会怎样？什么可能颠覆其商业模式？
   8. 要求搜索最新监管动态、管理层言论等
 
+🔴 STOP / 检查点：在启动 4 个后台 Agent 自主联网取数前，必须先向用户确认（给出明确选项：如"确认启动团队并行研究""仅先展示任务规划不启动"），获得明确同意后再继续；未经确认不得自主执行。
+
 ### 第四步：启动4个并行Agent
 
 使用 Task 工具同时启动4个Agent（**必须在同一条消息中并行调用**）：
@@ -163,6 +165,8 @@ review-cadence: per-release
 
 全部报告收到后，向4个Agent发送 shutdown_request（使用 SendMessage，type: "shutdown_request"）。
 
+🔴 STOP / 检查点：在输出"买入/观望/回避"等强投资建议与分层操作建议前，必须先向用户确认（给出明确选项：如"输出完整投资结论与价格区间""仅输出四视角中性分析不荐股"），获得明确同意后再继续；未经确认不得自主替用户决定投资方向。
+
 ### 第七步：汇总最终报告
 
 综合4份分析报告，输出以下结构的最终报告。以下四个命名视角、对照表、分歧仲裁和综合结论均为强制章节，任何一项缺失都不得视为完成：
@@ -209,6 +213,8 @@ review-cadence: per-release
 
 ---
 
+🔴 STOP / 检查点：在将完整最终报告写入用户文件系统或对外发布/外发前，必须先向用户确认（给出明确选项：如"确认写入~/{公司名}投资研究报告_YYYYMMDD.md""仅生成草稿供预览不落盘"），获得明确同意后再继续；未经确认不得自主落盘或外发。
+
 ### 第八步：保存报告
 
 将完整最终报告写入 `~/{公司名}投资研究报告_{日期}.md`（日期格式 YYYYMMDD）。
@@ -245,3 +251,38 @@ python3 tools/report_audit.py verdict \
 7. **反偏见意识**——team-lead在汇总时必须评估：各Agent的分析是否受限于资料充裕度？是否与市场共识过度趋同？最终报告需包含"信息丰富度评级"和"AI研究局限性声明"
 8. **信息稀缺时的诚实原则**——宁可在报告中留白标注"数据不足"，也不要用推测填满框架伪装确定性
 9. **四视角不可合并**——商业、财务、行业、风险是分析维度，不是最终角色名；最终报告必须分别出现段永平、巴菲特、芒格、李录四个命名章节，并完成对照与仲裁
+
+---
+
+## 反例与红线（不要做）
+
+- 不要绕过 WebSearch 权限预检直接启动后台 Agent：未放行的 Agent 会静默退化为仅凭训练知识作答，输出"伪研究"——这是本 skill 最危险的失败模式。
+- 不要合并四视角：最终报告必须分别出现段永平、巴菲特、芒格、李录四个命名章节，不得用"商业/财务/行业/风险"维度名替代角色名。
+- 不要用多数表决代替证据仲裁：四视角有分歧时，以证据质量仲裁，无法仲裁时明确保留分歧及其对结论的影响。
+- 不要用推测填满框架伪装确定性：C级信息稀缺公司应留白标注"数据不足"，不得编造数据。
+- 不要在用户未授权时外发或落盘：完整最终报告写入 `~/` 与发布必须经过 D4 检查点获得明确同意。
+
+---
+
+## 失败处理（如果 X 失败 → Y）
+
+- 如果 WebSearch 未加入运行时权限白名单（如 `settings.local.json` 的 `permissions.allow`）→ 执行 停下来不启动 Agent，提示用户先在白名单中加入 `"WebSearch"`（或运行 `/permissions`），再重跑；不静默降级。
+- 如果 某个后台 Agent 超时/拒答/无返回 → 执行 向用户展示已收到的报告并标注缺失维度，必要时主代理补做该维度研究，不假装"完整"。
+- 如果 Agent 报告"联网失败"（WebSearch 被拦截）→ 执行 要求该 Agent 在报告顶部标注「⚠️ 本报告未能联网，基于训练知识（截止日期 X），置信度降级」，由 team-lead 决定是否中止。
+- 如果 `tools/financial_rigor.py` 验算 ❌ 偏差过大 → 执行 排查单位/口径错误后重算；仍失败则标注"数据未核验"且不在结论中使用。
+- 如果 `tools/report_audit.py` 抽检【打回】/【证据不足】→ 执行 补齐第二来源或修正后重跑直到【准出】；不强行发布。
+- 如果 用户输入含糊/多义 → 执行 列出 2-3 个可能的公司/范围解读请用户澄清，不在未确认时自选展开。
+
+---
+
+## 依赖与资源清单
+
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+
+| 依赖项 | 路径 | 用途 | 可达性 |
+|--------|------|------|--------|
+| financial_rigor.py | `tools/financial_rigor.py` | 财务数据校验、三情景建模 | ✅ |
+| report_audit.py | `tools/report_audit.py` | 报告质量把关 | ✅ |
+| WebSearch 权限 | 运行时配置（settings.local.json） | Agent 自主搜索能力 | ⚠️ 需运行时白名单 |
+
+> **自检**：所有路径均为 `$BERKSHIRE_ROOT` 仓库内文件，已确认存在。新增依赖需同步更新本清单。
