@@ -1,369 +1,878 @@
 # 全量分析无人值守可靠性改造设计
 
 > 日期：2026-07-23
-> 状态：已确认，待实施
-> 优先策略：先稳定全量分析主链路，再优化 21 个独立 Skill
+> 状态：经 `grill-me` 逐项确认，待实施
+> 优先策略：先稳定单公司全量分析主链路，再进入 21 个独立 Skill 的 Darwin 优化
+> 适用范围：单一 A 股上市公司、单次运行、WorkBuddy 无人值守执行
 
-## 1. 背景与证据
+## 1. 决策摘要
 
-三次真实全量分析共记录 53 个症状项。表面问题包括 Tushare 不可达、
-`assigned_artifacts` 类型不一致、计算 JSON schema 漂移、`set-industry`
-缺 fact、`reference-freeze` 卡死、Agent 超时、429 限流、审计失败和最终产物
-难以浏览。Darwin 对 21 个 Skill 的基线评估又发现，仅 5/21 的实际效果优于
-无 Skill baseline，主要负迁移来自只读研究前的重复确认。
+本次改造不再建设平台中性的 Python Agent Orchestrator。生产架构固定为：
 
-当前仓库的 `bash scripts/check.sh` 已通过 434 项测试、21 个 frontmatter 检查、
-生成物同步、报告索引和 20 项契约校验，但真实运行仍需要大量人工修补。这说明
-现有测试证明了组件内部行为，尚未证明真实六层生命周期可完成。
+- `workbuddy-skills/full-company-analysis/SKILL.md` 是唯一生产编排器，直接调用
+  WorkBuddy 原生 Agent 工具；
+- `tools/full_analysis_runtime.py` 只负责队列、租约、预算、重试、恢复和事件记录；
+- `tools/full_analysis_gate.py` 只负责业务状态、事实/来源/计算/产物登记和准出；
+- `tools/full_analysis_contract.json` 是 20 项业务契约的唯一机器真源；
+- Agent 只写 attempt 隔离目录并提交版本化 Result Bundle；
+- 正式产物只有经过 Gate 校验后才能原子晋升；
+- Codex 和 Claude Code 继续支持 20 个业务 Skill、确定性工具和报告读取，但不承诺
+  无人值守全量编排；非 WorkBuddy 环境不得静默单上下文代跑并宣称完成。
 
-最关键的结构性证据是：真实运行依赖的
-`~/.workbuddy/berkshire-skill-sync/orchestrate.py` 有 1,866 行，位于仓库外，
-不受版本控制和项目测试约束。它同时维护层计划、角色、章节、证据桥接、
-Tushare enrich、barrier 和 manifest 修改逻辑，形成仓库内 gate/contract 之外的
-第二控制面。
+首版不保留旧编排器兼容层，也不支持 v1 manifest 迁移。旧的仓库外
+`~/.workbuddy/berkshire-skill-sync/orchestrate.py` 及其专用辅助文件在新实现通过
+本地测试后直接清理。用户已声明自行持有备份，本项目不再创建额外备份或运行时回退。
 
-## 2. 问题归并
+## 2. 背景与证据
 
-53 个症状归并为八类根因：
+三次真实全量分析共记录 53 个症状项。表面问题包括：
 
-1. **控制面分裂**：实际编排器在仓库外，版本和测试无法约束。
-2. **状态所有权不清**：编排器绕过 gate 直接修改 manifest。
-3. **契约多真源**：contract、编排器常量和 Agent prompt 分别维护章节、角色和产物。
-4. **证据生产滞后**：报告先完成，facts/artifacts/calculations 再靠启发式补登记。
-5. **数据生命周期错误**：`finish-skill` 后触发 enrich，但 gate 只允许
-   `ashare-data=RUNNING` 时执行命令，构成确定性死锁。
-6. **调度无韧性**：缺少并发控制、429 退避、租约、超时回收和自动降级。
-7. **执行模式冲突**：全量模式已获用户授权，子 Skill 仍对只读研究和本地落盘重复 STOP。
-8. **末端集中爆错**：缺陷直到 checkpoint/finalize 才累积为数百项错误，且缺少顶层交付入口。
+- Tushare 插件不可达或实际 Python 环境无法导入；
+- `auto-enrich` 在 `ashare-data` 已完成后无法运行，形成确定性时序死锁；
+- `set-industry` 收不到已登记的 fact ID；
+- `reference-freeze` 依赖字段类型漂移和手工补值；
+- `assigned_artifacts` 在字符串数组与对象数组之间漂移；
+- calculation JSON 与 `financial_rigor.py` schema 不一致；
+- 固定标题子串导致数百项 required-section 失败；
+- 多角色文件名、角色名和实际 Agent 上下文不一致；
+- Agent 超时、429 和迟到结果需要人工接管；
+- `report_audit.py` 被错误地用文件路径代替 CLI 子命令调用；
+- 最终输出散落，用户无法快速找到一份完整报告。
 
-## 3. 目标与成功标准
+Darwin 对 21 个 Skill 的评估显示，只有 5/21 相对无 Skill baseline 为正迁移，
+16/21 为负迁移。重复确认、格式性约束、运行时契约不一致和长模板是主要原因。
 
-### 3.1 目标
+仓库现有 `bash scripts/check.sh` 能通过单元测试、frontmatter、生成物同步和契约
+检查，但真实生产路径依赖仓库外、未受版本控制的 1,866 行
+`~/.workbuddy/berkshire-skill-sync/orchestrate.py`。这说明当前测试覆盖的是仓库内
+组件，而不是 WorkBuddy 实际运行控制面。
 
-将全量分析改造成仓库内可版本化、可测试、可恢复的产品级主链路。用户完成标的
-身份确认后，系统应自动执行数据采集、20 项业务契约、审计和最终汇总，无须手工
-编辑 manifest、补章节、登记 fact、重置 Agent 或替写报告。
+## 3. 根因
 
-### 3.2 最终成功标准
+53 个症状归并为八类结构性根因：
 
-复用三次实跑中的三个代表性标的，执行 3 家 × 3 轮连续验收，并满足：
+1. **控制面分裂**：生产编排逻辑位于仓库外，仓库测试无法约束。
+2. **状态所有权混乱**：Agent、外置编排器和 Gate 都能间接修改 manifest。
+3. **契约多真源**：标题、角色、fact、计算和产物分别存在于 contract、prompt、
+   外置常量和补丁脚本。
+4. **先写报告、后补证据**：facts、calculations、artifacts 靠事后启发式提取，
+   类型和来源不可控。
+5. **数据生命周期错误**：数据补强晚于 Skill 完成，运行窗口又绑定 Skill 状态。
+6. **调度无界**：缺少并发、租约、预算、429 冷却、迟到结果拒收和总时限。
+7. **执行模式冲突**：顶层已获得只读研究授权，子 Skill 仍反复等待确认。
+8. **末端才失败**：缺陷直到 checkpoint/finalize 才集中爆发，失败产物还可能被
+   包装成“完成”。
 
-- 每轮人工干预次数为 0；
-- 20/20 业务契约均进入非 `FAIL` 终态，无 `PENDING/RUNNING` 残留；
-- 0 个 schema、类型、`AttributeError` 或过时命令形态错误；
-- 所有报告自动包含数据截止日、来源层级、限制和免责声明；
-- 多角色记录均对应真实上下文与真实产物，不自动捏造 role receipt；
-- persistent 429、Agent 超时或数据源不可用时，在有界时间内得到诚实的
-  `PASS_WITH_LIMITATIONS` 或 `FAIL`，不得永久挂起；
-- 单轮硬上限 4 小时，9 轮中位数目标不超过 3 小时；
-- 仓库外不再保存业务控制逻辑，只允许薄启动入口；
-- hermetic 端到端测试进入 `scripts/check.sh`，真实联网 canary 独立执行。
+## 4. 目标、成功标准与非目标
 
-## 4. 范围
+### 4.1 产品目标
 
-### 4.1 本阶段包含
+用户在 WorkBuddy 中明确要求“全量分析”并提供可唯一识别的 A 股公司后，系统自动：
 
-- 编排控制面迁入仓库；
-- manifest 单写者原则；
-- contract 驱动的工作包、章节、角色和产物；
-- 标准 Result Bundle 与逐 Skill 原子验收；
-- 分层数据窗口与自动 fact 登记；
-- 429/超时/重试/降级调度；
-- `full_analysis_noninteractive` 执行档；
-- 自动审计、运行摘要、恢复入口和可观测指标；
-- hermetic E2E、故障注入和 3×3 live canary。
+1. 完成能力预检；
+2. 创建单次 run；
+3. 执行 20 项业务契约的适用性判定、研究和验收；
+4. 完成共享证据审计、计算复算和最终综合；
+5. 输出一个可读的最终报告和一个确定性的运行摘要；
+6. 在失败、限流、超时、预算或时间耗尽时诚实收口，不永久挂起。
 
-### 4.2 本阶段不包含
+### 4.2 机器成功标准
 
-- HTML 报告、暗色模式和图表；
-- 多股票横向分析；
-- 新数据供应商；
-- 自动发布、push、PR、发送或交易；
-- 全面重写或压缩 21 个 Skill；
-- 删除历史报告或立即删除旧外置编排器。
+一次运行只有同时满足以下条件才可进入 `APPROVED`：
 
-主链路稳定前，只允许修改直接阻断主链路的 Skill 行为。独立 Skill 的 Darwin
-优化作为后续阶段，避免同时改变编排、契约和全部方法论而失去归因能力。
+- 运行对象是唯一的 `.SH`、`.SZ` 或 `.BJ` A 股上市公司；
+- 预检证明 WorkBuddy Agent、后台只读 Web、attempt 目录写入、数据 CLI、
+  `financial_rigor.py` 和 `report_audit.py` 可用；
+- 关键实现和契约哈希在运行期间未漂移；
+- 所有适用业务契约为 `PASS` 或白名单内的 `PASS_WITH_LIMITATIONS`；
+- 所有 N/A 都由 Gate 根据契约谓词生成；
+- 所有强制独立多角色任务都有真实、独立的 Agent job 和产物；
+- 核心事实、来源和计算可追溯，全部关键计算可复算；
+- Shared Evidence Audit 通过；
+- `FINAL_REPORT.md` 通过引用、数字、免责声明和结构审计；
+- Agent job 不超过 50，wall clock 不超过 4 小时；
+- 没有未登记写入、人工修补、迟到结果覆盖或失败产物冒充正式产物；
+- `SUMMARY.md` 和 `status.json` 已确定性生成。
 
-## 5. 项目治理定位
+### 4.3 Live 验收标准
 
-本仓库按 `product` profile 处理：已有版本、公开仓库、稳定 CLI/Skill 行为和持续
-维护需求。沿用现有 `ci` 与 `security` 能力；本次启用 `adr` 记录控制面迁移和
-manifest 单写者决策。不新增 hook、发布流程、依赖或新顶层源码骨架。
+首个上线验收只执行一次格力电器 `000651.SZ` 的全新单公司运行，不做 3×3：
 
-## 6. 目标架构
+- `run_status=APPROVED`；
+- `human_review=ACCEPTED`；
+- 无运行中人工修补；
+- 4 小时内结束；
+- Agent job 不超过 50；
+- 所有机器成功标准满足。
 
-```text
-用户全量分析请求
-        |
-        v
-仓库内 Orchestrator -------- Contract Registry（唯一契约真源）
-        |                                |
-        +--> 数据窗口                    +--> 工作包/章节骨架/角色/产物
-        |
-        +--> 有界任务队列 --> 平台 Agent Adapter --> Result Bundle
-                                                    |
-                                                    v
-                                     Gate（manifest 唯一写入者）
-                                                    |
-                                                    v
-                                  SUMMARY.md + 状态矩阵 + 全部报告索引
+恒瑞医药和韦尔股份的既有报告只作为事故基线；后续可作为回归样本，但不属于首个
+上线门槛。若格力电器失败，必须将新故障固化为 hermetic 回归、修复后启动全新 run；
+不得在原 run 上补写后改判。
+
+### 4.4 非目标
+
+首版明确不做：
+
+- 港股、美股、多市场、未上市公司或多公司全量分析；
+- 私人组合读取、私有交易台账、自动调仓或交易；
+- HTML、图表、暗色模式或发布系统；
+- push、PR、publish、外部消息或表单提交；
+- 跨 run Agent 产物、事实、计算或审计缓存；
+- v1 manifest 原地迁移；
+- Codex/Claude 与 WorkBuddy 的无人值守能力对齐；
+- 自动删除历史 run 或 attempt；
+- 在主链路验收前继续做独立 Skill 的大范围 Darwin 改写。
+
+## 5. 治理定位
+
+本仓库按 `product` profile 处理：
+
+- 沿用现有本地检查和安全边界；
+- 不新增第三方依赖、hook、release、ADR 或独立 USAGE 文档；
+- 当前设计文档是架构决策真源；
+- 当前实施计划是执行顺序和验收真源；
+- 实施完成后只更新现有 `README.md` 与 `docs/ROADMAP.md`；
+- `skills/*.md` 仍是 Claude/Codex 业务 Skill 的 canonical source，修改后必须运行
+  `python3 scripts/sync-codex-skills.py`；
+- WorkBuddy 总控 Skill 的 canonical source 单独位于仓库
+  `workbuddy-skills/full-company-analysis/SKILL.md`；
+- `~/.workbuddy/skills/` 只保存显式安装的副本，不是源码真源。
+
+## 6. 领域词汇与不变量
+
+### 6.1 三类状态
+
+状态必须分层，禁止混用。
+
+**Runtime work unit 状态：**
+
+`PENDING / RUNNING / RETRY_WAIT / READY_TO_INGEST / DONE / FAILED / ABANDONED`
+
+**Manifest 业务执行状态：**
+
+`PENDING / RUNNING / COMPLETE / BLOCKED`
+
+**业务契约验收状态：**
+
+`PASS / PASS_WITH_LIMITATIONS / NOT_APPLICABLE / FAIL`
+
+**顶层运行状态：**
+
+`RUNNING / APPROVED / PARTIAL / FAILED`
+
+`COMPLETE` 只表示合法 Result Bundle 已被原子收取，不等于业务通过。最终业务状态只能
+由 Gate 计算。
+
+### 6.2 核心不变量
+
+1. WorkBuddy Skill 是唯一 Agent 编排器；Python 不生成或模拟 Agent。
+2. Runtime 是运行状态单写者；Gate 是 manifest、正式注册表和准出状态单写者。
+3. Agent 只能写自己 attempt 的 staging 目录。
+4. 正式目录只接受 Gate 原子晋升。
+5. Agent 不能创建、改名或合并 Runtime 分配的 fact ID。
+6. Main Orchestrator Agent 不能代写失败研究、补标题或伪造角色。
+7. 多角色 Skill 缺任一强制角色即失败，不允许单上下文 fallback 获得 PWL。
+8. 失败 run 不得生成 `FINAL_REPORT.md`。
+9. 所有业务事实、计算和产物必须由稳定 ID 连接。
+10. 所有时间、预算、重试和降级都必须写入事件日志和 SUMMARY。
+
+## 7. 目标架构
+
+```mermaid
+flowchart TD
+    U["用户：全量分析单一 A 股公司"] --> W["WorkBuddy full-company-analysis Skill"]
+    W --> P["能力预检"]
+    P -->|失败| F["FAILED：不创建 manifest"]
+    P -->|通过| R["Runtime：队列、租约、预算、恢复"]
+    R --> C["Contract v2：20 项契约与依赖图"]
+    R --> A["WorkBuddy Agent 工具"]
+    A --> T["attempt 隔离目录 + Result Bundle"]
+    T --> G["Gate：schema、事实、来源、计算、产物"]
+    G -->|拒收| R
+    G -->|接受并晋升| B["正式业务报告与冻结证据"]
+    B --> Q["Shared Evidence Audit Agent"]
+    Q --> S["Final Synthesis Agent"]
+    S --> V["确定性最终审计"]
+    V -->|通过| O["FINAL_REPORT.md + SUMMARY.md + APPROVED"]
+    V -->|失败| X["PARTIAL_REPORT.md + SUMMARY.md + PARTIAL"]
 ```
 
-### 6.1 组件职责
+### 7.1 WorkBuddy 总控 Skill
 
-#### 仓库内 Orchestrator
+`workbuddy-skills/full-company-analysis/SKILL.md`：
 
-- 读取 contract，生成层计划和 work unit；
-- 管理任务队列、租约、重试和 resume；
-- 生成 Agent 工作包并接收 Result Bundle；
-- 只能通过 gate CLI 改变业务 manifest；
-- 可维护独立的调度状态文件，但该文件不能决定业务准出状态。
+- 识别单公司请求并调用本地预检；
+- 从 Runtime 领取最小 Work Packet；
+- 直接调用 WorkBuddy Agent 工具；
+- 只从子 Agent 接收短回执：
+  `attempt_id / result_path / status / bytes`；
+- 不读取角色全文，不在主上下文中拼接报告；
+- 不为不同 Skill 硬编码模型，使用 WorkBuddy 当前默认配置；若 Agent 回执提供实际
+  model ID，则写入运行记录；
+- 将回执交给 Runtime/Gate 验证；
+- 按 Runtime 给出的下一工作单元继续；
+- 在终态只返回 `FINAL_REPORT.md` 或 `PARTIAL_REPORT.md`，随后返回 `SUMMARY.md`。
 
-#### Contract Registry
+WorkBuddy 主上下文不能修改 manifest、facts、sources、calculations 或正式报告。
 
-- 是业务项、阶段、角色、section、artifact、数据依赖和审计策略的唯一机器真源；
-- 通过 `schema_version` 迁移；
-- 编排器不得再硬编码 `LAYER_PLAN`、`MULTI_ROLE` 或
-  `SKILL_REQUIRED_SECTIONS` 的业务副本。
+### 7.2 Runtime
 
-#### Gate
+`tools/full_analysis_runtime.py`：
 
-- 是 manifest 唯一写入者；
-- 负责状态转换、证据封闭 schema、计算重放、引用冻结和最终准出；
-- `finish-skill` 必须先做当前 Skill 的局部验收，失败时保持可重试状态，不能先标
-  `COMPLETE` 再把数百个问题留给 finalize；
-- 任何调用者都不能提交最终状态、保障等级或伪造 command/role receipt。
+- 创建并读取 run-root；
+- 从 Contract 生成依赖图和 Work Packet；
+- 管理 work unit、attempt、lease、heartbeat、retry 和 budget；
+- 维护 `runtime-state.json` 快照和追加式事件日志；
+- 进行文件锁和 session 接管校验；
+- 拒收迟到 attempt、错误 job ID、错误 lease nonce 和版本漂移；
+- 调用 Gate 接收 Result Bundle；
+- 不判断业务 PASS/PWL/N/A/FAIL；
+- 不生成研究结论。
 
-#### Platform Agent Adapter
+### 7.3 Gate
 
-- Codex、Claude Code、WorkBuddy 只实现启动 Agent、回传真实执行标识和结果；
-- 不复制业务契约或写 manifest；
-- 平台不支持独立 Agent 时诚实降级，不以平台名假设独立性。
+`tools/full_analysis_gate.py`：
 
-## 7. Contract v2
+- 原位升级为 Contract/manifest v2，不保留 v1 写兼容；
+- 维护 manifest、facts、sources、calculations 和 artifacts 注册表；
+- 检查 Result Bundle schema、路径、哈希、来源、fact ID、计算请求和章节 ID；
+- 执行 `financial_rigor.py` 并保存 calculation envelope；
+- 校验报告引用的格式化数字与 envelope 一致；
+- 对合法产物执行 staging → formal 的原子晋升；
+- 计算单项契约和顶层运行状态；
+- 调用稳定的 `report_audit` 函数接口；
+- 确定性生成 `SUMMARY.md`、`PARTIAL_REPORT.md` 和 `status.json`；
+- 只在最终综合通过时晋升 `FINAL_REPORT.md`。
 
-### 7.1 稳定章节标识
+### 7.4 Contract v2
 
-`required_sections` 从裸标题字符串升级为结构化规则：
+`tools/full_analysis_contract.json` 是以下内容的唯一机器真源：
+
+- 20 项业务 Skill 清单；
+- 依赖关系和适用性谓词；
+- 稳定 fact slot 和 source requirement；
+- 稳定 artifact ID 与正式路径；
+- 机器关键 section ID；
+- 多角色清单和 integrator/editor/reader 规则；
+- calculation request；
+- PWL 白名单；
+- audit policy；
+- 核心/研究增强/派生分类。
+
+Runtime、Gate、WorkBuddy Skill 和测试不得复制另一份 20 项清单、角色表或标题表。
+
+### 7.5 业务 Skill
+
+20 个 canonical `skills/*.md` 只增加统一的最小适配规则：
+
+- 当 `execution_mode=UNATTENDED_FULL_ANALYSIS` 时，顶层已经授权公开只读研究、
+  Agent 启动和已分配 run-root 写入；
+- 不再重复等待确认；
+- 必须遵守 Work Packet、稳定 ID 和 Result Bundle；
+- 不得扩大到发布、交易、敏感信息或未分配路径；
+- 单独调用 Skill 时保留原交互和输出行为。
+
+`skills/full-company-analysis.md` 保留为 Claude/Codex 兼容说明，但必须明确：
+非 WorkBuddy 环境不支持无人值守总控，不能静默以单上下文完成。
+
+## 8. 20 项业务契约
+
+### 8.1 固定清单
+
+| 分组 | Skill |
+|---|---|
+| 数据与基础 | `ashare-data`、`financial-data`、`quality-screen`、`investment-checklist` |
+| 核心研究 | `investment-research`、`investment-team`、`management-deep-dive`、`earnings-review`、`earnings-team`、`industry-research`、`news-pulse`、`thesis-tracker` |
+| 研究增强与派生 | `industry-funnel`、`bottleneck-hunter`、`deep-company-series`、`dyp-ask`、`wechat-article` |
+| 条件 N/A | `portfolio-review`、`private-company-research`、`thesis-drift` |
+
+`full-company-analysis` 是总控，不计入 20 项。Shared Evidence Audit 和 Final
+Synthesis 是系统工作单元，不计入业务 Skill 数，但计入 Agent job 预算。
+
+### 8.2 适用性
+
+- `industry-funnel` 正常执行；“从全市场筛到 3 家”只提供相对位置参考，不扩展为
+  另外两家公司的全量分析。
+- `bottleneck-hunter` 仅在 `industry-research` 识别出明确且可验证的物理、
+  技术、牌照或产能瓶颈时执行，否则由 Gate 生成标准 N/A。
+- `portfolio-review` 在未提供私人组合时 N/A。
+- `private-company-research` 对本版 A 股上市公司固定 N/A。
+- `thesis-drift` 在不存在前序可配对 thesis snapshot 时 N/A。
+- 不适用项不派发 Agent，不消耗 job。
+
+### 8.3 强制多角色
+
+- `investment-team`：4 个独立视角 Agent + 1 个 integrator；
+- `earnings-team`：4 个独立视角 Agent + 1 个 editor + 1 个 reader；
+- `news-pulse`：4 个独立 scout + 1 个 integrator；
+- `management-deep-dive`：1 个研究 Agent，另由 Shared Evidence Audit 独立核验；
+- `deep-company-series`、`dyp-ask`、`wechat-article`：各 1 个派生内容 Agent。
+
+独立角色只读取各自的最小输入，不能读取其他角色产物。Integrator 只能读取其所属
+角色的已接受结果和冻结 facts。角色草稿留在 `evidence/attempts/`，正式目录每个 Skill
+只保留 Gate 接受的最终报告。
+
+`earnings-team` reader 的意见写入 `evidence/audit/`；若拒绝，最多派发一次新的 editor
+attempt。主 Agent 不得代改。
+
+### 8.4 数据流方向
+
+- `industry-funnel` 和条件适用的 `bottleneck-hunter` 可为最终综合提供研究增强，
+  但不能替代缺失的核心事实或改变唯一标的；
+- `deep-company-series`、`dyp-ask` 和 `wechat-article` 只消费冻结证据，不能反向
+  写入核心 fact、valuation input 或投资结论。
+
+## 9. Contract v2 与 Result Bundle
+
+### 9.1 稳定 section ID
+
+不再要求每个方法论标题精确匹配。只有机器关键内容使用稳定 section ID：
+
+- 数据截止日；
+- 来源与研究范围；
+- 限制；
+- 学习研究免责声明；
+- 核心结论；
+- 被下游消费的证据；
+- 契约明确要求的计算或审计段。
+
+展示标题可调整，但稳定 ID 不变。其余方法论深度通过 checklist、fact、source、
+calculation、judgment 和最低证据规则验收，不用标题字符串替代内容质量。
+
+### 9.2 Fact ID
+
+- Contract 预声明强制 fact slot；
+- Runtime 在 Work Packet 中分配稳定 fact ID；
+- Agent 只能填写 value、unit、period、scope、source IDs 和 confidence；
+- Agent 不能改名、合并或重用 ID；
+- 可选发现使用命名空间 `skill.extra.*`；
+- Gate 在 Agent 启动前检查其输入 fact 是否已存在，禁止空 ID 进入下游。
+
+### 9.3 Result Bundle v1
+
+必填字段：
 
 ```json
 {
-  "section_id": "data_cutoff",
-  "heading": "数据截止日",
-  "required": true,
-  "min_content_chars": 10,
-  "applies_when": "always"
+  "schema_version": "result-schema/v1",
+  "run_id": "run-id",
+  "work_unit_id": "unit-id",
+  "attempt_id": "attempt-id",
+  "agent_job_id": "workbuddy-job-id",
+  "lease_nonce": "opaque-nonce",
+  "skill_id": "investment-research",
+  "role_id": "primary",
+  "status": "SUCCEEDED",
+  "artifact_records": [],
+  "fact_updates": [],
+  "source_records": [],
+  "calculation_requests": [],
+  "judgments": [],
+  "limitations": [],
+  "pwl_candidates": [],
+  "started_at": "ISO-8601",
+  "completed_at": "ISO-8601",
+  "error": null
 }
 ```
 
-Orchestrator 从规则生成带稳定 marker 的 Markdown 骨架；Agent 可自由写正文，但不能
-删除 section ID。过渡期允许旧标题 alias，完成 3×3 canary 后移除兼容分支。
+规则：
 
-### 7.2 工作包
+- 未知字段可记录，但不参与验收；
+- 缺必填字段直接拒收；
+- schema 版本不一致不得猜测或原地迁移；
+- artifact 记录必须包含稳定 artifact ID、attempt 相对路径、类型、字节数和 SHA-256；
+- Agent 只提交 calculation request，不提交 `expected.result`；
+- 失败时 `error` 必填；
+- attempt ID、job ID 和 lease nonce 必须与当前租约一致。
 
-每个 work unit 至少包含：
+## 10. 运行目录与文件所有权
 
-- `run_id`、`skill`、`attempt_id` 和截止日期；
-- 精确输入 artifact/fact/data bundle；
-- 唯一合法输出路径；
-- contract 生成的章节骨架；
-- 角色与执行模式；
-- Result Bundle schema 版本；
-- `full_analysis_noninteractive` 权限边界；
-- 超时、重试和降级策略。
+run-root 固定为：
 
-### 7.3 Result Bundle
+`local/company/<股票代码>-<公司简称>/<YYYYMMDD-HHMMSS>-<短随机ID>/`
 
-每个 Skill 提交一个封闭结果包：
+例如：
 
-- `artifacts`：稳定 artifact ID 与路径；
-- `facts`：字段、口径、期间、单位、来源和访问时间；
-- `calculations`：实际运行 `financial_rigor.py --json` 的原始 envelope；
-- `judgments`：规则、结论、置信度、证伪条件和引用；
-- `role_runs`：平台返回的真实上下文标识、时间和真实角色产物；
-- `limitations`：结构化限制；
-- `audit`：需要人工/Agent 抽检时的原始核验输入。
+`local/company/000651.SZ-格力电器/20260723-103000-a1b2c3/`
 
-Orchestrator 不得根据“预期角色数”自动生成 role receipt，不得把不存在的文件路径
-登记为真实产物，也不得把报告文本中的任意数字启发式升级为已核事实。
+Runtime 命令必须使用明确 run ID；不得仅凭公司名自动选取“最新”运行。
 
-## 8. 数据生命周期
+```text
+<run-root>/
+├── evidence/
+│   ├── 00-analysis-manifest.json
+│   ├── runtime-state.json
+│   ├── events.jsonl
+│   ├── facts.json
+│   ├── sources.json
+│   ├── calculations.json
+│   ├── artifacts.json
+│   ├── snapshots/
+│   ├── preflight/
+│   ├── commands/
+│   ├── sources/
+│   ├── work-packets/
+│   ├── attempts/
+│   │   └── <skill>/<attempt-id>/
+│   │       ├── prompt.md
+│   │       ├── result.json
+│   │       ├── events.jsonl
+│   │       └── artifacts/
+│   └── audit/
+├── 01-数据与快筛/
+├── 02-公司与财报/
+├── 03-行业与机会/
+├── 04-论文与组合/
+├── 05-内容生产/
+├── FINAL_REPORT.md 或 PARTIAL_REPORT.md
+├── SUMMARY.md
+└── status.json
+```
 
-### 8.1 分层数据窗口
+正式目录映射：
 
-替代“Skill 完成后补跑 enrich”的时序：
+| 目录 | Skill |
+|---|---|
+| `01-数据与快筛/` | ashare-data、financial-data、quality-screen、investment-checklist |
+| `02-公司与财报/` | investment-research、investment-team、management-deep-dive、earnings-review、earnings-team |
+| `03-行业与机会/` | industry-research、industry-funnel、bottleneck-hunter、news-pulse |
+| `04-论文与组合/` | thesis-tracker、thesis-drift、portfolio-review、private-company-research |
+| `05-内容生产/` | deep-company-series、dyp-ask、wechat-article |
 
-1. **基础数据窗口**：Layer 1 前执行行情、财务、估值、历史、股本和公告依赖；
-2. **行业增强窗口**：Layer 2 fact 闭环、`set-industry` 后执行行业相关数据依赖；
-3. **引用冻结**：Layer 1-4 局部验收通过后冻结数据与引用，Layer 5 只消费冻结输入。
+每个正式文件名以稳定 Skill ID 开头。所有角色草稿、失败产物、prompt、日志和命令回执
+只存在于 `evidence/`。N/A 在对应正式目录生成标准负向验收回执。
 
-`run-ashare-command` 的许可条件由数据窗口状态决定，不再绑定
-`ashare-data=RUNNING`。引用冻结后禁止继续改变已消费的事实。
+系统不自动删除 attempt 或历史 run。`cleanup <run-id> --dry-run` 只列出候选；
+实际清理必须由用户明确指定 run ID 和执行参数。SUMMARY 必须报告中间产物总大小。
 
-### 8.2 事实登记
+默认不保存完整 Agent transcript、隐藏推理或完整工具日志。每个 attempt 只保留
+Work Packet/prompt、job/context ID、时间和 heartbeat、结构化错误、最终角色产物、
+Result Bundle 与哈希。`debug_transcript=true` 只能对单个 run 显式启用，内容仍为
+local-only，且不得改变验收结论。
 
-- 结构化数据命令直接生成 command receipt 和事实候选；
-- collect 阶段按封闭 schema 登记 facts，不从自由文本猜测字段；
-- `set-industry` 只消费已经登记且来源可追溯的分部事实；
-- 数据缺失在消费者启动前暴露，不等 barrier 才发现空 fact ID。
+## 11. 单写者、并发与恢复
 
-### 8.3 Tushare 与降级
+### 11.1 单写者
 
-- 环境自检执行实际 CLI smoke test，只记录配置状态，不读取或输出 token；
-- 配置但不可达与未配置是不同状态；
-- Tushare 失败后按腾讯/东财/巨潮等既有来源降级；
-- 只有满足契约最小证据时才允许 PWL，否则 FAIL；
-- 数据源优先级由报告壳统一生成，不要求每个 Agent 自行记忆。
+- 子 Agent 只能写自己 attempt 目录；
+- Runtime 串行收取结果并追加事件；
+- Gate 串行更新正式注册表和业务状态；
+- 同一 run 只能由一个 WorkBuddy 主会话持有驱动锁；
+- 第二个会话只允许读取状态。
 
-## 9. 调度与恢复
+首版不引入数据库。状态使用原子 JSON 快照、追加式 JSONL 和本地文件锁。
 
-### 9.1 状态
+### 11.2 Attempt 和迟到结果
 
-调度状态与业务状态分离。调度 work unit 使用：
+- Agent 写 attempt 隔离目录；
+- Gate 验证后才原子晋升；
+- 旧 attempt 失去租约后标记 `ABANDONED`；
+- 迟到结果即使内容完整，只要 attempt ID 或 lease nonce 不匹配就拒收；
+- 正式路径不允许 Agent 直接写入；
+- WorkBuddy 文件系统无法提供密码学写入身份，本系统只承诺可审计检测，不声称强证明。
 
-`PENDING → DISPATCHED → RUNNING → READY_TO_INGEST → DONE`
+### 11.3 Resume
 
-异常分支为 `RETRY_WAIT` 和 `FAILED`。业务 manifest 仍使用 gate 现有状态，只有合法
-Result Bundle 被 gate 接受后才可进入 `COMPLETE`。
+WorkBuddy 重启后，用户可以明确说“恢复 `<run-id>`”。这属于运行控制，不算人工修补。
+恢复必须满足：
 
-### 9.2 并发、429 与超时
+- 原驱动锁已失效；
+- WorkBuddy Skill、Runtime、Gate、Contract、Result schema、
+  `financial_rigor.py`、`report_audit.py`、数据 CLI 哈希完全一致；
+- 已完成且验证通过的 Result Bundle 可复用；
+- 原 RUNNING attempt 变为 `ABANDONED`；
+- 未完成 work unit 使用新 attempt 重派；
+- 暂停不超过 24 小时。
 
-- Web-heavy 默认并发 2，本地计算任务可更高；
-- 尊重 `Retry-After`，指数退避并加入抖动；
-- 单 work unit 最多 3 次尝试；
-- 每个运行中的 unit 有 lease 和最后心跳；
-- lease 到期自动回收并重试，不要求人工把 RUNNING 改回 PENDING；
-- persistent 429 或平台不可用时执行 contract 声明的降级策略并在有界时间内收口。
+暂停超过 24 小时或任一关键版本不同，只允许只读状态诊断，必须创建新 run。
 
-### 9.3 多角色真实性
+## 12. 调度、预算与时限
 
-- 角色名来自 contract；
-- 每个角色对应平台返回的真实 context ID 和独立产物；
-- 缺角色、角色文件不存在或上下文重复时不得生成独立性 credit；
-- 平台无法完成 fan-out 时可顺序降级，但必须标记 `SINGLE_CONTEXT`，并按 contract
-  封顶 PWL 或 FAIL。
+### 12.1 基本参数
 
-## 10. 执行模式
+- 固定最大并发：2 个 Agent；
+- 遇到 429 后并发降为 1；
+- 429 冷却：10 分钟；
+- 每个 work unit 最多 3 个 attempt；
+- 失败退避：60 秒、180 秒，持续限流进入 600 秒全局冷却；
+- lease：20 分钟；
+- 主会话通过 Agent job 状态更新 heartbeat 并延长 lease；
+- 正常目标：约 40 个 Agent job；
+- 硬上限：50 个 Agent job；
+- 单公司目标：3 小时内；
+- 单公司硬上限：4 小时。
 
-新增 `full_analysis_noninteractive` 执行档。顶层用户已明确要求完整研究后，以下动作
-不再由子 Skill 重复确认：
+每一次真实子 Agent 调用都计 1 job，包括角色、integrator、editor、reader、Audit、
+Final Synthesis、定向修复和所有重试。Agent 启动即消耗额度，失败不退还。
+Runtime/Gate/CLI/计算、N/A 和只读 status 不计入。
 
-- 公开网页和公开数据的只读检索；
-- 仓库内确定性计算；
-- 启动研究 Agent；
-- 向本次 run-root 的已分配路径写研究产物。
+能力预检使用的 Agent probe 在成功创建 run 时记为已用 1 job；预检失败则不创建
+manifest。
 
-以下行为继续 HARD STOP：
+### 12.2 预算预留
 
-- 标的身份存在无法排除的多个候选；
-- 读取私人组合、原始交易台账或敏感信息；
-- 外部发送、发布、push、PR 或表单提交；
-- 交易操作；
-- 覆盖、删除或迁移既有用户数据。
+Runtime 始终计算剩余核心工作的最小 job 数，并预留：
 
-该执行档只覆盖全量编排。独立 Skill 的广泛 STOP 精简在 3×3 验收之后根据 Darwin
-结果单独实施。
+- 1 个 Shared Evidence Audit；
+- 1 个 Final Synthesis；
+- 1 个 Final Synthesis 定向修复。
 
-## 11. 逐 Skill 早验收
+非核心任务只有在不会侵占核心最低需求和预留额度时才能派发。
 
-每个 Skill 的收口顺序固定：
+- 达到 45 个 job：停止所有新的非核心派发和重试，只完成核心研究、审计、综合及其
+  契约内修复；
+- 达到 50 个 job：无条件停止新派发，生成 `PARTIAL_REPORT.md + SUMMARY.md`，
+  本次验收失败；
+- 达到 4 小时：行为与 50 job 相同。
 
-1. 检查 Result Bundle schema；
-2. 检查 artifact 存在、路径、section marker 和最低内容；
-3. 登记 facts、calculations、judgments、roles 和 limitations；
-4. gate 重放计算与局部证据规则；
-5. 全部通过后原子进入 `COMPLETE`；
-6. 失败则返回结构化诊断，调度器决定修复 prompt、重试或失败收口。
+预算耗尽不属于允许的 PWL。任何适用非核心契约因此未完成，顶层只能 `PARTIAL`。
 
-不得再通过自动 append/移动/删除中间目录来“自愈”产物。未知目录只报告，不修改；
-Agent 必须按工作包的精确路径重新提交。
+### 12.3 调度模型
 
-## 12. 审计与交付
+不再使用固定 L1–L6 整层等待。Runtime 使用依赖图，并保留三个硬屏障：
 
-- Layer 6 由 Orchestrator 调用 gate/report audit API，不让 Agent拼 CLI；
-- 每份报告的页眉页脚由确定性报告壳生成，包括截止日期、来源优先级、限制和免责声明；
-- finalize 总是写出 `SUMMARY.md` 与机器可读 `status.json`；
-- SUMMARY 包含 20 项矩阵、PASS/PWL/N/A/FAIL 计数、限制、数据带宽、角色保障、
-  运行耗时、重试次数和全部正式产物链接；
-- `status --company/--run-id` 与 `resume` 不依赖原临时 session；
-- finalize 失败也写诊断摘要，但必须醒目标记“未准出”。
+1. 公司身份与数据能力预检；
+2. 核心事实、来源与计算冻结；
+3. 独立证据审计与最终准出。
 
-## 13. 测试策略
+依赖满足的 Skill 可立即入队；一个非关键任务不会卡住同层全部工作。
 
-### 13.1 单元测试
+## 13. 数据、来源与计算
 
-- Contract v2、section marker、Result Bundle 和状态转换；
-- 数据窗口与引用冻结；
-- 429 退避、lease 回收和最大重试；
-- 角色真实性和降级上限；
-- summary 计数与路径。
+### 13.1 Tushare
 
-### 13.2 Hermetic 端到端测试
+Tushare 是增强来源，不是硬依赖：
 
-使用 fake Agent executor 和 fake data CLI 跑完整六层，不联网，至少注入：
+- 预检执行实际数据命令，不通过 `import ashare_plugin` 判断；
+- 可用则使用；
+- 已配置但不可用时记录 `tushare_unavailable`；
+- 腾讯、东方财富和巨潮等既有来源满足独立性和契约要求时可 PWL；
+- 无替代证据或核心事实只有单源时 FAIL。
 
-- Tushare 未配置、已配置但失败；
-- post-finish enrich 时序回归；
-- 空 fact、悬空 fact 和错误 `--fact-ids`；
-- `assigned_artifacts` 旧/新形态；
-- 非法 calculations envelope；
-- 缺 section marker；
-- 429 后恢复、persistent 429；
-- Agent 超时和 stale lease；
-- 审计不足和审计 FAIL；
-- 多角色缺失、重复上下文和真实独立上下文。
+### 13.2 新鲜度
 
-Hermetic E2E 纳入 `scripts/check.sh`。真实联网 canary 不纳入普通 CI，避免上游波动
-制造假失败。
+- 行情、股价、市值：`as_of` 最近一个已收盘交易日；
+- 财务数据：截至 `as_of` 已正式披露的最新定期报告；
+- 公告与监管事件：截至 `as_of`，重点覆盖近 12 个月及更早的持续重大事项；
+- 新闻与市场事件：重点覆盖近 90 天，必要时回溯 12 个月；
+- 财务历史：至少 5 年，年报与资本配置尽量覆盖 10 年；
+- 无法证明取得截至当时最新可得数据时标记 `stale_data`，该状态不得 PWL。
 
-### 13.3 Live canary
+`as_of` 在 init 时冻结。跨午夜不自动刷新。Agent 的 `accessed_at` 单独记录。
 
-用三个代表性标的各跑三轮。每轮自动记录：
+### 13.3 独立来源
 
-- 人工干预计数；
-- 20 项终态；
-- wall clock 与 Agent 调用数；
-- 429、重试、超时和降级次数；
-- 数据源能力与限制；
-- audit/finalize 结果；
-- SUMMARY 路径。
+- 同一原始数据的转载、镜像和聚合不算独立；
+- 公司公告与交易所转载的同一公告只算一个主来源；
+- 核心财务数字使用公司/交易所正式披露为主源，再由独立数据服务或计算链交叉验证；
+- 行情和估值使用两个独立获取渠道，或一个行情主源加独立股本/价格复算；
+- 来源冲突保留差异并由 Gate 按口径和容差裁决，不取平均掩盖；
+- primary PDF、公告和年报保存到 `evidence/sources/` 并计算 SHA-256；
+- Web/news 只保存 URL、标题、发布者、访问时间、短相关摘录和哈希，不保存整页；
+- 市场/API 保存 Gate 拥有的 receipt 或结构化原始输出；
+- 无法保存的 source 标记 `ephemeral_source`，不能作为核心结论唯一依据。
 
-只有连续 9 轮全部满足第 3.2 节成功标准，才宣布主链路稳定。
+### 13.4 计算
 
-## 14. 迁移策略
+- Contract 预声明关键 calculation request；
+- Gate 在研究前预计算必要结果；
+- Agent 只能引用 calculation ID 或提交新 request 的 operation + args；
+- Gate 执行 `financial_rigor.py`，保存唯一 envelope；
+- 报告只能使用 Gate 格式化后的结果；
+- 每个 calculation 契约声明币种、单位、期间、口径、输入精度、展示舍入和容差；
+- 未声明容差时严格一致；
+- 计算错误只允许一次本地定向修复报告 attempt，不重跑完整研究；
+- 报告数字与 envelope 不一致时拒收。
 
-1. **Shadow**：先把外置编排器行为固化为测试，再在仓库内实现等价入口；
-2. **Dual-run**：同一 fixture 同时跑旧/新控制面，比对计划、work unit 和 gate 结果；
-3. **Repository-first**：WorkBuddy/Codex/Claude 入口改为调用仓库内实现，外置脚本降为薄 wrapper；
-4. **Canary**：完成 3×3 live canary；
-5. **Retire**：另行确认后才删除旧外置实现和过渡 alias。
+估值必须包含保守、基准、乐观三情景，分别记录收入/业务量、利润率/现金流、
+资本成本或倍数、期限/终值、估值区间、安全边际、敏感变量和失效条件。不能只给单点
+目标价；无法形成可审计区间时不得 `APPROVED`。
 
-迁移期间不得重写历史 `local/` 报告，不得删除现有备份或未跟踪文件。
+## 14. PWL、N/A 与失败
 
-## 15. 风险与缓解
+### 14.1 PWL 白名单
+
+仅允许：
+
+- `tushare_unavailable`：独立替代来源充分；
+- `web_bandwidth_degraded`：关键事实已有 primary source；
+- `ephemeral_source`：不是核心事实唯一依据。
+
+禁止 PWL：
+
+- `single_context_fallback`；
+- `missing_required_source`；
+- `audit_insufficient`；
+- `calculation_unverified`；
+- `stale_data`；
+- `partial_artifact`；
+- `role_missing`；
+- `manual_intervention`；
+- `budget_exhausted`。
+
+### 14.2 人工干预
+
+公司身份和启动请求发生在 init 前，不算干预。`status` 和符合规则的 `resume` 只属于
+运行控制。init 至终态期间，以下行为记为 `manual_intervention`：
+
+- 用户或主 Agent 修改 fact、section、artifact、状态或计算；
+- 手工重置失败 attempt；
+- 主 Agent 替代失败研究 Agent 写报告；
+- 手工登记产物或跳过 Gate；
+- 未登记写入正式目录。
+
+系统通过 job/context ID、attempt ID、lease nonce、哈希和正式目录 watch 进行审计
+检测，但不声称具备密码学作者证明。
+
+## 15. 审计与最终准出
+
+### 15.1 审计顺序
+
+固定单向流水线：
+
+1. 所有适用研究产物经 Gate 接受并冻结；
+2. Shared Evidence Audit Agent 审计事实、来源和判断；
+3. Gate 复算全部 financial_rigor calculations；
+4. 审计通过后，Final Synthesis Agent 只读取已接受的核心材料；
+5. 综合稿写入独立 attempt staging；
+6. Gate 检查引用、数字、免责声明和结构；
+7. 最多允许一次只修复综合报告自身格式/引用的 attempt；
+8. 通过后晋升 `FINAL_REPORT.md`，否则生成 `PARTIAL_REPORT.md`。
+
+### 15.2 Audit Agent 范围
+
+- 100% 审计估值输入、核心财务指标、股本与市值、管理层关键事实、重大风险和所有
+  `eligible_for_final=true` 的事实；
+- 100% 复算所有计算；
+- 未进入最终结论的普通事实按确定性种子抽样 10%，且不少于 5 条；
+- 所有高严重度来源冲突逐项审计；
+- 普通抽样失败时扩展为同类事实全检；
+- 任一核心事实失败即阻止综合；
+- 抽样种子、fact ID、来源和结果写入 `evidence/audit/`。
+
+Audit Agent 只看抽中的事实和来源，不看作者结论，以保持独立性。Final Synthesis
+只能引用审计结果为 PASS 的事实；最终 Gate 再逐个检查实际引用均属于该集合，因此
+最终报告实际使用的事实仍达到 100% 审计覆盖。
+
+### 15.3 report_audit 接口
+
+`report_audit.py` 提供稳定 Python 函数和明确 CLI 子命令。Gate 使用函数接口并按
+manifest 中已登记的 artifact ID 审计，不自行扫描未知目录，也不把文件路径当作
+CLI 命令。结构化结果统一写入 `evidence/audit/`。
+
+## 16. 交付物
+
+### 16.1 FINAL_REPORT.md
+
+不设字数上下限，以完整性、证据密度和可读性验收，不以篇幅判定通过。目标结构：
+
+1. 执行摘要与结论；
+2. 公司与业务边界；
+3. 核心事实与数据截止日；
+4. 财务质量；
+5. 护城河与竞争；
+6. 管理层与资本配置；
+7. 行业、政策与新闻；
+8. 四视角分歧；
+9. 估值与三情景；
+10. 风险、反证与触发器；
+11. 数据限制与 PWL；
+12. 报告和证据索引。
+
+结论可以给出研究判断、估值区间、观察/等待/回避和反证触发器；不得给出个性化立即
+交易指令、仓位比例、私人组合再平衡或自动交易。
+
+核心事实使用稳定引用：
+
+- `[F:fact_id]`
+- `[S:source_id]`
+- `[C:calculation_id]`
+
+文末自动生成事实、来源和计算索引，包含链接、访问日期、页码或公告编号及文件哈希。
+普通分析性文字无需逐句引用。
+
+### 16.2 SUMMARY.md
+
+完全由 Runtime/Gate 确定性生成，至少包含：
+
+- 顶层状态与人工评价状态；
+- 20 项 PASS/PWL/N/A/FAIL 矩阵；
+- N/A 谓词依据；
+- Agent job、attempt、重试、429 和超时；
+- wall clock 和中间产物大小；
+- PWL、人工干预和失败原因；
+- 关键实现版本与哈希；
+- 正式报告、证据和审计链接。
+
+### 16.3 PARTIAL_REPORT.md
+
+由 Runtime 确定性生成，不再消耗 Agent job。必须醒目标注“未准出”，包含已验证事实、
+已通过报告链接、失败/未完成 Skill、未验证计算、来源和审计缺口以及下一次诊断建议。
+不得生成综合投资结论、估值立场或观察/等待/回避建议。
+
+### 16.4 人工质量评价
+
+机器状态和人工质量分离：
+
+- `run_status=APPROVED/PARTIAL/FAILED/RUNNING`
+- `human_review=PENDING/ACCEPTED/REJECTED`
+
+人工只做接受/拒绝，不编辑原报告后改判。机器 APPROVED 但人工 REJECTED 时，原 run
+状态不篡改，首个上线验收仍失败。
+
+## 17. 预检、安装与版本漂移
+
+### 17.1 预检
+
+init 前必须证明：
+
+- WorkBuddy Agent 工具可调用；
+- 后台 Agent 可执行公开只读 Web；
+- Agent 可写入唯一 probe attempt 目录；
+- `financial_rigor.py`、`report_audit.py` 和数据 CLI 可运行；
+- 执行过程中不需要新的权限确认；
+- canonical WorkBuddy Skill、安装副本和关键实现哈希一致。
+
+缺一项即在创建 manifest 前失败，并列出精确缺失能力。系统不得修改 WorkBuddy
+全局权限。
+
+### 17.2 安装
+
+新增 `scripts/install-workbuddy-skills.sh`：
+
+- 无参数只预览差异，不写入；
+- `--check` 只读比较 canonical source 与安装副本；
+- 用户明确执行 `--install` 后才安装到 `~/.workbuddy/skills/`；
+- 不监听、不自动同步、不修改权限；
+- 其余 20 个业务 Skill 继续使用现有 `berkshire-skill-sync/sync.py`。
+
+### 17.3 关键哈希
+
+run 冻结：
+
+- WorkBuddy full-company-analysis Skill；
+- Runtime；
+- Gate；
+- Contract；
+- Result schema；
+- `financial_rigor.py`；
+- `report_audit.py`；
+- 数据 CLI。
+
+无关工作树改动、其他 Skill 编辑或 `local/` 文件不影响运行。关键哈希变化时停止新
+派发并生成未准出摘要，不允许热迁移或继续 resume。
+
+## 18. 用户入口
+
+WorkBuddy 用户只看到：
+
+- `start`：清晰公司/代码时直接预检并启动，不再二次确认；
+- `status <run-id>`：只读查看；
+- `resume <run-id>`：满足恢复条件时继续；
+- `cleanup <run-id> --dry-run`：预览清理。
+
+模糊身份、私人数据或 HARD STOP 才向用户提问。计划、预算和 run ID 写入启动回执，
+不是确认 checkpoint。
+
+`next-work`、`heartbeat`、`submit-result`、`ingest`、`audit` 和 `finalize` 是
+WorkBuddy Skill 与 Runtime/Gate 的内部接口，不作为手工修复入口。删除
+`set-industry`、`reference-freeze`、`finish-skill` 等可绕过新状态机的用户入口。
+
+## 19. 测试策略
+
+### 19.1 单元与集成
+
+覆盖：
+
+- Contract v2、20 项清单、N/A 和 PWL；
+- Result Bundle、fact/source/calculation/artifact 注册；
+- attempt 隔离、原子晋升和迟到拒收；
+- Runtime 状态、锁、lease、resume 和版本漂移；
+- 429、退避、并发、45/50 job 和 4 小时；
+- 多角色独立性；
+- data freshness、Tushare fallback 和来源独立性；
+- audit sampling、最终综合和 deterministic SUMMARY。
+
+### 19.2 Hermetic E2E 与故障注入
+
+使用提交到仓库的脱敏小型 fixture 和 fake WorkBuddy receipt，不联网、不依赖旧完整
+报告。至少注入：
+
+- 正常完成与合法 N/A；
+- 429 降并发、冷却和重试；
+- Agent timeout、heartbeat 中断和 lease 过期；
+- app 重启、ABANDONED 和合法 resume；
+- 迟到 attempt、错误 lease nonce 和重复提交；
+- Result Bundle 缺字段、版本错误和 artifact 哈希错误；
+- facts 为空、fact ID 改名和机器关键 section 缺失；
+- calculation request、数字不一致和一次定向修复；
+- 未登记写入和 `manual_intervention`；
+- 关键版本漂移；
+- 45/50 job 和 4 小时收口；
+- Tushare 不可用但替代来源充分；
+- 核心失败时绝不生成 FINAL；
+- 全链路成功时正式目录无 attempt 或半成品。
+
+Hermetic E2E 必须进入 `bash scripts/check.sh`。实时网络运行不进入普通 CI。
+
+### 19.3 Live canary
+
+只执行一次格力电器 `000651.SZ`。checker 验证机器状态、人工评价、时间、job、
+PWL、审计、版本、产物和人工干预。失败后不得改原 run；先把故障加入 fixture，再
+创建新 run。
+
+## 20. 迁移与直接清理
+
+迁移顺序：
+
+1. 在仓库完成 Contract v2、Runtime、Gate、WorkBuddy Skill 和 hermetic E2E；
+2. 运行完整本地检查；
+3. 直接删除仓库内旧 `scripts/run_full_analysis.py` 和
+   `scripts/batch_full_analysis.py`，由 `scripts/full_analysis.py` 取代；
+4. 清理仓库外旧编排专用文件：
+   - `~/.workbuddy/berkshire-skill-sync/orchestrate.py`
+   - `_run_l1.py`
+   - `_verify.py`
+   - `cleanup_intermediate_dirs.py`
+   - `skills/full-company-analysis.md`
+   - `MIGRATE-full-company-analysis.md`
+   - `FULL-ANALYSIS-REPORT.md`
+5. 从外部 `sync.py`、`README.md` 和 `CHANGELOG.md` 删除旧 full-company 编排生成和
+   调用逻辑，但保留其余 20 个业务 Skill 同步；
+6. 删除已安装的旧 `~/.workbuddy/skills/full-company-analysis/`；
+7. 使用新的显式安装工具安装仓库 canonical WorkBuddy Skill；
+8. 运行 `--check`、预检和 hermetic 验证；
+9. 执行格力电器单次 live canary。
+
+不保留 wrapper、dual-run、shadow 或旧入口回退。历史 `local/` 报告和未跟踪文件不
+删除。用户已声明自行持有旧外置实现备份；项目不验证或复制该备份。
+
+## 21. 风险与缓解
 
 | 风险 | 概率×影响 | 缓解 |
 |---|---:|---|
-| 迁入仓库后破坏 WorkBuddy 现有入口 | 2×3 | Shadow + dual-run + 薄 wrapper，可回退旧入口 |
-| Contract v2 使旧 manifest 不可恢复 | 2×3 | schema version、只读兼容器、fixture 覆盖，不原地改历史运行 |
-| 非交互模式误放宽安全边界 | 1×3 | 只覆盖公开只读与本次 run-root；外部写入/交易/敏感信息继续 HARD STOP |
-| 固定骨架降低报告表达质量 | 2×2 | section ID 稳定，正文自由；只约束结构不约束观点 |
-| Live canary 受外部数据波动影响 | 3×2 | hermetic E2E 与 live canary 分离；限制必须诚实但不得挂死 |
-| 多角色成本与 429 冲突 | 3×2 | 有界并发、租约、退避、按 contract 诚实降级 |
+| WorkBuddy Agent 工具行为无法由 Python 单测完整模拟 | 2×3 | capability probe、fake receipt E2E、单次 live canary |
+| Runtime/Gate 状态损坏或并发写 | 2×3 | 单写者、原子快照、JSONL、文件锁、attempt 隔离 |
+| 429、超时和多角色消耗预算 | 3×2 | 并发 2、降为 1、10 分钟冷却、预算预留、45/50 门槛 |
+| 形式合规掩盖事实错误 | 2×3 | 稳定事实/来源/计算 ID、独立 Audit Agent、全量复算 |
+| 机器 APPROVED 但报告不可用 | 2×3 | 独立 `human_review`，格力 canary 必须 ACCEPTED |
+| 文件系统无法证明真实作者 | 2×2 | attempt/job/lease/hash 审计，明确“可检测、非密码学证明” |
+| 旧编排器直接删除后无法由项目恢复 | 1×3 | 用户自有备份；迁移前完成新实现和本地 E2E |
+| Contract v2 使旧 run 不可恢复 | 2×2 | 旧 run 只读；新 run 冻结版本；不做隐式迁移 |
+| 非交互模式误放宽权限 | 1×3 | 只允许公开只读和分配路径；发布/交易/敏感信息继续 HARD STOP |
 
-所有风险分值达到 6 的项均在迁移、兼容或调度设计中有明确缓解。
+## 22. 后续 Darwin 阶段
 
-## 16. 后续 Darwin 优化门槛
+格力电器 live canary 同时达到机器 APPROVED 和人工 ACCEPTED 后，才为独立 Skill
+另写优化计划。目标保持：
 
-主链路通过 3×3 后，才开始独立 Skill 优化，目标为：
+- 带 Skill 相对 baseline 为正或持平的项目至少 16/21；
+- 任一 Skill 的 d8 相对 baseline 降幅不超过 1；
+- runtime 人工风险为 0；
+- 优先处理 private-company-research、investment-research、earnings-review、
+  investment-team 和 financial-data；
+- 补 thesis-drift 成功路径；
+- 压缩 private-company-research、bottleneck-hunter 和 earnings-team 的重复模板。
 
-- 带 Skill 相对 baseline 为正或持平的项目达到至少 16/21；
-- 不再出现 d8 下降超过 1 分的 Skill；
-- runtime 人工风险从当前 9 项降为 0；
-- 优先修复 private-company-research、investment-research、earnings-review、
-  investment-team、financial-data 的只读 STOP；
-- 补 thesis-drift 成功路径评估；
-- 压缩 private-company-research、bottleneck-hunter、earnings-team 的重复模板。
-
-该阶段另写实施计划，不与主链路可靠性改造混合提交。
+该阶段不与本次控制面、Contract v2 和 Runtime 改造混合实施。
