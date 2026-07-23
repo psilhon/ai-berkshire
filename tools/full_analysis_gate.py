@@ -274,6 +274,16 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: PENDING/非终态={pending}; 缺正式产物={missing}")
+    audit_path = root / "evidence/audit/audit-result.json"
+    if not audit_path.is_file():
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError("finalize 未准出: 缺少共享 Audit 结果")
+    audit = load_json(audit_path, "Audit 结果")
+    if audit.get("status") != "PASS":
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError(f"finalize 未准出: Audit status={audit.get('status')!r}")
     manifest["run"]["status"] = "APPROVED" if "FAIL" not in states else "FAILED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})

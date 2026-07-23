@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import full_analysis_gate as gate  # noqa: E402
 import full_analysis_runtime as runtime  # noqa: E402
+import full_analysis_audit as audit_tool  # noqa: E402
 
 
 def emit(value: object) -> None:
@@ -27,7 +28,7 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--code", required=True)
     start.add_argument("--as-of", required=True)
     start.add_argument("--run-root")
-    for name in ("status", "resume", "next-work"):
+    for name in ("status", "resume", "next-work", "audit"):
         cmd = sub.add_parser(name); cmd.add_argument("--run-root", required=True)
     started = sub.add_parser("job-started")
     started.add_argument("--run-root", required=True); started.add_argument("--work-unit-id", required=True)
@@ -50,8 +51,9 @@ def main(argv=None) -> int:
     try:
         if args.command == "start":
             args.platform = "workbuddy"
-            gate.cmd_init(args)
             root = Path(args.run_root) if args.run_root else gate.build_run_root(Path(args.repo_root), args.code, args.company)
+            args.run_root = str(root)
+            gate.cmd_init(args)
             state = runtime.initialize(root)
             emit({"status": "STARTED", "run_root": str(root), "budget": state["budget"]})
             return 0
@@ -59,6 +61,8 @@ def main(argv=None) -> int:
         if args.command == "status": emit(runtime.load_state(root)); return 0
         if args.command == "resume": emit(runtime.resume(root)); return 0
         if args.command == "next-work": emit(runtime.next_work(root)); return 0
+        if args.command == "audit":
+            report, code = audit_tool.audit(root); emit(report); return code
         if args.command == "job-started": emit(runtime.job_started(root, args.work_unit_id, args.attempt_id, args.lease_nonce, args.agent_job_id)); return 0
         if args.command == "heartbeat": emit(runtime.heartbeat(root, args.work_unit_id, args.attempt_id, args.lease_nonce)); return 0
         if args.command == "record-failure": emit(runtime.record_failure(root, args.work_unit_id, args.attempt_id, args.reason)); return 0
