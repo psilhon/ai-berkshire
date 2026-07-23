@@ -1,0 +1,92 @@
+[
+  {
+    "incident_id": "incident-control-plane-001",
+    "company_code": "600276.SH",
+    "root_cause": "control_plane",
+    "stage": "init",
+    "injected_fault": "unregistered_manifest_write",
+    "expected_outcome": "manual_intervention_and_no_approval",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-schema-001",
+    "company_code": "603501.SH",
+    "root_cause": "schema",
+    "stage": "result_ingest",
+    "injected_fault": "artifact_type_mismatch",
+    "expected_outcome": "reject_attempt_without_manifest_mutation",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-schema-002",
+    "company_code": "000651.SZ",
+    "root_cause": "schema",
+    "stage": "calculation",
+    "injected_fault": "invalid_calculation",
+    "expected_outcome": "reject_calculation_and_block_final",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-data-lifecycle-001",
+    "company_code": "000651.SZ",
+    "root_cause": "data_lifecycle",
+    "stage": "base_data",
+    "injected_fault": "tushare_unavailable",
+    "expected_outcome": "use_independent_fallback_or_fail_closed",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-facts-001",
+    "company_code": "600276.SH",
+    "root_cause": "facts",
+    "stage": "industry_scope",
+    "injected_fault": "empty_fact",
+    "expected_outcome": "block_dependent_work_without_manual_fact_injection",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-sections-001",
+    "company_code": "603501.SH",
+    "root_cause": "sections",
+    "stage": "result_ingest",
+    "injected_fault": "missing_section",
+    "expected_outcome": "reject_attempt_with_structured_section_error",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-scheduler-001",
+    "company_code": "000651.SZ",
+    "root_cause": "scheduler",
+    "stage": "agent_dispatch",
+    "injected_fault": "rate_limit_429",
+    "expected_outcome": "reduce_concurrency_apply_cooldown_and_retry_with_bound",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-scheduler-002",
+    "company_code": "600276.SH",
+    "root_cause": "scheduler",
+    "stage": "agent_dispatch",
+    "injected_fault": "agent_timeout",
+    "expected_outcome": "expire_lease_mark_attempt_abandoned_and_retry",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-audit-001",
+    "company_code": "603501.SH",
+    "root_cause": "audit",
+    "stage": "evidence_audit",
+    "injected_fault": "audit_insufficient",
+    "expected_outcome": "block_synthesis_and_generate_partial_report",
+    "manual_action_forbidden": true
+  },
+  {
+    "incident_id": "incident-delivery-001",
+    "company_code": "000651.SZ",
+    "root_cause": "delivery",
+    "stage": "finalize",
+    "injected_fault": "partial_artifact",
+    "expected_outcome": "write_partial_report_and_summary_without_final_report",
+    "manual_action_forbidden": true
+  }
+]
