@@ -122,6 +122,70 @@
         "detail": {"type": "string", "minLength": 1},
         "retryable": {"type": "boolean"}
       }
+    },
+    "key_claims": {
+      "type": "array",
+      "description": "关键判断与溯源；每条挂 source_ids，供 Gate 实质校验优先使用",
+      "items": {
+        "type": "object",
+        "required": ["claim", "source_ids"],
+        "properties": {
+          "claim": {"type": "string", "minLength": 1},
+          "source_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1}
+        }
+      }
+    },
+    "calculations": {
+      "type": "array",
+      "description": "可重放测算；供 Gate 实质校验优先使用",
+      "items": {
+        "type": "object",
+        "required": ["calculation_id", "operation", "args"],
+        "properties": {
+          "calculation_id": {"type": "string"},
+          "operation": {"type": "string"},
+          "args": {"type": "object"},
+          "output": {}
+        }
+      }
+    },
+    "dissent_points": {
+      "type": "array",
+      "description": "显式分歧点；供 Gate 防片面校验优先使用",
+      "items": {
+        "type": "object",
+        "required": ["topic", "parties", "positions"],
+        "properties": {
+          "topic": {"type": "string", "minLength": 1},
+          "parties": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+          "positions": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "description": "情景估值/推演；每情景带具体数字",
+      "items": {
+        "type": "object",
+        "required": ["name", "assumptions", "value"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "assumptions": {"type": "string"},
+          "value": {}
+        }
+      }
+    },
+    "reverse_tests": {
+      "type": "array",
+      "description": "反例/证伪检验",
+      "items": {
+        "type": "object",
+        "required": ["hypothesis", "verdict"],
+        "properties": {
+          "hypothesis": {"type": "string", "minLength": 1},
+          "verdict": {"type": "string", "minLength": 1}
+        }
+      }
     }
   },
   "x_rules": {

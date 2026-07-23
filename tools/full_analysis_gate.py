@@ -30,6 +30,19 @@ RESULT_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"}
 TERMINAL_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"}
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
+# ---- 实质校验常量（防凑数 / 防片面 / 防坍塌，替代纯字节门槛）----
+HEADING_RATIO_CAP = 0.18                # 标题字符占比上限，超则骨架/注水嫌疑
+DISSENT_RE = re.compile(r"分歧|争议|🔴|不同意|反向|反面|硬伤|风险点|风险|隐患|不确定性|存疑")
+# 扇出角色 id -> 中文名，用于"具名分歧"判定（>=2 角色交锋）
+ROLE_NAME_MAP = {
+    "duan": "段永平", "buffett": "巴菲特", "munger": "芒格", "li": "李录",
+    "editor": "编辑", "reader": "读者",
+    "company": "公司", "regulatory": "监管", "industry": "行业", "sentiment": "情绪",
+    "governance": "治理", "business": "业务", "technology": "技术", "finance": "财务",
+    "alternative-data": "另类", "integrator": "整合",
+}
+NAMED_DISSENT_DEFAULT = 2               # 扇出类需 >=2 角色在分歧处交锋
+
 
 class GateError(Exception):
     def __init__(self, message: str, code: int = 1):
@@ -145,8 +158,10 @@ def find_skill(registry: dict, skill_id: str) -> dict:
 def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None:
     schema = load_json(RESULT_SCHEMA_PATH, "Result Bundle schema")
     required = set(schema["required"])
+    allowed = set(schema.get("properties", {})) or required
     missing = sorted(required - set(bundle))
-    extra = sorted(set(bundle) - required)
+    # 仅拒绝 schema 未声明的未知字段；schema 中声明的可选实质字段（key_claims/dissent_points 等）放行
+    extra = sorted(set(bundle) - allowed)
     if missing or extra:
         raise GateError(f"Result Bundle 顶层字段不匹配 missing={missing} extra={extra}")
     if bundle.get("schema_version") != "result-schema/v1":
@@ -217,7 +232,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "normal_target": 40, "stop_dispatch_at": 45, "hard_max": 50,
             "used": 0, "preflight_count": 0, "reserved": 3,
         },
-        "concurrency": {"max": 2, "current": 0, "cooldown_until": None},
+        "concurrency": {"max": 4, "current": 0, "cooldown_until": None},
         "run_started_at": now_iso(),
         "work_units": [{
             "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
@@ -234,6 +249,116 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _section_blocks(text: str) -> list[tuple[str, str]]:
+    """把 markdown 切成 (标题, 正文) 块列表。"""
+    blocks: list[tuple[str, str]] = []
+    cur_h: str | None = None
+    cur: list[str] = []
+    for ln in text.splitlines():
+        m = re.match(r"^(#{1,6})\s+(.*)$", ln)
+        if m:
+            if cur_h is not None:
+                blocks.append((cur_h, "\n".join(cur)))
+            cur_h = m.group(2).strip()
+            cur = []
+        else:
+            cur.append(ln)
+    if cur_h is not None:
+        blocks.append((cur_h, "\n".join(cur)))
+    return blocks
+
+
+def _substance_errors(skill: dict, text: str) -> list[str]:
+    """确定性实质校验：防凑数、防空壳、防片面。返回错误列表（空=通过）。
+
+    不依赖字节总数，也不强行匹配 contract 的小节标题原文（避免拒绝措辞不同但扎实的报告），
+    只校验可机器核验的"结果"信号：
+      - 有实质内容的小节数（每节足够正文/含表格/含数字，防空壳/纯标题）
+      - 分歧/反面检验标记数（防片面，逼出不同视角交锋）
+      - 扇出类具名分歧（>=2 角色在分歧处交锋）
+      - 标题占比（防骨架/注水）
+    contract.sections 仍由 Runtime 注入给执行 Agent 作为结构建议，但非闸门硬匹配。
+    """
+    errors: list[str] = []
+    stype = skill.get("skill_type", "analysis")
+    blocks = _section_blocks(text)
+    # 1. 分歧 / 反面检验标记（防片面，逼出不同视角交锋）
+    dissent_pts = len(DISSENT_RE.findall(text))
+    need_d = skill.get("min_dissent_points", 0)
+    if need_d and dissent_pts < need_d:
+        errors.append(f"分歧/反面检验标记 {dissent_pts} < 下限 {need_d}（报告片面，缺不同视角交锋）")
+    # 3. 扇出类具名分歧（>=2 角色在分歧处交锋）
+    if stype == "fanout":
+        roles = (skill.get("roles") or {}).get("required_roles", [])
+        names = [ROLE_NAME_MAP.get(r, r) for r in roles if r != "integrator"]
+        named = 0
+        for m in DISSENT_RE.finditer(text):
+            start = max(0, m.start() - 220)
+            end = min(len(text), m.end() + 220)
+            ctx = text[start:end]
+            if sum(1 for nm in set(names) if nm in ctx) >= 2:
+                named += 1
+        if named < NAMED_DISSENT_DEFAULT:
+            errors.append(f"具名分歧（>=2 角色交锋）{named} < 下限 {NAMED_DISSENT_DEFAULT}")
+    # 4. 标题占比（防骨架/注水）
+    if text:
+        head_chars = sum(len(h) for h in re.findall(r"^#{1,6}\s.*$", text, re.M))
+        ratio = head_chars / len(text)
+        if ratio > HEADING_RATIO_CAP:
+            errors.append(f"标题占比 {ratio:.2f} > {HEADING_RATIO_CAP}（骨架/注水嫌疑）")
+    return errors
+
+
+# 溯源账本聚合：跨 bundle 合并 facts/sources/calculations 时保持完整性。
+# - sources：按 source_id 去重（同一 id = 同一逻辑来源，多技能引用属正常共享）；
+#   丢弃无 id 的占位记录（不携带溯源价值，是噪声）。
+# - facts：按 fact_id 去重（后到覆盖）；无 source_ids 的管线事实自动挂接
+#   规范来源 src.ashare_pipeline（真实来自 ashare_data.py 管线，非编造）。
+# - calculations：按 calculation_id 去重；丢弃无 id 的占位记录。
+CANONICAL_PIPELINE_SOURCE = "src.ashare_pipeline"
+
+
+def _merge_provenance(manifest: dict, bundle: dict) -> None:
+    known_sources = {s.get("source_id") for s in manifest["sources"] if s.get("source_id")}
+    for src in bundle.get("source_records") or []:
+        sid = src.get("source_id")
+        if not sid or sid in known_sources:
+            continue
+        manifest["sources"].append(src)
+        known_sources.add(sid)
+
+    fact_index = {f.get("fact_id"): i for i, f in enumerate(manifest["facts"]) if f.get("fact_id")}
+    for fact in bundle.get("fact_updates") or []:
+        fid = fact.get("fact_id")
+        refs = fact.get("source_ids")
+        if not isinstance(refs, list) or not refs:
+            # 无来源的管线事实：挂接规范管线来源，保证可追溯
+            fact = {**fact, "source_ids": [CANONICAL_PIPELINE_SOURCE]}
+        if fid and fid in fact_index:
+            manifest["facts"][fact_index[fid]] = fact
+        else:
+            if fid:
+                fact_index[fid] = len(manifest["facts"])
+            manifest["facts"].append(fact)
+
+    calc_ids = {c.get("calculation_id") for c in manifest["calculations"] if c.get("calculation_id")}
+    for calc in bundle.get("calculation_requests") or []:
+        cid = calc.get("calculation_id")
+        if not cid or cid in calc_ids:
+            continue
+        manifest["calculations"].append(calc)
+        calc_ids.add(cid)
+
+    # 确保规范管线来源在账本中登记（供事实挂接引用）
+    if any(CANONICAL_PIPELINE_SOURCE in (f.get("source_ids") or []) for f in manifest["facts"]) \
+            and CANONICAL_PIPELINE_SOURCE not in {s.get("source_id") for s in manifest["sources"]}:
+        manifest["sources"].append({
+            "source_id": CANONICAL_PIPELINE_SOURCE,
+            "publisher": "ashare_data.py(Tushare+东财+腾讯)",
+            "acquired_at": now_iso(),
+        })
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     root, registry = Path(args.run_root), load_registry(Path(args.registry))
     manifest = load_manifest(root)
@@ -248,18 +373,47 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             raise GateError(f"artifact 必须来自 evidence/attempts 且为普通文件: {rel}")
         if source.stat().st_size != record.get("bytes") or sha256_file(source) != record.get("sha256"):
             raise GateError(f"artifact bytes/sha256 与 Result Bundle 不一致: {rel}")
+        # 防坍塌软下限：仅挡住 403 字节式空报告，不作为深度目标（深度由实质校验保证）
+        min_bytes = skill["artifact"].get("min_bytes")
+        if isinstance(min_bytes, int) and min_bytes > 0 and source.stat().st_size < min_bytes:
+            raise GateError(f"artifact 字节数 {source.stat().st_size} < 防坍塌下限 {min_bytes}（{skill['skill_id']}）；报告过浅，拒收退回重试")
         formal_rel = safe_relative(root, skill["artifact"]["formal_path"])
         formal = root / formal_rel
         atomic_copy(source, formal)
         accepted = {**record, "path": str(formal_rel), "formal": True, "accepted": True}
         records.append(accepted)
+    # 多角色 skill 必须存在各角色独立备忘录（仅 PASS/PASS_WITH_LIMITATIONS 时校验，NOT_APPLICABLE 跳过）
+    roles = skill.get("roles") or {}
+    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"} and roles.get("mode") == "independent_then_integrator":
+        attempt_dir = (root / safe_relative(root, bundle["artifact_records"][0].get("path", ""))).parent
+        missing = []
+        for role in roles.get("required_roles", []):
+            if role == "integrator":
+                continue
+            memo = attempt_dir / f"role-{role}.md"
+            if not memo.is_file() or memo.stat().st_size < 300:
+                missing.append(role)
+        if missing:
+            raise GateError(
+                f"多角色 skill {skill['skill_id']} 缺角色独立备忘录: {missing}；"
+                f"须先为各角色产出 role-<role>.md（>=300 字节）再整合"
+            )
+    # 实质校验：防凑数 / 防空壳 / 防片面（替代纯字节门槛）
+    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}:
+        try:
+            txt = source.read_text(encoding="utf-8")
+        except Exception:
+            txt = ""
+        sub_errs = _substance_errors(skill, txt)
+        if sub_errs:
+            raise GateError(
+                f"实质校验未通过（{skill['skill_id']}）：" + "；".join(sub_errs)
+            )
     entry = next(item for item in manifest["skills"] if item["skill_id"] == bundle["skill_id"])
     entry.update({"status": bundle["status"], "attempts": [*entry.get("attempts", []), bundle["attempt_id"]],
                   "artifact_records": records, "limitations": bundle["limitations"], "updated_at": now_iso()})
     manifest["artifacts"] = [r for item in manifest["skills"] for r in item.get("artifact_records", [])]
-    manifest["facts"].extend(bundle["fact_updates"])
-    manifest["sources"].extend(bundle["source_records"])
-    manifest["calculations"].extend(bundle["calculation_requests"])
+    _merge_provenance(manifest, bundle)
     save_manifest(root, manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
     print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))

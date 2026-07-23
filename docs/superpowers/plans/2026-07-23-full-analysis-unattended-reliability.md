@@ -1636,7 +1636,7 @@ live canary 之前。
 
 - 21 个独立 Skill 的第二轮 Darwin 优化；
 - 跨 run cache；
-- 自适应并发高于 2；
+- 自适应并发高于 4；
 - HK/US/多公司/私人组合无人值守；
 - HTML/图表/发布；
 - 密码学 Agent 作者证明；

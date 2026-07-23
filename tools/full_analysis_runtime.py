@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
+TOOLS_DIR = Path(__file__).resolve().parent
+DEFAULT_REGISTRY = TOOLS_DIR / "full_analysis_contract.json"
 STATE_REL = Path("evidence/runtime-state.json")
 EVENTS_REL = Path("evidence/events.jsonl")
 LEASE_MINUTES = 20
@@ -20,6 +22,16 @@ RATE_LIMIT_COOLDOWN_SECONDS = 600
 PARTIAL_REPORT = "PARTIAL_REPORT.md"
 SUMMARY_REPORT = "SUMMARY.md"
 TZ_SHANGHAI = timezone(timedelta(hours=8))
+
+# 反凑数刚性指令：随 methodology_text 一并注入执行 Agent，明确"深度优先于字数"
+ANTI_PADDING_DIRECTIVE = """
+【质量自觉 · 反凑数】
+完整性 = 推理链完整 + 关键判断有数据/来源支撑 + 分歧被显式标记。
+严禁为凑篇幅复述标题、堆砌无信息表格、用"综上所述"式废话注水。
+一份短而精、解决核心问题的分析，远胜一份长而空、只在重述框架的分析。
+写透为止，不设字数上限。每个分析小节须有实质论证（数据、对比、推演），
+不得仅列标题或一句话带过；多视角 skill 必须显式呈现不同角色的分歧与交锋。
+"""
 
 
 class RuntimeErrorState(Exception):
@@ -81,6 +93,13 @@ def _active_units(state: dict) -> list[dict]:
     return [unit for unit in state["work_units"] if unit.get("status") in {"LEASED", "RUNNING"}]
 
 
+def _load_registry() -> dict:
+    try:
+        return json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"skills": []}
+
+
 def next_work(run_root: Path) -> dict:
     state = load_state(run_root)
     budget = state["budget"]
@@ -118,7 +137,31 @@ def next_work(run_root: Path) -> dict:
     unit.update({"status": "LEASED", "attempts": attempt, "lease": lease})
     save_state(run_root, state)
     event(run_root, "work_leased", work_unit_id=unit["work_unit_id"], attempt_id=lease["attempt_id"])
-    return {"status": "LEASED", "work_unit_id": unit["work_unit_id"], "skill_id": unit["skill_id"], **lease}
+    # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）
+    skill = next((s for s in _load_registry().get("skills", []) if s.get("skill_id") == unit["skill_id"]), None)
+    methodology_text = ""
+    if skill:
+        spec = skill.get("spec_source")
+        if spec:
+            spec_path = TOOLS_DIR.parent / spec
+            if spec_path.is_file():
+                methodology_text = spec_path.read_text(encoding="utf-8") + ANTI_PADDING_DIRECTIVE
+    roles = skill.get("roles", {}) if skill else {}
+    return {
+        "status": "LEASED",
+        "work_unit_id": unit["work_unit_id"],
+        "skill_id": unit["skill_id"],
+        "methodology_path": skill.get("spec_source") if skill else None,
+        "methodology_text": methodology_text,
+        "min_bytes": skill["artifact"]["min_bytes"] if skill else None,
+        "skill_type": skill.get("skill_type") if skill else None,
+        "min_dissent_points": skill.get("min_dissent_points") if skill else None,
+        "min_substantive_sections": skill.get("min_substantive_sections") if skill else None,
+        "sections": skill.get("sections", []) if skill else [],
+        "roles": roles,
+        "fanout_required": bool(roles.get("mode") == "independent_then_integrator"),
+        **lease,
+    }
 
 
 def _unit(state: dict, work_unit_id: str) -> dict:

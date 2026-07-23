@@ -43,7 +43,13 @@ python3 scripts/full_analysis.py job-started \
 <run_root>/evidence/attempts/<skill_id>/<attempt_id>/
 ```
 
-Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。完成后调用：
+Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。
+
+**派发前必读 `next-work` 注入的规范**：每次 `next-work` 返回的 payload 内含 `methodology_text`（即 `skills/<skill_id>.md` 完整方法论）、`sections`（章节与最低字数要求）、`min_bytes`（本报告字节下限）与 `roles`/`fanout_required`。执行 Agent 必须以 `methodology_text` 为强制规范完整落地，**不得仅凭 skill 名称凭记忆发挥**；报告字节数必须 ≥ `min_bytes`，否则 Gate 拒收。
+
+**多角色 skill 必须真扇出**：当 `fanout_required: true` 时，必须为 `roles.required_roles` 中每个角色（除 `integrator` 外）启动一个**独立原生 Agent**（用 Task 工具 fan-out），各自在 `evidence/attempts/<skill_id>/<attempt_id>/role-<role>.md` 产出独立分析备忘录（每个 ≥300 字节，且不得相互引用以保证独立性）；最后由整合 Agent 读取全部角色备忘录产出正式整合报告。缺少任一 `role-<role>.md` 时 Gate 会拒收。单 Agent skill 则由一个原生 Agent 按 methodology 完整执行。
+
+完成后调用：
 
 ```text
 python3 scripts/full_analysis.py submit-result \

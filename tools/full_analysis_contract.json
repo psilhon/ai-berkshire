@@ -1,1 +1,2901 @@
-{"schema_version":"full-analysis-contract/v2","manifest_schema_version":"full-analysis-manifest/v2","result_schema_version":"result-schema/v1","description":"全量公司分析 20 项业务契约唯一机器真源；Gate、Runtime、WorkBuddy adapter 均只读取本注册表。","stage_dirs":{"01-data-screen":"01-数据与快筛","02-company-earnings":"02-公司与财报","03-industry-opportunity":"03-行业与机会","04-thesis-boundary":"04-论文与组合","05-content":"05-内容生产"},"negative_acceptance_dir":"06-负向验收","pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"pwl_forbidden":["single_context_fallback","manual_intervention","budget_exhausted","unregistered_artifact","unverified_fact","missing_required_section"],"predicates":["is_a_share","always_applicable","has_comparable_financial_history","has_investable_price","min_independent_contexts_2","identifiable_key_managers","has_primary_filing_for_period","earnings_review_complete_and_min_2_contexts","main_business_definable","listed_and_main_industry_definable","physical_bottleneck_exists","has_two_pairable_snapshots","private_run_with_portfolio_input","is_unlisted","core_research_passed_min_3_questions","has_fact_base","core_research_passed_draft_allowed","always","private_portfolio_input","paired_thesis_snapshots"],"skills":[{"skill_id":"ashare-data","category":"01-data-screen","stage_dir":"01-data-screen","spec_source":"skills/ashare-data.md","artifact":{"artifact_id":"artifact.ashare-data","formal_path":"01-数据与快筛/01-ashare-data.md","min_bytes":800,"audit_policy":"advisory"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"target_scope","heading":"标的与口径","required":true,"min_content_chars":1},{"section_id":"command_receipts","heading":"命令执行记录","required":true,"min_content_chars":1},{"section_id":"source_dates","heading":"来源与数据时间","required":true,"min_content_chars":1},{"section_id":"warnings_gaps","heading":"警告与缺口","required":true,"min_content_chars":1}],"applicability":{"predicate":"is_a_share","alternative":"financial-data"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_command_operations","values":["quote","financials","valuation","history","equity-history","announcements","signals"]},{"kind":"min_command_receipts","n":7},{"kind":"required_fact_fields","values":["price","market_cap","revenue"]},{"kind":"min_facts","n":3},{"kind":"conditional_command_operations","capability":"tushare_configured","values":[{"op":"pe-band","feeds":"investment-research","layer":1},{"op":"ratios","feeds":"quality-screen","layer":1},{"op":"mainbz","feeds":"financial-data","layer":1},{"op":"peers","feeds":"industry-funnel","layer":1},{"op":"insider-trades","feeds":"investment-research","layer":1},{"op":"shareholders","feeds":"investment-research","layer":1},{"op":"managers","feeds":"management-deep-dive","layer":2},{"op":"management","feeds":"management-deep-dive","layer":2},{"op":"repurchase","feeds":"investment-research","layer":2},{"op":"pledge","feeds":"thesis-tracker","layer":2},{"op":"audit","feeds":"management-deep-dive","layer":2},{"op":"express","feeds":"earnings-review","layer":2},{"op":"consensus","feeds":"earnings-review","layer":2},{"op":"holder-num","feeds":"investment-research","layer":2},{"op":"north-hold","feeds":"news-pulse","layer":3},{"op":"kline","feeds":"thesis-drift","layer":4},{"op":"research-visits","feeds":"investment-research","layer":2},{"op":"dividend","feeds":"investment-checklist","layer":1},{"op":"disclosure-calendar","feeds":"earnings-review","layer":2},{"op":"news","feeds":"news-pulse","layer":3,"optional":true},{"op":"industry-pe","feeds":"industry-research","layer":3},{"op":"index-val","feeds":"portfolio-review","layer":4,"optional":true},{"op":"income-stmt","feeds":"earnings-review","layer":2},{"op":"balance-sheet","feeds":"investment-research","layer":2},{"op":"cash-flow","feeds":"investment-research","layer":2},{"op":"money-flow","feeds":"news-pulse","layer":3},{"op":"factors","feeds":"investment-research","layer":2},{"op":"sector-peers","feeds":"industry-research","layer":3,"optional":true},{"op":"macro","feeds":"portfolio-review","layer":4,"optional":true},{"op":"name-history","feeds":"investment-research","layer":1},{"op":"limit-price","feeds":"news-pulse","layer":3},{"op":"suspend","feeds":"investment-research","layer":1,"optional":true},{"op":"weekly","feeds":"investment-research","layer":1,"optional":true},{"op":"monthly","feeds":"investment-research","layer":1,"optional":true},{"op":"broker-recommend","feeds":"investment-research","layer":1,"optional":true},{"op":"cyq-chips","feeds":"investment-research","layer":1},{"op":"stk-factor","feeds":"investment-research","layer":1},{"op":"limit-list","feeds":"news-pulse","layer":3,"optional":true},{"op":"top-list","feeds":"news-pulse","layer":3,"optional":true},{"op":"ths-hot","feeds":"news-pulse","layer":3,"optional":true},{"op":"unblock","feeds":"investment-research","layer":1},{"op":"block-trade","feeds":"investment-research","layer":2,"optional":true},{"op":"analyst-reports","feeds":"investment-research","layer":2},{"op":"hsgt-flow","feeds":"news-pulse","layer":3,"optional":true},{"op":"hsgt-top10","feeds":"news-pulse","layer":3,"optional":true},{"op":"sector-flow","feeds":"industry-research","layer":3,"optional":true},{"op":"margin","feeds":"investment-research","layer":2}],"min_satisfied_ratio":0.7,"tolerate_missing_with_limitation":true,"tolerate_failed_with_limitation":true}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["is_a_share"]},{"skill_id":"financial-data","category":"01-data-screen","stage_dir":"01-data-screen","spec_source":"skills/financial-data.md","artifact":{"artifact_id":"artifact.financial-data","formal_path":"01-数据与快筛/02-financial-data.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"dual_source_table","heading":"关键财务字段双源表","required":true,"min_content_chars":1},{"section_id":"period_units","heading":"主体期间单位口径","required":true,"min_content_chars":1},{"section_id":"independence_check","heading":"独立来源判定","required":true,"min_content_chars":1},{"section_id":"error_grading","heading":"误差分级","required":true,"min_content_chars":1},{"section_id":"calculation_replay","heading":"计算重放表","required":true,"min_content_chars":1}],"applicability":{"predicate":"always_applicable","alternative":null},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_fact_fields","values":["revenue"]},{"kind":"min_dual_source_facts","n":1},{"kind":"min_calculations","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["always_applicable"]},{"skill_id":"quality-screen","category":"01-data-screen","stage_dir":"01-data-screen","spec_source":"skills/quality-screen.md","artifact":{"artifact_id":"artifact.quality-screen","formal_path":"01-数据与快筛/03-quality-screen.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"seven_metric_screen","heading":"七指标筛选表","required":true,"min_content_chars":1},{"section_id":"exemption_evidence","heading":"豁免证据","required":true,"min_content_chars":1},{"section_id":"financial_sector_scope","heading":"金融行业口径","required":true,"min_content_chars":1},{"section_id":"item_conclusions","heading":"逐项结论","required":true,"min_content_chars":1}],"applicability":{"predicate":"has_comparable_financial_history","alternative":"private-company-research"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_fact_fields","values":["quality_metric_1","quality_metric_2","quality_metric_3","quality_metric_4","quality_metric_5","quality_metric_6","quality_metric_7"]},{"kind":"min_facts","n":7}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["has_comparable_financial_history"]},{"skill_id":"investment-checklist","category":"01-data-screen","stage_dir":"01-data-screen","spec_source":"skills/investment-checklist.md","artifact":{"artifact_id":"artifact.investment-checklist","formal_path":"01-数据与快筛/04-investment-checklist.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"six_gate_score","heading":"六关评分","required":true,"min_content_chars":1},{"section_id":"mirror_test","heading":"镜子测试","required":true,"min_content_chars":1},{"section_id":"quick_rejects","heading":"快速否决清单","required":true,"min_content_chars":1},{"section_id":"valuation_receipts","heading":"估值工具记录","required":true,"min_content_chars":1},{"section_id":"final_decision","heading":"最终结论","required":true,"min_content_chars":1},{"section_id":"falsification","heading":"证伪条件","required":true,"min_content_chars":1}],"applicability":{"predicate":"has_investable_price","alternative":"private-company-research"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["checklist_final_decision"]},{"kind":"min_calculations","n":1},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["has_investable_price"]},{"skill_id":"investment-research","category":"02-company-earnings","stage_dir":"02-company-earnings","spec_source":"skills/investment-research.md","artifact":{"artifact_id":"artifact.investment-research","formal_path":"02-公司与财报/05-investment-research.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"information_richness","heading":"信息丰富度评级","required":true,"min_content_chars":1},{"section_id":"eight_step_framework","heading":"八步框架","required":true,"min_content_chars":1},{"section_id":"valuation_range","heading":"估值区间","required":true,"min_content_chars":1},{"section_id":"counter_test","heading":"反面检验","required":true,"min_content_chars":1},{"section_id":"ai_confidence","heading":"AI置信度","required":true,"min_content_chars":1},{"section_id":"investment_certainty","heading":"投资确定性","required":true,"min_content_chars":1}],"applicability":{"predicate":"always_applicable","alternative":null},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["investment_thesis"]},{"kind":"min_dual_source_facts","n":1},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["always_applicable"]},{"skill_id":"investment-team","category":"02-company-earnings","stage_dir":"02-company-earnings","spec_source":"skills/investment-team.md","artifact":{"artifact_id":"artifact.investment-team","formal_path":"02-公司与财报/06-investment-team.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"duan_view","heading":"段永平视角","required":true,"min_content_chars":1},{"section_id":"buffett_view","heading":"巴菲特视角","required":true,"min_content_chars":1},{"section_id":"munger_view","heading":"芒格视角","required":true,"min_content_chars":1},{"section_id":"li_view","heading":"李录视角","required":true,"min_content_chars":1},{"section_id":"four_view_comparison","heading":"四视角对照表","required":true,"min_content_chars":1},{"section_id":"disagreement_arbitration","heading":"分歧仲裁","required":true,"min_content_chars":1},{"section_id":"integrated_conclusion","heading":"综合结论","required":true,"min_content_chars":1}],"applicability":{"predicate":"min_independent_contexts_2","alternative":"investment-research"},"roles":{"required_roles":["duan","buffett","munger","li"],"mode":"independent_then_integrator","min_independent_contexts":2,"sequential_cap":"PASS_WITH_LIMITATIONS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["contrarian_synthesis"]},{"kind":"min_role_runs","n":4}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["min_independent_contexts_2"]},{"skill_id":"management-deep-dive","category":"02-company-earnings","stage_dir":"02-company-earnings","spec_source":"skills/management-deep-dive.md","artifact":{"artifact_id":"artifact.management-deep-dive","formal_path":"02-公司与财报/07-management-deep-dive.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"strategic_vision","heading":"战略眼光","required":true,"min_content_chars":1},{"section_id":"delivery_record","heading":"兑现记录","required":true,"min_content_chars":1},{"section_id":"integrity_assessment","heading":"诚信评估","required":true,"min_content_chars":1},{"section_id":"capital_allocation","heading":"资本配置","required":true,"min_content_chars":1},{"section_id":"governance_structure","heading":"治理结构","required":true,"min_content_chars":1},{"section_id":"side_validation","heading":"侧面验证","required":true,"min_content_chars":1},{"section_id":"departure_scenario","heading":"离任情景","required":true,"min_content_chars":1}],"applicability":{"predicate":"identifiable_key_managers","alternative":"governance-gap-record"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":2,"sequential_cap":"PASS_WITH_LIMITATIONS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["management_integrity"]},{"kind":"min_role_runs","n":4},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["identifiable_key_managers"]},{"skill_id":"earnings-review","category":"02-company-earnings","stage_dir":"02-company-earnings","spec_source":"skills/earnings-review.md","artifact":{"artifact_id":"artifact.earnings-review","formal_path":"02-公司与财报/08-earnings-review.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"data_availability","heading":"资料可得性","required":true,"min_content_chars":1},{"section_id":"three_statements","heading":"三表分析","required":true,"min_content_chars":1},{"section_id":"management_discussion","heading":"MD&A","required":true,"min_content_chars":1},{"section_id":"notes","heading":"附注","required":true,"min_content_chars":1},{"section_id":"history_guidance_compare","heading":"历史与指引对比","required":true,"min_content_chars":1},{"section_id":"sample_check","heading":"抽检结果","required":true,"min_content_chars":1}],"applicability":{"predicate":"has_primary_filing_for_period","alternative":"financial-summary-fallback"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_fact_fields","values":["income_statement","balance_sheet","cash_flow"]},{"kind":"min_facts","n":3},{"kind":"min_calculations","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["has_primary_filing_for_period"]},{"skill_id":"earnings-team","category":"02-company-earnings","stage_dir":"02-company-earnings","spec_source":"skills/earnings-team.md","artifact":{"artifact_id":"artifact.earnings-team","formal_path":"02-公司与财报/09-earnings-team.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"four_master_reading","heading":"四大师解读","required":true,"min_content_chars":1},{"section_id":"editor_review","heading":"编辑意见","required":true,"min_content_chars":1},{"section_id":"reader_review","heading":"读者评审","required":true,"min_content_chars":1},{"section_id":"final_draft","heading":"定稿","required":true,"min_content_chars":1},{"section_id":"critical_revision","heading":"硬伤修订","required":true,"min_content_chars":1},{"section_id":"difference_log","heading":"差异记录","required":true,"min_content_chars":1}],"applicability":{"predicate":"earnings_review_complete_and_min_2_contexts","alternative":"earnings-review"},"roles":{"required_roles":["duan","buffett","munger","li","editor","reader"],"mode":"independent_then_integrator","min_independent_contexts":2,"sequential_cap":"PASS_WITH_LIMITATIONS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["earnings_editorial_review"]},{"kind":"min_role_runs","n":6}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["earnings_review_complete_and_min_2_contexts"]},{"skill_id":"industry-research","category":"03-industry-opportunity","stage_dir":"03-industry-opportunity","spec_source":"skills/industry-research.md","artifact":{"artifact_id":"artifact.industry-research","formal_path":"03-行业与机会/10-industry-research.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"business_scope","heading":"主业界定","required":true,"min_content_chars":1},{"section_id":"value_chain","heading":"产业链全景","required":true,"min_content_chars":1},{"section_id":"global_company_scan","heading":"全球公司扫描","required":true,"min_content_chars":1},{"section_id":"top_four_master_analysis","heading":"头部四大师分析","required":true,"min_content_chars":1},{"section_id":"industry_risks","heading":"行业风险","required":true,"min_content_chars":1},{"section_id":"civilization_trends","heading":"文明趋势","required":true,"min_content_chars":1}],"applicability":{"predicate":"main_business_definable","alternative":null},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["industry_scope"]},{"kind":"min_facts","n":1},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["main_business_definable"]},{"skill_id":"industry-funnel","category":"03-industry-opportunity","stage_dir":"03-industry-opportunity","spec_source":"skills/industry-funnel.md","artifact":{"artifact_id":"artifact.industry-funnel","formal_path":"03-行业与机会/11-industry-funnel.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"universe","heading":"相关标的池","required":true,"min_content_chars":1},{"section_id":"hard_metric_screen","heading":"五硬指标粗筛","required":true,"min_content_chars":1},{"section_id":"final_three","heading":"终选三家","required":true,"min_content_chars":1},{"section_id":"target_decisions","heading":"目标去留记录","required":true,"min_content_chars":1}],"applicability":{"predicate":"always","alternative":"industry-research"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_fact_fields","values":["funnel_universe","funnel_top10","funnel_final3"]},{"kind":"min_facts","n":3},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["always"]},{"skill_id":"bottleneck-hunter","category":"03-industry-opportunity","stage_dir":"03-industry-opportunity","spec_source":"skills/bottleneck-hunter.md","artifact":{"artifact_id":"artifact.bottleneck-hunter","formal_path":"03-行业与机会/12-bottleneck-hunter.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"trend_validation","heading":"趋势验证","required":true,"min_content_chars":1},{"section_id":"physicality","heading":"物理性","required":true,"min_content_chars":1},{"section_id":"scale","heading":"规模性","required":true,"min_content_chars":1},{"section_id":"acceleration","heading":"加速性","required":true,"min_content_chars":1},{"section_id":"tier_map","heading":"分层地图","required":true,"min_content_chars":1},{"section_id":"bottleneck_opportunities","heading":"瓶颈机会表","required":true,"min_content_chars":1},{"section_id":"valuation_traffic_light","heading":"估值红黄绿灯","required":true,"min_content_chars":1},{"section_id":"pro_con_validation","heading":"正反验证","required":true,"min_content_chars":1}],"applicability":{"predicate":"physical_bottleneck_exists","alternative":"negative-acceptance"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["physical_bottleneck"]},{"kind":"min_facts","n":1},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["physical_bottleneck_exists"]},{"skill_id":"news-pulse","category":"03-industry-opportunity","stage_dir":"03-industry-opportunity","spec_source":"skills/news-pulse.md","artifact":{"artifact_id":"artifact.news-pulse","formal_path":"03-行业与机会/13-news-pulse.md","min_bytes":800,"audit_policy":"advisory"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"company_scout","heading":"公司侦察","required":true,"min_content_chars":1},{"section_id":"regulatory_scout","heading":"监管侦察","required":true,"min_content_chars":1},{"section_id":"industry_scout","heading":"行业侦察","required":true,"min_content_chars":1},{"section_id":"sentiment_scout","heading":"情绪侦察","required":true,"min_content_chars":1},{"section_id":"unified_timeline","heading":"统一时间线","required":true,"min_content_chars":1},{"section_id":"price_move_cause","heading":"异动主因","required":true,"min_content_chars":1},{"section_id":"fact_inference_split","heading":"事实与推断分离","required":true,"min_content_chars":1},{"section_id":"thesis_review_trigger","heading":"论文重审触发","required":true,"min_content_chars":1}],"applicability":{"predicate":"always_applicable","alternative":null},"roles":{"required_roles":["company","regulatory","industry","sentiment","integrator"],"mode":"independent_then_integrator","min_independent_contexts":2,"sequential_cap":"PASS_WITH_LIMITATIONS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["price_move_attribution"]},{"kind":"min_role_runs","n":4},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["always_applicable"]},{"skill_id":"thesis-tracker","category":"04-thesis-boundary","stage_dir":"04-thesis-boundary","spec_source":"skills/thesis-tracker.md","artifact":{"artifact_id":"artifact.thesis-tracker","formal_path":"04-论文与组合/14-thesis-tracker.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"five_question_thesis","heading":"五问核心论文","required":true,"min_content_chars":1},{"section_id":"key_assumptions","heading":"关键假设","required":true,"min_content_chars":1},{"section_id":"red_lines","heading":"红线","required":true,"min_content_chars":1},{"section_id":"valuation_anchor","heading":"估值锚","required":true,"min_content_chars":1},{"section_id":"health_score","heading":"健康度评分","required":true,"min_content_chars":1},{"section_id":"update_log","heading":"更新记录","required":true,"min_content_chars":1}],"applicability":{"predicate":"always_applicable","alternative":null},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["core_thesis"]},{"kind":"min_judgments_with_falsification","n":5}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["always_applicable"]},{"skill_id":"thesis-drift","category":"04-thesis-boundary","stage_dir":"04-thesis-boundary","spec_source":"skills/thesis-drift.md","artifact":{"artifact_id":"artifact.thesis-drift","formal_path":"04-论文与组合/15-thesis-drift.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"snapshot_pairing","heading":"快照配对","required":true,"min_content_chars":1},{"section_id":"evidence_normalization","heading":"证据归一","required":true,"min_content_chars":1},{"section_id":"numeric_replay","heading":"数值重放","required":true,"min_content_chars":1},{"section_id":"drift_verdicts","heading":"漂移逐项判定","required":true,"min_content_chars":1}],"applicability":{"predicate":"paired_thesis_snapshots","alternative":"thesis-tracker"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["snapshot_drift"]},{"kind":"min_calculations","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["paired_thesis_snapshots"]},{"skill_id":"portfolio-review","category":"04-thesis-boundary","stage_dir":"04-thesis-boundary","spec_source":"skills/portfolio-review.md","artifact":{"artifact_id":"artifact.portfolio-review","formal_path":"04-论文与组合/16-portfolio-review.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"concentration","heading":"集中度","required":true,"min_content_chars":1},{"section_id":"correlation","heading":"相关性","required":true,"min_content_chars":1},{"section_id":"opportunity_cost","heading":"机会成本","required":true,"min_content_chars":1},{"section_id":"stress_test","heading":"压力测试","required":true,"min_content_chars":1},{"section_id":"rebalance_recommendation","heading":"调仓建议","required":true,"min_content_chars":1}],"applicability":{"predicate":"private_portfolio_input","alternative":"negative-acceptance"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["portfolio_action"]},{"kind":"min_calculations","n":1},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["private_portfolio_input"]},{"skill_id":"private-company-research","category":"04-thesis-boundary","stage_dir":"04-thesis-boundary","spec_source":"skills/private-company-research.md","artifact":{"artifact_id":"artifact.private-company-research","formal_path":"04-论文与组合/17-private-company-research.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"business_dimension","heading":"商业维度","required":true,"min_content_chars":1},{"section_id":"financial_dimension","heading":"财务维度","required":true,"min_content_chars":1},{"section_id":"industry_dimension","heading":"行业维度","required":true,"min_content_chars":1},{"section_id":"governance_dimension","heading":"治理维度","required":true,"min_content_chars":1},{"section_id":"technology_dimension","heading":"技术维度","required":true,"min_content_chars":1},{"section_id":"alternative_data_dimension","heading":"替代数据维度","required":true,"min_content_chars":1},{"section_id":"source_confidence","heading":"数据来源与置信度","required":true,"min_content_chars":1},{"section_id":"estimation_method","heading":"推算方法","required":true,"min_content_chars":1}],"applicability":{"predicate":"is_unlisted","alternative":"investment-research"},"roles":{"required_roles":["business","financial","industry","governance","technology","alternative-data"],"mode":"independent_then_integrator","min_independent_contexts":2,"sequential_cap":"PASS_WITH_LIMITATIONS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["private_company_conclusion"]},{"kind":"min_role_runs","n":6}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":true,"predicates":["is_unlisted"]},{"skill_id":"deep-company-series","category":"05-content","stage_dir":"05-content","spec_source":"skills/deep-company-series.md","artifact":{"artifact_id":"artifact.deep-company-series","formal_path":"05-内容生产/18-deep-company-series.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"series_outline","heading":"系列篇目清单","required":true,"min_content_chars":1},{"section_id":"cross_article_consistency","heading":"跨篇一致性核查","required":true,"min_content_chars":1},{"section_id":"seven_fact_check","heading":"七项事实核查","required":true,"min_content_chars":1}],"applicability":{"predicate":"core_research_passed_min_3_questions","alternative":"negative-acceptance"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["series_question_1","series_question_2","series_question_3"]},{"kind":"min_facts","n":7},{"kind":"min_judgments_with_falsification","n":3}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":false,"predicates":["core_research_passed_min_3_questions"]},{"skill_id":"dyp-ask","category":"05-content","stage_dir":"05-content","spec_source":"skills/dyp-ask.md","artifact":{"artifact_id":"artifact.dyp-ask","formal_path":"05-内容生产/19-dyp-ask.md","min_bytes":800,"audit_policy":"advisory"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"method_simulation_disclaimer","heading":"方法模拟声明","required":true,"min_content_chars":1},{"section_id":"business","heading":"生意","required":true,"min_content_chars":1},{"section_id":"circle_of_competence","heading":"能力圈","required":true,"min_content_chars":1},{"section_id":"management","heading":"管理层","required":true,"min_content_chars":1},{"section_id":"price","heading":"价格","required":true,"min_content_chars":1},{"section_id":"not_to_do","heading":"不为清单","required":true,"min_content_chars":1}],"applicability":{"predicate":"has_fact_base","alternative":"negative-acceptance"},"roles":{"required_roles":[],"mode":"single_agent","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["dyp_method_simulation"]},{"kind":"min_facts","n":1},{"kind":"min_judgments_with_falsification","n":1}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":false,"predicates":["has_fact_base"]},{"skill_id":"wechat-article","category":"05-content","stage_dir":"05-content","spec_source":"skills/wechat-article.md","artifact":{"artifact_id":"artifact.wechat-article","formal_path":"05-内容生产/20-wechat-article.md","min_bytes":800,"audit_policy":"required"},"sections":[{"section_id":"data_cutoff","heading":"数据截止日","required":true,"min_content_chars":1},{"section_id":"sources_scope","heading":"直接来源","required":true,"min_content_chars":1},{"section_id":"limitations","heading":"限制","required":true,"min_content_chars":1},{"section_id":"research_disclaimer","heading":"仅供学习研究","required":true,"min_content_chars":1},{"section_id":"core_conclusion","heading":"核心结论","required":true,"min_content_chars":80},{"section_id":"downstream_evidence","heading":"下游证据","required":true,"min_content_chars":80},{"section_id":"contract_calculations","heading":"契约计算","required":false,"min_content_chars":0},{"section_id":"draft","heading":"初稿","required":true,"min_content_chars":1},{"section_id":"editor_review","heading":"编辑意见","required":true,"min_content_chars":1},{"section_id":"reader_feedback","heading":"读者意见","required":true,"min_content_chars":1},{"section_id":"final_draft","heading":"定稿","required":true,"min_content_chars":1},{"section_id":"critical_revision_closure","heading":"硬伤修订闭环","required":true,"min_content_chars":1}],"applicability":{"predicate":"core_research_passed_draft_allowed","alternative":"negative-acceptance"},"roles":{"required_roles":["author","editor","reader"],"mode":"independent_then_integrator","min_independent_contexts":0,"sequential_cap":"PASS"},"evidence_rules":[{"kind":"required_judgment_rule_ids","values":["publication_revision_closure"]},{"kind":"min_role_runs","n":3}],"pwl_allowlist":["tushare_unavailable","web_bandwidth_degraded","ephemeral_source"],"core":false,"predicates":["core_research_passed_draft_allowed"]}]}
+{
+  "schema_version": "full-analysis-contract/v2",
+  "manifest_schema_version": "full-analysis-manifest/v2",
+  "result_schema_version": "result-schema/v1",
+  "description": "全量公司分析 20 项业务契约唯一机器真源；Gate、Runtime、WorkBuddy adapter 均只读取本注册表。",
+  "stage_dirs": {
+    "01-data-screen": "01-数据与快筛",
+    "02-company-earnings": "02-公司与财报",
+    "03-industry-opportunity": "03-行业与机会",
+    "04-thesis-boundary": "04-论文与组合",
+    "05-content": "05-内容生产"
+  },
+  "negative_acceptance_dir": "06-负向验收",
+  "pwl_allowlist": [
+    "tushare_unavailable",
+    "web_bandwidth_degraded",
+    "ephemeral_source"
+  ],
+  "pwl_forbidden": [
+    "single_context_fallback",
+    "manual_intervention",
+    "budget_exhausted",
+    "unregistered_artifact",
+    "unverified_fact",
+    "missing_required_section"
+  ],
+  "predicates": [
+    "is_a_share",
+    "always_applicable",
+    "has_comparable_financial_history",
+    "has_investable_price",
+    "min_independent_contexts_2",
+    "identifiable_key_managers",
+    "has_primary_filing_for_period",
+    "earnings_review_complete_and_min_2_contexts",
+    "main_business_definable",
+    "listed_and_main_industry_definable",
+    "physical_bottleneck_exists",
+    "has_two_pairable_snapshots",
+    "private_run_with_portfolio_input",
+    "is_unlisted",
+    "core_research_passed_min_3_questions",
+    "has_fact_base",
+    "core_research_passed_draft_allowed",
+    "always",
+    "private_portfolio_input",
+    "paired_thesis_snapshots"
+  ],
+  "skills": [
+    {
+      "skill_id": "ashare-data",
+      "category": "01-data-screen",
+      "stage_dir": "01-data-screen",
+      "spec_source": "skills/ashare-data.md",
+      "artifact": {
+        "artifact_id": "artifact.ashare-data",
+        "formal_path": "01-数据与快筛/01-ashare-data.md",
+        "min_bytes": 800,
+        "audit_policy": "advisory"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "target_scope",
+          "heading": "标的与口径",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "command_receipts",
+          "heading": "命令执行记录",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "source_dates",
+          "heading": "来源与数据时间",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "warnings_gaps",
+          "heading": "警告与缺口",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "is_a_share",
+        "alternative": "financial-data"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_command_operations",
+          "values": [
+            "quote",
+            "financials",
+            "valuation",
+            "history",
+            "equity-history",
+            "announcements",
+            "signals"
+          ]
+        },
+        {
+          "kind": "min_command_receipts",
+          "n": 7
+        },
+        {
+          "kind": "required_fact_fields",
+          "values": [
+            "price",
+            "market_cap",
+            "revenue"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 3
+        },
+        {
+          "kind": "conditional_command_operations",
+          "capability": "tushare_configured",
+          "values": [
+            {
+              "op": "pe-band",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "ratios",
+              "feeds": "quality-screen",
+              "layer": 1
+            },
+            {
+              "op": "mainbz",
+              "feeds": "financial-data",
+              "layer": 1
+            },
+            {
+              "op": "peers",
+              "feeds": "industry-funnel",
+              "layer": 1
+            },
+            {
+              "op": "insider-trades",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "shareholders",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "managers",
+              "feeds": "management-deep-dive",
+              "layer": 2
+            },
+            {
+              "op": "management",
+              "feeds": "management-deep-dive",
+              "layer": 2
+            },
+            {
+              "op": "repurchase",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "pledge",
+              "feeds": "thesis-tracker",
+              "layer": 2
+            },
+            {
+              "op": "audit",
+              "feeds": "management-deep-dive",
+              "layer": 2
+            },
+            {
+              "op": "express",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "consensus",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "holder-num",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "north-hold",
+              "feeds": "news-pulse",
+              "layer": 3
+            },
+            {
+              "op": "kline",
+              "feeds": "thesis-drift",
+              "layer": 4
+            },
+            {
+              "op": "research-visits",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "dividend",
+              "feeds": "investment-checklist",
+              "layer": 1
+            },
+            {
+              "op": "disclosure-calendar",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "news",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "industry-pe",
+              "feeds": "industry-research",
+              "layer": 3
+            },
+            {
+              "op": "index-val",
+              "feeds": "portfolio-review",
+              "layer": 4,
+              "optional": true
+            },
+            {
+              "op": "income-stmt",
+              "feeds": "earnings-review",
+              "layer": 2
+            },
+            {
+              "op": "balance-sheet",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "cash-flow",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "money-flow",
+              "feeds": "news-pulse",
+              "layer": 3
+            },
+            {
+              "op": "factors",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "sector-peers",
+              "feeds": "industry-research",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "macro",
+              "feeds": "portfolio-review",
+              "layer": 4,
+              "optional": true
+            },
+            {
+              "op": "name-history",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "limit-price",
+              "feeds": "news-pulse",
+              "layer": 3
+            },
+            {
+              "op": "suspend",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "weekly",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "monthly",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "broker-recommend",
+              "feeds": "investment-research",
+              "layer": 1,
+              "optional": true
+            },
+            {
+              "op": "cyq-chips",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "stk-factor",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "limit-list",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "top-list",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "ths-hot",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "unblock",
+              "feeds": "investment-research",
+              "layer": 1
+            },
+            {
+              "op": "block-trade",
+              "feeds": "investment-research",
+              "layer": 2,
+              "optional": true
+            },
+            {
+              "op": "analyst-reports",
+              "feeds": "investment-research",
+              "layer": 2
+            },
+            {
+              "op": "hsgt-flow",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "hsgt-top10",
+              "feeds": "news-pulse",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "sector-flow",
+              "feeds": "industry-research",
+              "layer": 3,
+              "optional": true
+            },
+            {
+              "op": "margin",
+              "feeds": "investment-research",
+              "layer": 2
+            }
+          ],
+          "min_satisfied_ratio": 0.7,
+          "tolerate_missing_with_limitation": true,
+          "tolerate_failed_with_limitation": true
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "is_a_share"
+      ],
+      "skill_type": "data",
+      "min_dissent_points": 0,
+      "min_substantive_sections": 1
+    },
+    {
+      "skill_id": "financial-data",
+      "category": "01-data-screen",
+      "stage_dir": "01-data-screen",
+      "spec_source": "skills/financial-data.md",
+      "artifact": {
+        "artifact_id": "artifact.financial-data",
+        "formal_path": "01-数据与快筛/02-financial-data.md",
+        "min_bytes": 800,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "dual_source_table",
+          "heading": "关键财务字段双源表",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "period_units",
+          "heading": "主体期间单位口径",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "independence_check",
+          "heading": "独立来源判定",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "error_grading",
+          "heading": "误差分级",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "calculation_replay",
+          "heading": "计算重放表",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "always_applicable",
+        "alternative": null
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": [
+            "revenue"
+          ]
+        },
+        {
+          "kind": "min_dual_source_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "always_applicable"
+      ],
+      "skill_type": "data",
+      "min_dissent_points": 0,
+      "min_substantive_sections": 1
+    },
+    {
+      "skill_id": "quality-screen",
+      "category": "01-data-screen",
+      "stage_dir": "01-data-screen",
+      "spec_source": "skills/quality-screen.md",
+      "artifact": {
+        "artifact_id": "artifact.quality-screen",
+        "formal_path": "01-数据与快筛/03-quality-screen.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "seven_metric_screen",
+          "heading": "七指标筛选表",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "exemption_evidence",
+          "heading": "豁免证据",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "financial_sector_scope",
+          "heading": "金融行业口径",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "item_conclusions",
+          "heading": "逐项结论",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "has_comparable_financial_history",
+        "alternative": "private-company-research"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": [
+            "quality_metric_1",
+            "quality_metric_2",
+            "quality_metric_3",
+            "quality_metric_4",
+            "quality_metric_5",
+            "quality_metric_6",
+            "quality_metric_7"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 7
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "has_comparable_financial_history"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "investment-checklist",
+      "category": "01-data-screen",
+      "stage_dir": "01-data-screen",
+      "spec_source": "skills/investment-checklist.md",
+      "artifact": {
+        "artifact_id": "artifact.investment-checklist",
+        "formal_path": "01-数据与快筛/04-investment-checklist.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "six_gate_score",
+          "heading": "六关评分",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "mirror_test",
+          "heading": "镜子测试",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "quick_rejects",
+          "heading": "快速否决清单",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "valuation_receipts",
+          "heading": "估值工具记录",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "final_decision",
+          "heading": "最终结论",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "falsification",
+          "heading": "证伪条件",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "has_investable_price",
+        "alternative": "private-company-research"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "checklist_final_decision"
+          ]
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "has_investable_price"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "investment-research",
+      "category": "02-company-earnings",
+      "stage_dir": "02-company-earnings",
+      "spec_source": "skills/investment-research.md",
+      "artifact": {
+        "artifact_id": "artifact.investment-research",
+        "formal_path": "02-公司与财报/05-investment-research.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "information_richness",
+          "heading": "信息丰富度评级",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "eight_step_framework",
+          "heading": "八步框架",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "valuation_range",
+          "heading": "估值区间",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "counter_test",
+          "heading": "反面检验",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "ai_confidence",
+          "heading": "AI置信度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "investment_certainty",
+          "heading": "投资确定性",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "always_applicable",
+        "alternative": null
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "investment_thesis"
+          ]
+        },
+        {
+          "kind": "min_dual_source_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "always_applicable"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "investment-team",
+      "category": "02-company-earnings",
+      "stage_dir": "02-company-earnings",
+      "spec_source": "skills/investment-team.md",
+      "artifact": {
+        "artifact_id": "artifact.investment-team",
+        "formal_path": "02-公司与财报/06-investment-team.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "duan_view",
+          "heading": "段永平视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "buffett_view",
+          "heading": "巴菲特视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "munger_view",
+          "heading": "芒格视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "li_view",
+          "heading": "李录视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "four_view_comparison",
+          "heading": "四视角对照表",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "disagreement_arbitration",
+          "heading": "分歧仲裁",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "integrated_conclusion",
+          "heading": "综合结论",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "min_independent_contexts_2",
+        "alternative": "investment-research"
+      },
+      "roles": {
+        "required_roles": [
+          "duan",
+          "buffett",
+          "munger",
+          "li"
+        ],
+        "mode": "independent_then_integrator",
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "contrarian_synthesis"
+          ]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 4
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "min_independent_contexts_2"
+      ],
+      "skill_type": "fanout",
+      "min_dissent_points": 4,
+      "min_substantive_sections": 3
+    },
+    {
+      "skill_id": "management-deep-dive",
+      "category": "02-company-earnings",
+      "stage_dir": "02-company-earnings",
+      "spec_source": "skills/management-deep-dive.md",
+      "artifact": {
+        "artifact_id": "artifact.management-deep-dive",
+        "formal_path": "02-公司与财报/07-management-deep-dive.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "strategic_vision",
+          "heading": "战略眼光",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "delivery_record",
+          "heading": "兑现记录",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "integrity_assessment",
+          "heading": "诚信评估",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "capital_allocation",
+          "heading": "资本配置",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "governance_structure",
+          "heading": "治理结构",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "side_validation",
+          "heading": "侧面验证",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "departure_scenario",
+          "heading": "离任情景",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "identifiable_key_managers",
+        "alternative": "governance-gap-record"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "management_integrity"
+          ]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 4
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "identifiable_key_managers"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "earnings-review",
+      "category": "02-company-earnings",
+      "stage_dir": "02-company-earnings",
+      "spec_source": "skills/earnings-review.md",
+      "artifact": {
+        "artifact_id": "artifact.earnings-review",
+        "formal_path": "02-公司与财报/08-earnings-review.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "data_availability",
+          "heading": "资料可得性",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "three_statements",
+          "heading": "三表分析",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "management_discussion",
+          "heading": "MD&A",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "notes",
+          "heading": "附注",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "history_guidance_compare",
+          "heading": "历史与指引对比",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sample_check",
+          "heading": "抽检结果",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "has_primary_filing_for_period",
+        "alternative": "financial-summary-fallback"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": [
+            "income_statement",
+            "balance_sheet",
+            "cash_flow"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 3
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "has_primary_filing_for_period"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "earnings-team",
+      "category": "02-company-earnings",
+      "stage_dir": "02-company-earnings",
+      "spec_source": "skills/earnings-team.md",
+      "artifact": {
+        "artifact_id": "artifact.earnings-team",
+        "formal_path": "02-公司与财报/09-earnings-team.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "four_master_reading",
+          "heading": "四大师解读",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "editor_review",
+          "heading": "编辑意见",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "reader_review",
+          "heading": "读者评审",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "final_draft",
+          "heading": "定稿",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "critical_revision",
+          "heading": "硬伤修订",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "difference_log",
+          "heading": "差异记录",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "earnings_review_complete_and_min_2_contexts",
+        "alternative": "earnings-review"
+      },
+      "roles": {
+        "required_roles": [
+          "duan",
+          "buffett",
+          "munger",
+          "li",
+          "editor",
+          "reader"
+        ],
+        "mode": "independent_then_integrator",
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "earnings_editorial_review"
+          ]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 6
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "earnings_review_complete_and_min_2_contexts"
+      ],
+      "skill_type": "fanout",
+      "min_dissent_points": 4,
+      "min_substantive_sections": 3
+    },
+    {
+      "skill_id": "industry-research",
+      "category": "03-industry-opportunity",
+      "stage_dir": "03-industry-opportunity",
+      "spec_source": "skills/industry-research.md",
+      "artifact": {
+        "artifact_id": "artifact.industry-research",
+        "formal_path": "03-行业与机会/10-industry-research.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "business_scope",
+          "heading": "主业界定",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "value_chain",
+          "heading": "产业链全景",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "global_company_scan",
+          "heading": "全球公司扫描",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "top_four_master_analysis",
+          "heading": "头部四大师分析",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "industry_risks",
+          "heading": "行业风险",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "civilization_trends",
+          "heading": "文明趋势",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "main_business_definable",
+        "alternative": null
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "industry_scope"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "main_business_definable"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "industry-funnel",
+      "category": "03-industry-opportunity",
+      "stage_dir": "03-industry-opportunity",
+      "spec_source": "skills/industry-funnel.md",
+      "artifact": {
+        "artifact_id": "artifact.industry-funnel",
+        "formal_path": "03-行业与机会/11-industry-funnel.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "universe",
+          "heading": "相关标的池",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "hard_metric_screen",
+          "heading": "五硬指标粗筛",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "final_three",
+          "heading": "终选三家",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "target_decisions",
+          "heading": "目标去留记录",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "always",
+        "alternative": "industry-research"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_fact_fields",
+          "values": [
+            "funnel_universe",
+            "funnel_top10",
+            "funnel_final3"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 3
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "always"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "bottleneck-hunter",
+      "category": "03-industry-opportunity",
+      "stage_dir": "03-industry-opportunity",
+      "spec_source": "skills/bottleneck-hunter.md",
+      "artifact": {
+        "artifact_id": "artifact.bottleneck-hunter",
+        "formal_path": "03-行业与机会/12-bottleneck-hunter.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "trend_validation",
+          "heading": "趋势验证",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "physicality",
+          "heading": "物理性",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "scale",
+          "heading": "规模性",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "acceleration",
+          "heading": "加速性",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "tier_map",
+          "heading": "分层地图",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "bottleneck_opportunities",
+          "heading": "瓶颈机会表",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "valuation_traffic_light",
+          "heading": "估值红黄绿灯",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "pro_con_validation",
+          "heading": "正反验证",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "physical_bottleneck_exists",
+        "alternative": "negative-acceptance"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "physical_bottleneck"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "physical_bottleneck_exists"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "news-pulse",
+      "category": "03-industry-opportunity",
+      "stage_dir": "03-industry-opportunity",
+      "spec_source": "skills/news-pulse.md",
+      "artifact": {
+        "artifact_id": "artifact.news-pulse",
+        "formal_path": "03-行业与机会/13-news-pulse.md",
+        "min_bytes": 1500,
+        "audit_policy": "advisory"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "company_scout",
+          "heading": "公司侦察",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "regulatory_scout",
+          "heading": "监管侦察",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "industry_scout",
+          "heading": "行业侦察",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sentiment_scout",
+          "heading": "情绪侦察",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "unified_timeline",
+          "heading": "统一时间线",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "price_move_cause",
+          "heading": "异动主因",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "fact_inference_split",
+          "heading": "事实与推断分离",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "thesis_review_trigger",
+          "heading": "论文重审触发",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "always_applicable",
+        "alternative": null
+      },
+      "roles": {
+        "required_roles": [
+          "company",
+          "regulatory",
+          "industry",
+          "sentiment",
+          "integrator"
+        ],
+        "mode": "independent_then_integrator",
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "price_move_attribution"
+          ]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 4
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "always_applicable"
+      ],
+      "skill_type": "fanout",
+      "min_dissent_points": 4,
+      "min_substantive_sections": 3
+    },
+    {
+      "skill_id": "thesis-tracker",
+      "category": "04-thesis-boundary",
+      "stage_dir": "04-thesis-boundary",
+      "spec_source": "skills/thesis-tracker.md",
+      "artifact": {
+        "artifact_id": "artifact.thesis-tracker",
+        "formal_path": "04-论文与组合/14-thesis-tracker.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "five_question_thesis",
+          "heading": "五问核心论文",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "key_assumptions",
+          "heading": "关键假设",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "red_lines",
+          "heading": "红线",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "valuation_anchor",
+          "heading": "估值锚",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "health_score",
+          "heading": "健康度评分",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "update_log",
+          "heading": "更新记录",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "always_applicable",
+        "alternative": null
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "core_thesis"
+          ]
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 5
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "always_applicable"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "thesis-drift",
+      "category": "04-thesis-boundary",
+      "stage_dir": "04-thesis-boundary",
+      "spec_source": "skills/thesis-drift.md",
+      "artifact": {
+        "artifact_id": "artifact.thesis-drift",
+        "formal_path": "04-论文与组合/15-thesis-drift.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "snapshot_pairing",
+          "heading": "快照配对",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "evidence_normalization",
+          "heading": "证据归一",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "numeric_replay",
+          "heading": "数值重放",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "drift_verdicts",
+          "heading": "漂移逐项判定",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "paired_thesis_snapshots",
+        "alternative": "thesis-tracker"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "snapshot_drift"
+          ]
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "paired_thesis_snapshots"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "portfolio-review",
+      "category": "04-thesis-boundary",
+      "stage_dir": "04-thesis-boundary",
+      "spec_source": "skills/portfolio-review.md",
+      "artifact": {
+        "artifact_id": "artifact.portfolio-review",
+        "formal_path": "04-论文与组合/16-portfolio-review.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "concentration",
+          "heading": "集中度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "correlation",
+          "heading": "相关性",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "opportunity_cost",
+          "heading": "机会成本",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "stress_test",
+          "heading": "压力测试",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "rebalance_recommendation",
+          "heading": "调仓建议",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "private_portfolio_input",
+        "alternative": "negative-acceptance"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "portfolio_action"
+          ]
+        },
+        {
+          "kind": "min_calculations",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "private_portfolio_input"
+      ],
+      "skill_type": "analysis",
+      "min_dissent_points": 1,
+      "min_substantive_sections": 2
+    },
+    {
+      "skill_id": "private-company-research",
+      "category": "04-thesis-boundary",
+      "stage_dir": "04-thesis-boundary",
+      "spec_source": "skills/private-company-research.md",
+      "artifact": {
+        "artifact_id": "artifact.private-company-research",
+        "formal_path": "04-论文与组合/17-private-company-research.md",
+        "min_bytes": 1500,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "business_dimension",
+          "heading": "商业维度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "financial_dimension",
+          "heading": "财务维度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "industry_dimension",
+          "heading": "行业维度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "governance_dimension",
+          "heading": "治理维度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "technology_dimension",
+          "heading": "技术维度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "alternative_data_dimension",
+          "heading": "替代数据维度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "source_confidence",
+          "heading": "数据来源与置信度",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "estimation_method",
+          "heading": "推算方法",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "is_unlisted",
+        "alternative": "investment-research"
+      },
+      "roles": {
+        "required_roles": [
+          "business",
+          "financial",
+          "industry",
+          "governance",
+          "technology",
+          "alternative-data"
+        ],
+        "mode": "independent_then_integrator",
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "private_company_conclusion"
+          ]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 6
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": true,
+      "predicates": [
+        "is_unlisted"
+      ],
+      "skill_type": "fanout",
+      "min_dissent_points": 4,
+      "min_substantive_sections": 3
+    },
+    {
+      "skill_id": "deep-company-series",
+      "category": "05-content",
+      "stage_dir": "05-content",
+      "spec_source": "skills/deep-company-series.md",
+      "artifact": {
+        "artifact_id": "artifact.deep-company-series",
+        "formal_path": "05-内容生产/18-deep-company-series.md",
+        "min_bytes": 600,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "series_outline",
+          "heading": "系列篇目清单",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "cross_article_consistency",
+          "heading": "跨篇一致性核查",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "seven_fact_check",
+          "heading": "七项事实核查",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "core_research_passed_min_3_questions",
+        "alternative": "negative-acceptance"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "series_question_1",
+            "series_question_2",
+            "series_question_3"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 7
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 3
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": false,
+      "predicates": [
+        "core_research_passed_min_3_questions"
+      ],
+      "skill_type": "content",
+      "min_dissent_points": 0,
+      "min_substantive_sections": 1
+    },
+    {
+      "skill_id": "dyp-ask",
+      "category": "05-content",
+      "stage_dir": "05-content",
+      "spec_source": "skills/dyp-ask.md",
+      "artifact": {
+        "artifact_id": "artifact.dyp-ask",
+        "formal_path": "05-内容生产/19-dyp-ask.md",
+        "min_bytes": 600,
+        "audit_policy": "advisory"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "method_simulation_disclaimer",
+          "heading": "方法模拟声明",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "business",
+          "heading": "生意",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "circle_of_competence",
+          "heading": "能力圈",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "management",
+          "heading": "管理层",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "price",
+          "heading": "价格",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "not_to_do",
+          "heading": "不为清单",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "has_fact_base",
+        "alternative": "negative-acceptance"
+      },
+      "roles": {
+        "required_roles": [],
+        "mode": "single_agent",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "dyp_method_simulation"
+          ]
+        },
+        {
+          "kind": "min_facts",
+          "n": 1
+        },
+        {
+          "kind": "min_judgments_with_falsification",
+          "n": 1
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": false,
+      "predicates": [
+        "has_fact_base"
+      ],
+      "skill_type": "content",
+      "min_dissent_points": 0,
+      "min_substantive_sections": 1
+    },
+    {
+      "skill_id": "wechat-article",
+      "category": "05-content",
+      "stage_dir": "05-content",
+      "spec_source": "skills/wechat-article.md",
+      "artifact": {
+        "artifact_id": "artifact.wechat-article",
+        "formal_path": "05-内容生产/20-wechat-article.md",
+        "min_bytes": 600,
+        "audit_policy": "required"
+      },
+      "sections": [
+        {
+          "section_id": "data_cutoff",
+          "heading": "数据截止日",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "sources_scope",
+          "heading": "直接来源",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "limitations",
+          "heading": "限制",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "research_disclaimer",
+          "heading": "仅供学习研究",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "core_conclusion",
+          "heading": "核心结论",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "downstream_evidence",
+          "heading": "下游证据",
+          "required": true,
+          "min_content_chars": 80
+        },
+        {
+          "section_id": "contract_calculations",
+          "heading": "契约计算",
+          "required": false,
+          "min_content_chars": 0
+        },
+        {
+          "section_id": "draft",
+          "heading": "初稿",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "editor_review",
+          "heading": "编辑意见",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "reader_feedback",
+          "heading": "读者意见",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "final_draft",
+          "heading": "定稿",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "critical_revision_closure",
+          "heading": "硬伤修订闭环",
+          "required": true,
+          "min_content_chars": 1
+        }
+      ],
+      "applicability": {
+        "predicate": "core_research_passed_draft_allowed",
+        "alternative": "negative-acceptance"
+      },
+      "roles": {
+        "required_roles": [
+          "author",
+          "editor",
+          "reader"
+        ],
+        "mode": "independent_then_integrator",
+        "min_independent_contexts": 0,
+        "sequential_cap": "PASS"
+      },
+      "evidence_rules": [
+        {
+          "kind": "required_judgment_rule_ids",
+          "values": [
+            "publication_revision_closure"
+          ]
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 3
+        }
+      ],
+      "pwl_allowlist": [
+        "tushare_unavailable",
+        "web_bandwidth_degraded",
+        "ephemeral_source"
+      ],
+      "core": false,
+      "predicates": [
+        "core_research_passed_draft_allowed"
+      ],
+      "skill_type": "content",
+      "min_dissent_points": 0,
+      "min_substantive_sections": 1
+    }
+  ]
+}

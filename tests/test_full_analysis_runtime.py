@@ -47,17 +47,15 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(state["budget"]["preflight_count"], 1)
         self.assertEqual(len(state["work_units"]), 20)
 
-    def test_next_work_and_job_started_enforce_two_concurrent_leases(self):
+    def test_next_work_and_job_started_enforce_four_concurrent_leases(self):
         self.start()
-        first = self.cli("next-work", "--run-root", self.run_root)
-        second = self.cli("next-work", "--run-root", self.run_root)
-        third = self.cli("next-work", "--run-root", self.run_root)
-        self.assertEqual(first.returncode, 0)
-        self.assertEqual(second.returncode, 0)
-        self.assertEqual(json.loads(first.stdout)["status"], "LEASED")
-        self.assertEqual(json.loads(second.stdout)["status"], "LEASED")
-        self.assertEqual(json.loads(third.stdout)["status"], "NO_WORK")
-        a = json.loads(first.stdout)
+        leases = [self.cli("next-work", "--run-root", self.run_root) for _ in range(4)]
+        fifth = self.cli("next-work", "--run-root", self.run_root)
+        for lease in leases:
+            self.assertEqual(lease.returncode, 0)
+            self.assertEqual(json.loads(lease.stdout)["status"], "LEASED")
+        self.assertEqual(json.loads(fifth.stdout)["status"], "NO_WORK")
+        a = json.loads(leases[0].stdout)
         started = self.cli("job-started", "--run-root", self.run_root,
                            "--work-unit-id", a["work_unit_id"], "--attempt-id", a["attempt_id"],
                            "--lease-nonce", a["lease_nonce"], "--agent-job-id", "job-1")
