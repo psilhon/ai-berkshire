@@ -168,6 +168,17 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 - **Agent 层**：团队型 skill（如 `/investment-team`、`/earnings-team`）由 Team Lead 并行调度 4 个大师视角 Agent——各自独立搜索、独立判断、互相挑战，最后综合研判；轻量 skill 不经过这一层，直连工具快进快出
 - **工具层**：精确计算、实时检索、报告抽检——保证每份报告的数据严谨性可验证
 
+### 单公司全量分析（WorkBuddy）
+
+无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis/SKILL.md`](workbuddy-skills/full-company-analysis/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 20 项业务契约。Runtime 负责租约、重试、恢复与 50 次硬预算；Gate 负责 Result Bundle v1、正式产物原子晋级、共享 Audit 和最终准出。每次运行的中间产物统一位于 `local/company/<code>-<name>/<run-id>/evidence/`。
+
+```bash
+python3 scripts/full_analysis.py start \
+  --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
+```
+
+旧的 `scripts/run_full_analysis.py`、`scripts/batch_full_analysis.py` 和外部 `orchestrate.py` 已移除；不要恢复第二套 Python Agent 编排器。
+
 ---
 
 ## Skills 一览（20个）
