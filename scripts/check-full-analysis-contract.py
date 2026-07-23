@@ -1,415 +1,249 @@
 #!/usr/bin/env python3
-"""独立注册表校验器 — 全量公司分析 20 项机器契约 (v1.4 §6.1.4/§15.2#1#12).
+"""独立校验全量公司分析 Contract v2。
 
-不 import full_analysis_gate: 与 gate 单测构成两条独立实现路径, 防注册表与 gate 同错。
-所有错误一次全部列出后再退出 (失败要大声, 不只报第一个)。
-退出码: 0=通过 / 1=校验失败。
-
-保存路径覆盖检查 (§15.2#12):
-- 只扫"保存语义章节" (标题含 保存/输出/报告位置/文件命名/存储/写入), 到下一同级或更高级标题为止,
-  避免把正文里的参考样本误当写入目标;
-- 章节内提取: 行内代码 `...` 中的路径状字符串 + 围栏代码块内以 reports/ 或 ~/ 开头的锚定 token
-  (earnings-team 的输出文件树即此形态);
-- 排除仓库基础设施引用 (skills/ tools/ scripts/ tests/ data/ docs/ 前缀) —— 它们是交叉引用不是写入目标;
-- 每条提取路径必须被该项 legacy_output_patterns 覆盖: 模板占位符 {company}/{date}/{period}/{industry}
-  替换为 .+? 后正则全匹配; 候选路径里的中文占位符变体 ({公司名}/[公司名]/{YYYYMMDD}/{日期}/{期间}/{行业名})
-  先归一为字面样例再匹配; 裸文件名候选允许与模板 basename 匹配;
-- 模板禁止 glob 通配 ("*"): §8.3 过宽模式不能算覆盖证明。
+此脚本故意不 import Gate/Runtime，避免注册表和执行代码同时出错。
 """
+
+from __future__ import annotations
 
 import argparse
 import ast
-import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 
-ALLOWED_AUDIT_POLICY = {"required", "advisory", "none"}
-ALLOWED_SEQUENTIAL_CAP = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE_PASS"}
-ALLOWED_EVIDENCE_STATUS = {"PHASE2_PENDING", "IMPLEMENTED"}
-ALLOWED_PLACEHOLDERS = {"company", "date", "period", "industry"}
-# Phase 2: gate 可机械执法的领域证据规则 (须与 full_analysis_gate.EVIDENCE_RULE_KINDS 一致)
-EVIDENCE_RULE_KINDS = {
-    "min_facts", "min_dual_source_facts", "min_calculations",
-    "min_judgments_with_falsification", "min_role_runs",
-    "min_command_receipts", "required_fact_fields",
-    "required_judgment_rule_ids", "required_command_operations",
-    "conditional_command_operations",
+
+EXPECTED_SKILLS = {
+    "ashare-data", "financial-data", "quality-screen", "investment-checklist",
+    "investment-research", "investment-team", "management-deep-dive",
+    "earnings-review", "earnings-team", "industry-research", "industry-funnel",
+    "bottleneck-hunter", "news-pulse", "thesis-tracker", "thesis-drift",
+    "portfolio-review", "private-company-research", "deep-company-series",
+    "dyp-ask", "wechat-article",
 }
-COUNT_RULE_KINDS = {
-    "min_facts", "min_dual_source_facts", "min_calculations",
-    "min_judgments_with_falsification", "min_role_runs",
-    "min_command_receipts",
+EXPECTED_SCHEMA = {
+    "schema_version": "full-analysis-contract/v2",
+    "manifest_schema_version": "full-analysis-manifest/v2",
+    "result_schema_version": "result-schema/v1",
 }
-DOMAIN_RULE_KINDS = {
+EXPECTED_STAGE_KEYS = {
+    "01-data-screen", "02-company-earnings", "03-industry-opportunity",
+    "04-thesis-boundary", "05-content",
+}
+MACHINE_SECTIONS = {
+    "data_cutoff", "sources_scope", "limitations", "research_disclaimer",
+    "core_conclusion", "downstream_evidence", "contract_calculations",
+}
+PWL_ALLOWLIST = {"tushare_unavailable", "web_bandwidth_degraded", "ephemeral_source"}
+PWL_FORBIDDEN = {"single_context_fallback", "manual_intervention", "budget_exhausted"}
+EVIDENCE_KINDS = {
+    "min_facts", "min_dual_source_facts", "min_calculations",
+    "min_judgments_with_falsification", "min_role_runs", "min_command_receipts",
     "required_fact_fields", "required_judgment_rule_ids",
-    "required_command_operations",
+    "required_command_operations", "conditional_command_operations",
 }
-
-SAVE_HEADING_KEYWORDS = ("保存", "输出", "报告位置", "文件命名", "存储", "写入",
-                         "更新", "写作")
-
-# 候选路径里的占位符变体 → 归一为字面样例后与模板正则匹配
-_CANDIDATE_PLACEHOLDER_RE = re.compile(
-    r"\{公司名\}|\[公司名\]|\{日期\}|\{YYYYMMDD\}|\{期间\}|\{行业名\}|\{行业\}|"
-    r"\{趋势名\}|\{主题\}|\{name\}")
-# 仓库基础设施前缀: 交叉引用, 不是保存目标
-_INFRA_PREFIXES = ("skills/", "tools/", "scripts/", "tests/", "data/", "docs/",
-                   "codex-skills/")
+SEQUENTIAL_CAPS = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE_PASS"}
 
 
-def _err(errors, msg):
-    errors.append(msg)
+def _err(errors: list[str], message: str) -> None:
+    errors.append(message)
 
 
-def _check_conditional_values(errors, label, rule, known_skills):
-    """conditional_command_operations = capability + {op, feeds, layer}[]。
-
-    这是"取数命令 → 消费 skill → 采集层"的唯一机器映射 (编排 skill 正文不复述):
-    op 非空且唯一; feeds 须属注册表内 skill 名 (防喂养目标 typo); layer 为 1-6 int。
-    gate 按 init 冻结的 capability 决定必须执行或明确 NOT_CONFIGURED。
-    """
-    if rule.get("capability") != "tushare_configured":
-        _err(errors, f"{label} conditional capability 仅允许 "
-                     f"tushare_configured: {rule!r}")
-    values = rule.get("values")
-    if not isinstance(values, list) or not values:
-        _err(errors, f"{label} conditional_command_operations values "
-                     f"必须为非空对象数组: {rule!r}")
-        return
-    ops = []
-    for entry in values:
-        if not isinstance(entry, dict):
-            _err(errors, f"{label} conditional value 必须为 "
-                         f"{{op,feeds,layer}} 对象: {entry!r}")
-            continue
-        op = entry.get("op")
-        feeds = entry.get("feeds")
-        layer = entry.get("layer")
-        if not isinstance(op, str) or not op:
-            _err(errors, f"{label} conditional value op 必须为非空字符串: {entry!r}")
-        else:
-            ops.append(op)
-        if not isinstance(feeds, str) or feeds not in known_skills:
-            _err(errors, f"{label} conditional value feeds 必须为注册表内 skill 名: {entry!r}")
-        if not isinstance(layer, int) or isinstance(layer, bool) \
-                or not (1 <= layer <= 6):
-            _err(errors, f"{label} conditional value layer 必须为 1-6 的 int: {entry!r}")
-    if len(ops) != len(set(ops)):
-        _err(errors, f"{label} conditional value op 必须唯一: {sorted(ops)}")
-
-
-def _ashare_cli_commands(repo_root):
-    """静态提取 ashare_data.py 的 argparse add_parser 字面量命令。"""
+def _ashare_cli_commands(repo_root: Path) -> tuple[set[str] | None, str | None]:
     path = repo_root / "tools" / "ashare_data.py"
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except (OSError, SyntaxError) as exc:
-        return None, f"ashare CLI 不可读或语法非法: {path}: {exc}"
+        return None, f"ashare CLI 不可读或语法非法: {exc}"
     commands = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
             continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != "add_parser":
-            continue
-        first = node.args[0]
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            commands.add(first.value)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "add_parser":
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                commands.add(first.value)
     if not commands:
-        return None, f"ashare CLI 未提取到任何 add_parser 命令: {path}"
+        return None, "ashare CLI 未提取到 add_parser 命令"
     return commands, None
 
 
-def extract_save_paths(text):
-    """从一个 skill 规范提取保存语义章节内的硬编码保存路径候选。"""
-    candidates = []
-    in_save = False
-    save_level = 0
-    in_fence = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
+def _validate_evidence(errors: list[str], label: str, rules: object,
+                       known_skills: set[str], ashare_commands: set[str] | None) -> None:
+    if not isinstance(rules, list) or not rules:
+        _err(errors, f"{label} evidence_rules 必须为非空数组")
+        return
+    registered_ops: set[str] = set()
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("kind") not in EVIDENCE_KINDS:
+            _err(errors, f"{label} evidence_rule kind 非法: {rule!r}")
             continue
-        if not in_fence:
-            m = re.match(r"^(#{1,4})\s+(.*)", line)
-            if m:
-                level = len(m.group(1))
-                title = m.group(2)
-                if in_save and level <= save_level:
-                    in_save = False
-                if any(k in title for k in SAVE_HEADING_KEYWORDS):
-                    in_save = True
-                    save_level = level
+        kind = rule["kind"]
+        if kind.startswith("min_"):
+            n = rule.get("n")
+            if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+                _err(errors, f"{label} evidence_rule n 必须为正整数: {rule!r}")
+        elif kind == "conditional_command_operations":
+            if rule.get("capability") != "tushare_configured":
+                _err(errors, f"{label} conditional capability 非法")
+            values = rule.get("values")
+            if not isinstance(values, list) or not values:
+                _err(errors, f"{label} conditional values 必须为非空数组")
                 continue
-        if not in_save:
-            continue
-        if in_fence:
-            # 围栏块内只取锚定 token (reports/... 或 ~/...), 目录树叶子等裸名跳过
-            for tok in re.findall(r"\S+", line):
-                tok = tok.strip("`,;，。()（）<>")
-                if tok.startswith("local/reports/") or tok.startswith("~/"):
-                    candidates.append(tok)
-        else:
-            for span in re.findall(r"`([^`]+)`", line):
-                s = span.strip()
-                if " " in s:
-                    continue  # 含空格 = 命令/句子, 非路径
-                if s.startswith(_INFRA_PREFIXES):
+            ops = []
+            for value in values:
+                if not isinstance(value, dict):
+                    _err(errors, f"{label} conditional value 必须为对象")
                     continue
-                if (s.startswith("local/reports/") or s.startswith("~")
-                        or s.startswith("local/")
-                        or s.endswith(".md") or s.endswith("/")):
-                    candidates.append(s)
-    return candidates
+                op, feed, layer = value.get("op"), value.get("feeds"), value.get("layer")
+                if not isinstance(op, str) or not op:
+                    _err(errors, f"{label} conditional op 缺失")
+                else:
+                    ops.append(op); registered_ops.add(op)
+                if not isinstance(feed, str) or feed not in known_skills:
+                    _err(errors, f"{label} conditional feeds 非注册 skill: {feed!r}")
+                if not isinstance(layer, int) or isinstance(layer, bool) or not 1 <= layer <= 6:
+                    _err(errors, f"{label} conditional layer 必须为 1..6")
+            if len(ops) != len(set(ops)):
+                _err(errors, f"{label} conditional op 必须唯一")
+        else:
+            values = rule.get("values")
+            if not isinstance(values, list) or not values or any(
+                    not isinstance(v, str) or not v for v in values):
+                _err(errors, f"{label} evidence values 必须为非空字符串数组")
+            if kind == "required_command_operations" and isinstance(values, list):
+                registered_ops.update(v for v in values if isinstance(v, str))
+    if ashare_commands is not None and label.startswith("[ashare-data:"):
+        missing = sorted(registered_ops - ashare_commands)
+        if missing:
+            _err(errors, f"{label} 注册 operation 不存在于 ashare CLI: {missing}")
 
 
-def pattern_to_regex(pattern):
-    """模板 → 正则: 占位符 {company}/{date}/{period}/{industry} → .+? , 其余转义。"""
-    esc = re.escape(pattern)
-    for ph in ALLOWED_PLACEHOLDERS:
-        esc = esc.replace(re.escape("{%s}" % ph), r".+?")
-    return re.compile("^" + esc + "$")
-
-
-def normalize_candidate(candidate):
-    return _CANDIDATE_PLACEHOLDER_RE.sub("样例", candidate)
-
-
-def candidate_covered(candidate, patterns):
-    norm = normalize_candidate(candidate)
-    for p in patterns:
-        rx = pattern_to_regex(p)
-        if rx.match(norm):
-            return True
-        # 裸文件名候选允许匹配模板 basename (如 `{公司名}-checklist-{YYYYMMDD}.md`)
-        if "/" not in norm.rstrip("/"):
-            base = p.rstrip("/").rsplit("/", 1)[-1]
-            if pattern_to_regex(base).match(norm):
-                return True
-    return False
-
-
-def validate(registry_path: Path, repo_root: Path):
-    errors = []
+def validate(registry_path: Path, repo_root: Path) -> list[str]:
+    errors: list[str] = []
     try:
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        return [f"注册表不可读或非法 JSON: {registry_path}: {e}"]
-
-    for key in ("registry_schema_version", "manifest_schema_version",
-                "annotations_schema_version"):
-        if not isinstance(registry.get(key), int):
-            _err(errors, f"顶层 {key} 缺失或不是 int")
-
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"注册表不可读或非法 JSON: {exc}"]
+    if not isinstance(registry, dict):
+        return ["注册表顶层必须为对象"]
+    for key, expected in EXPECTED_SCHEMA.items():
+        if registry.get(key) != expected:
+            _err(errors, f"顶层 {key} 必须为 {expected!r}, 实际 {registry.get(key)!r}")
+    if "generic_required_sections" in registry:
+        _err(errors, "v2 禁止 generic_required_sections")
     stage_dirs = registry.get("stage_dirs")
-    if not isinstance(stage_dirs, dict) or not stage_dirs:
-        _err(errors, "顶层 stage_dirs 缺失或为空")
-        stage_dirs = {}
+    if not isinstance(stage_dirs, dict) or set(stage_dirs) != EXPECTED_STAGE_KEYS:
+        _err(errors, "stage_dirs 必须包含完整五阶段键")
+        stage_dirs = stage_dirs if isinstance(stage_dirs, dict) else {}
     predicates = registry.get("predicates")
-    if not isinstance(predicates, list) or not predicates:
-        _err(errors, "顶层 predicates 缺失或为空")
+    if not isinstance(predicates, list) or not all(isinstance(p, str) for p in predicates):
+        _err(errors, "predicates 必须为字符串数组")
         predicates = []
-    generic_sections = registry.get("generic_required_sections") or []
-
+    if set(registry.get("pwl_allowlist", [])) != PWL_ALLOWLIST:
+        _err(errors, "pwl_allowlist 必须是封闭三项集合")
+    if not PWL_FORBIDDEN.issubset(set(registry.get("pwl_forbidden", []))):
+        _err(errors, "pwl_forbidden 缺少禁止降级项")
     skills = registry.get("skills")
     if not isinstance(skills, list):
-        return errors + ["顶层 skills 缺失或不是数组"]
-
+        return errors + ["顶层 skills 必须为数组"]
     if len(skills) != 20:
         _err(errors, f"skills 必须恰好 20 项, 实际 {len(skills)} 项")
-    indexes = [s.get("index") for s in skills]
-    if sorted(indexes) != list(range(1, len(skills) + 1)):
-        _err(errors, f"index 必须为 1..{len(skills)} 无重无缺, 实际 {sorted(indexes)}")
-    names = [s.get("name") for s in skills]
-    dup_names = {n for n in names if names.count(n) > 1}
-    if dup_names:
-        _err(errors, f"name 重复: {sorted(dup_names)}")
-    known_skill_names = {n for n in names if isinstance(n, str) and n}
-    ashare_commands = None
-
-    seen_paths = {}
+    ids = [s.get("skill_id") for s in skills if isinstance(s, dict)]
+    if set(ids) != EXPECTED_SKILLS or len(ids) != len(set(ids)):
+        _err(errors, "skill_id 必须与 20 项白名单完全一致且无重复")
+    paths: dict[str, str] = {}
+    known = set(ids)
+    ashare_commands, cli_error = _ashare_cli_commands(repo_root)
+    if cli_error:
+        _err(errors, cli_error)
     for item in skills:
-        label = f"[{item.get('index')}:{item.get('name')}]"
-
-        stage = item.get("stage")
+        if not isinstance(item, dict):
+            _err(errors, f"skill 条目必须为对象: {item!r}"); continue
+        sid = item.get("skill_id"); label = f"[{sid}:v2]"
+        if "required_sections" in item:
+            _err(errors, f"{label} 禁止 per-skill required_sections")
+        stage = item.get("stage_dir")
         if stage not in stage_dirs:
-            _err(errors, f"{label} stage {stage!r} 不在 stage_dirs")
-
+            _err(errors, f"{label} stage_dir 不在 stage_dirs: {stage!r}")
         src = item.get("spec_source")
-        if not isinstance(src, str) or not src:
-            _err(errors, f"{label} spec_source 缺失")
-            src = None
+        if not isinstance(src, str) or not (repo_root / src).is_file():
+            _err(errors, f"{label} spec_source 不存在: {src!r}")
+        artifact = item.get("artifact")
+        if not isinstance(artifact, dict):
+            _err(errors, f"{label} artifact 必须为对象"); artifact = {}
+        aid, path, minimum = artifact.get("artifact_id"), artifact.get("formal_path"), artifact.get("min_bytes")
+        if not isinstance(aid, str) or not aid.startswith("artifact."):
+            _err(errors, f"{label} artifact_id 必须以 artifact. 开头")
+        if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+            _err(errors, f"{label} formal_path 非法: {path!r}")
+        elif stage in stage_dirs and not path.startswith(stage_dirs[stage] + "/"):
+            _err(errors, f"{label} formal_path 不在阶段目录下: {path!r}")
+        elif path in paths:
+            _err(errors, f"{label} formal_path 与 {paths[path]} 冲突")
         else:
-            src_path = repo_root / src
-            if not src_path.is_file():
-                _err(errors, f"{label} spec_source 不存在: {src}")
-                src = None
-            else:
-                hashlib.sha256(src_path.read_bytes()).hexdigest()  # sha256 可计算
-
-        rules = item.get("artifact_rules")
-        if not isinstance(rules, list) or not rules:
-            _err(errors, f"{label} artifact_rules 缺失或为空")
-            rules = []
-        for rule in rules:
-            path = rule.get("path", "")
-            if not path or path.startswith("/") or ".." in path.split("/"):
-                _err(errors, f"{label} artifact path 非法 (绝对路径或含 ..): {path!r}")
-            elif stage in stage_dirs and not path.startswith(stage_dirs[stage] + "/"):
-                _err(errors, f"{label} artifact path {path!r} 不在 stage 目录 "
-                             f"{stage_dirs[stage]!r} 下")
-            if path in seen_paths:
-                _err(errors, f"{label} artifact path 与 {seen_paths[path]} 冲突: {path}")
-            else:
-                seen_paths[path] = label
-            mb = rule.get("min_bytes")
-            if not isinstance(mb, int) or isinstance(mb, bool) or mb <= 0:
-                _err(errors, f"{label} min_bytes 必须为正 int, 实际 {mb!r}")
-            if rule.get("audit_policy") not in ALLOWED_AUDIT_POLICY:
-                _err(errors, f"{label} audit_policy 非法: {rule.get('audit_policy')!r} "
-                             f"(允许 {sorted(ALLOWED_AUDIT_POLICY)})")
-            secs = rule.get("required_sections")
-            if not isinstance(secs, list) or not secs \
-                    or not all(isinstance(x, str) and x for x in secs):
-                _err(errors, f"{label} required_sections 必须为非空字符串列表")
-                secs = []
-            heading_secs = rule.get("required_heading_sections", [])
-            if not isinstance(heading_secs, list) \
-                    or not all(isinstance(x, str) and x for x in heading_secs):
-                _err(errors, f"{label} required_heading_sections 必须为字符串列表")
-            elif not set(heading_secs).issubset(set(secs)):
-                _err(errors, f"{label} required_heading_sections 必须是 "
-                             "required_sections 的子集")
-
-        ar = item.get("applicability_rule", {})
-        pid = ar.get("predicate_id")
-        if not pid:
-            _err(errors, f"{label} applicability_rule.predicate_id 缺失")
-        elif pid not in predicates:
-            _err(errors, f"{label} predicate_id {pid!r} 不在顶层 predicates 列表")
-        alt = ar.get("alternative")
-        if alt is not None and not isinstance(alt, str):
-            _err(errors, f"{label} alternative 必须为 null 或字符串")
-
-        rr = item.get("role_rule", {})
-        if not isinstance(rr.get("required_roles"), list):
-            _err(errors, f"{label} role_rule.required_roles 必须为 list")
-        mic = rr.get("min_independent_contexts")
-        if not isinstance(mic, int) or isinstance(mic, bool) or mic < 0:
-            _err(errors, f"{label} role_rule.min_independent_contexts 必须为非负 int")
-        if rr.get("sequential_cap") not in ALLOWED_SEQUENTIAL_CAP:
-            _err(errors, f"{label} role_rule.sequential_cap 非法: "
-                         f"{rr.get('sequential_cap')!r}")
-
-        status = item.get("domain_evidence_status")
-        if status not in ALLOWED_EVIDENCE_STATUS:
-            _err(errors, f"{label} domain_evidence_status 非法: {status!r}")
-
-        # 信息带宽层开关: 可选布尔 (与 gate evaluate_web_bandwidth 双实现独立校验)
-        if "requires_web_bandwidth" in item \
-                and not isinstance(item["requires_web_bandwidth"], bool):
-            _err(errors, f"{label} requires_web_bandwidth 必须为布尔")
-
-        # Phase 2: evidence_rules 词表校验
-        ev_rules = item.get("evidence_rules", [])
-        if not isinstance(ev_rules, list):
-            _err(errors, f"{label} evidence_rules 必须为 list")
-            ev_rules = []
-        for rule in ev_rules:
-            if not isinstance(rule, dict) or rule.get("kind") not in EVIDENCE_RULE_KINDS:
-                _err(errors, f"{label} evidence_rule kind 非法 (允许 "
-                             f"{sorted(EVIDENCE_RULE_KINDS)}): {rule!r}")
-                continue
-            if rule["kind"] in COUNT_RULE_KINDS:
-                n = rule.get("n", 1)
-                if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
-                    _err(errors, f"{label} evidence_rule n 必须为正 int: {rule!r}")
-            elif rule["kind"] == "conditional_command_operations":
-                _check_conditional_values(errors, label, rule, known_skill_names)
-            else:
-                values = rule.get("values")
-                if not isinstance(values, list) or not values \
-                        or len(values) != len(set(values)) \
-                        or not all(isinstance(x, str) and x for x in values):
-                    _err(errors, f"{label} evidence_rule values 必须为非空唯一"
-                                 f"字符串数组: {rule!r}")
-
-        if item.get("name") == "ashare-data":
-            if ashare_commands is None:
-                ashare_commands, cli_error = _ashare_cli_commands(repo_root)
-                if cli_error:
-                    _err(errors, cli_error)
-            registered_ops = set()
-            for rule in ev_rules:
-                if not isinstance(rule, dict):
-                    continue
-                if rule.get("kind") == "required_command_operations":
-                    registered_ops.update(rule.get("values", []))
-                elif rule.get("kind") == "conditional_command_operations":
-                    registered_ops.update(
-                        entry.get("op") for entry in rule.get("values", [])
-                        if isinstance(entry, dict) and entry.get("op")
-                    )
-            if ashare_commands is not None:
-                missing_ops = sorted(registered_ops - ashare_commands)
-                if missing_ops:
-                    _err(errors, f"{label} 注册 operation 不存在于 ashare CLI: "
-                                 f"{missing_ops}")
-
-        # §15.3: 标题字符串只能证明结构存在，不能代替可执行领域证据。
-        if status == "IMPLEMENTED" and not ev_rules:
-            _err(errors, f"{label} 标 IMPLEMENTED 但 evidence_rules 为空 —— "
-                         "领域 required_sections 不能代替机器证据")
-        elif status == "IMPLEMENTED" and not any(
-                rule.get("kind") in DOMAIN_RULE_KINDS
-                for rule in ev_rules if isinstance(rule, dict)):
-            _err(errors, f"{label} 标 IMPLEMENTED 但缺带领域标识的 "
-                         "evidence rule")
-
-        patterns = item.get("legacy_output_patterns")
-        if not isinstance(patterns, list):
-            _err(errors, f"{label} legacy_output_patterns 必须为 list")
-            patterns = []
-        for p in patterns:
-            if "*" in p:
-                _err(errors, f"{label} legacy pattern 含 glob 通配 '*' (过宽模式"
-                             f"不能算覆盖证明 §8.3): {p!r}")
-            for ph in re.findall(r"\{([^}]+)\}", p):
-                if ph not in ALLOWED_PLACEHOLDERS:
-                    _err(errors, f"{label} legacy pattern 占位符非法 {{{ph}}} "
-                                 f"(允许 {sorted(ALLOWED_PLACEHOLDERS)}): {p!r}")
-
-        # §15.2#12 保存路径覆盖检查
-        if src:
-            text = (repo_root / src).read_text(encoding="utf-8")
-            clean_patterns = [p for p in patterns if "*" not in p]
-            for cand in extract_save_paths(text):
-                if not candidate_covered(cand, clean_patterns):
-                    _err(errors, f"{label} 保存章节提取路径未被 legacy_output_patterns "
-                                 f"覆盖: {cand!r} (需精确模板, 不许 glob 兜底)")
-
+            paths[path] = label
+        if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum <= 0:
+            _err(errors, f"{label} min_bytes 必须为正整数")
+        if artifact.get("audit_policy") not in {"required", "advisory", "none"}:
+            _err(errors, f"{label} audit_policy 非法")
+        sections = item.get("sections")
+        if not isinstance(sections, list) or not sections:
+            _err(errors, f"{label} sections 必须为非空数组")
+        else:
+            section_ids = []
+            for section in sections:
+                if not isinstance(section, dict):
+                    _err(errors, f"{label} section 必须为对象"); continue
+                section_id = section.get("section_id")
+                section_ids.append(section_id)
+                if not isinstance(section_id, str) or not section_id.isidentifier() or not section_id.isascii():
+                    _err(errors, f"{label} section_id 非法: {section_id!r}")
+                if not isinstance(section.get("heading"), str) or not section["heading"]:
+                    _err(errors, f"{label} section heading 缺失")
+                if not isinstance(section.get("required"), bool):
+                    _err(errors, f"{label} section required 必须为 bool")
+                if not isinstance(section.get("min_content_chars"), int) or section["min_content_chars"] < 0:
+                    _err(errors, f"{label} section min_content_chars 非法")
+            if len(section_ids) != len(set(section_ids)):
+                _err(errors, f"{label} section_id 必须唯一")
+            if not MACHINE_SECTIONS.issubset(set(section_ids)):
+                _err(errors, f"{label} 缺少机器必需章节")
+        app = item.get("applicability")
+        if not isinstance(app, dict) or app.get("predicate") not in predicates:
+            _err(errors, f"{label} applicability.predicate 未注册")
+        elif app.get("alternative") is not None and not isinstance(app["alternative"], str):
+            _err(errors, f"{label} applicability.alternative 必须为 null 或字符串")
+        roles = item.get("roles")
+        if not isinstance(roles, dict) or not isinstance(roles.get("required_roles"), list):
+            _err(errors, f"{label} roles.required_roles 必须为数组")
+        else:
+            if len(set(roles["required_roles"])) != len(roles["required_roles"]):
+                _err(errors, f"{label} required_roles 不得重复")
+            if roles.get("mode") not in {"single_agent", "independent_then_integrator"}:
+                _err(errors, f"{label} roles.mode 非法")
+            mic = roles.get("min_independent_contexts")
+            if not isinstance(mic, int) or isinstance(mic, bool) or mic < 0:
+                _err(errors, f"{label} min_independent_contexts 非法")
+            if roles.get("sequential_cap") not in SEQUENTIAL_CAPS:
+                _err(errors, f"{label} sequential_cap 非法")
+        _validate_evidence(errors, label, item.get("evidence_rules"), known, ashare_commands)
     return errors
 
 
-def main():
-    parser = argparse.ArgumentParser(description="全量公司分析注册表独立校验器")
-    default_root = Path(__file__).resolve().parents[1]
-    parser.add_argument("--registry", type=Path,
-                        default=default_root / "tools" / "full_analysis_contract.json")
-    parser.add_argument("--repo-root", type=Path, default=default_root)
+def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description="全量公司分析 Contract v2 校验器")
+    parser.add_argument("--registry", type=Path, default=root / "tools" / "full_analysis_contract.json")
+    parser.add_argument("--repo-root", type=Path, default=root)
     args = parser.parse_args()
-
     errors = validate(args.registry, args.repo_root)
     if errors:
         print(f"❌ 注册表校验失败, 共 {len(errors)} 项:")
-        for e in errors:
-            print(f"  - {e}")
-        sys.exit(1)
-    print("✅ 注册表校验通过: 20 项契约结构合法, 保存路径覆盖完整")
-    sys.exit(0)
+        for error in errors:
+            print(f"  - {error}")
+        raise SystemExit(1)
+    print("✅ 注册表校验通过: Contract v2 的 20 项契约结构合法")
 
 
 if __name__ == "__main__":
