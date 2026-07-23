@@ -42,7 +42,7 @@ def valid_bundle():
         "calculation_requests": [{
             "calculation_id": "calculation.market-cap",
             "operation": "verify-market-cap",
-            "inputs": {"price": "100.00"},
+            "args": {"price": "100.00"},
         }],
         "judgments": [],
         "limitations": [{"code": "tushare_unavailable", "detail": "not configured"}],
@@ -100,6 +100,11 @@ class ResultSchemaTests(unittest.TestCase):
         self.assertEqual(status["enum"], ["PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"])
         self.assertEqual(self.schema["x_rules"]["error_required_when_status"], "FAIL")
         self.assertEqual(self.schema["x_rules"]["error_null_when_status"], ["PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"])
+
+    def test_calculation_request_cannot_carry_agent_expected_result(self):
+        calculation = self.schema["properties"]["calculation_requests"]["items"]
+        self.assertEqual(set(calculation["required"]), {"calculation_id", "operation", "args"})
+        self.assertNotIn("expected", calculation["properties"])
 
 
 if __name__ == "__main__":

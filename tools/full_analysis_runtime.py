@@ -17,6 +17,8 @@ EVENTS_REL = Path("evidence/events.jsonl")
 LEASE_MINUTES = 20
 BACKOFF_SECONDS = (60, 180)
 RATE_LIMIT_COOLDOWN_SECONDS = 600
+PARTIAL_REPORT = "PARTIAL_REPORT.md"
+SUMMARY_REPORT = "SUMMARY.md"
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 
@@ -83,6 +85,7 @@ def next_work(run_root: Path) -> dict:
     state = load_state(run_root)
     budget = state["budget"]
     if budget["used"] >= budget["hard_max"]:
+        render_partial(run_root, "JOB_LIMIT")
         raise RuntimeErrorState(f"硬预算已达 {budget['hard_max']}，停止新派发")
     cooldown = parse_time(state["concurrency"].get("cooldown_until"))
     if cooldown and cooldown > now():
@@ -97,6 +100,8 @@ def next_work(run_root: Path) -> dict:
             continue
         retry_at = parse_time(unit.get("next_retry_at"))
         if retry_at and retry_at > current:
+            continue
+        if budget["used"] >= budget["stop_dispatch_at"] and not unit.get("core", True):
             continue
         candidates.append(unit)
     if not candidates:
@@ -200,12 +205,36 @@ def submit_result(run_root: Path, registry: Path, result: Path) -> dict:
     return {"status": unit["status"], "gate": completed.stdout.strip()}
 
 
-def resume(run_root: Path) -> dict:
+def render_partial(run_root: Path, reason: str) -> None:
+    root = Path(run_root)
+    state = load_state(root)
+    pending = [u["skill_id"] for u in state["work_units"] if u["status"] not in {"DONE", "FAILED"}]
+    (root / PARTIAL_REPORT).write_text(
+        "# PARTIAL_REPORT\n\n未准出；本次运行不产生投资结论。\n\n"
+        f"停止原因：`{reason}`\n\n未完成工作单元：{', '.join(pending) or '无'}\n",
+        encoding="utf-8",
+    )
+    (root / SUMMARY_REPORT).write_text(
+        "# SUMMARY\n\n状态：PARTIAL（未准出）\n\n"
+        f"停止原因：`{reason}`\n\n已使用 Agent job：{state['budget']['used']}\n",
+        encoding="utf-8",
+    )
+    event(root, "partial_rendered", reason=reason)
+
+
+def resume(run_root: Path, now_value: datetime | None = None) -> dict:
     state = load_state(run_root)
+    current = now_value or now()
+    started_at = parse_time(state.get("run_started_at"))
+    if started_at and current - started_at > timedelta(hours=24):
+        return {"status": "NEW_RUN_REQUIRED", "reason": "RUN_OLDER_THAN_24_HOURS"}
     abandoned = []
     for unit in state["work_units"]:
         if unit["status"] in {"LEASED", "RUNNING"}:
             abandoned.append(unit["work_unit_id"])
+            old_attempt = (unit.get("lease") or {}).get("attempt_id")
+            if old_attempt:
+                unit.setdefault("abandoned_attempts", []).append(old_attempt)
             unit["status"] = "PENDING"
             unit["lease"] = None
     state["concurrency"]["current"] = 0

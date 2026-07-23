@@ -90,6 +90,24 @@ class RuntimeTests(unittest.TestCase):
         result = self.cli("next-work", "--run-root", self.run_root)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("50", result.stdout + result.stderr)
+        self.assertTrue((self.run_root / "PARTIAL_REPORT.md").is_file())
+        self.assertTrue((self.run_root / "SUMMARY.md").is_file())
+
+    def test_cleanup_requires_dry_run_and_resume_marks_old_attempt_abandoned(self):
+        self.start()
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.cli("job-started", "--run-root", self.run_root,
+                 "--work-unit-id", leased["work_unit_id"], "--attempt-id", leased["attempt_id"],
+                 "--lease-nonce", leased["lease_nonce"], "--agent-job-id", "job-1")
+        denied = self.cli("cleanup", "--run-root", self.run_root)
+        self.assertNotEqual(denied.returncode, 0)
+        preview = self.cli("cleanup", "--run-root", self.run_root, "--dry-run")
+        self.assertEqual(preview.returncode, 0)
+        resumed = self.cli("resume", "--run-root", self.run_root)
+        self.assertEqual(resumed.returncode, 0)
+        state = self.state()
+        unit = next(x for x in state["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
+        self.assertIn(leased["attempt_id"], unit["abandoned_attempts"])
 
 
 if __name__ == "__main__":

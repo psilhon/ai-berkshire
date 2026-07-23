@@ -130,6 +130,16 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
     for key, expected in EXPECTED_SCHEMA.items():
         if registry.get(key) != expected:
             _err(errors, f"顶层 {key} 必须为 {expected!r}, 实际 {registry.get(key)!r}")
+    result_schema_path = repo_root / "tools/full_analysis_result_schema.json"
+    if not result_schema_path.is_file():
+        _err(errors, f"result schema 不存在: {result_schema_path}")
+    else:
+        try:
+            result_schema = json.loads(result_schema_path.read_text(encoding="utf-8"))
+            if result_schema.get("schema_version") != registry.get("result_schema_version"):
+                _err(errors, "Contract result_schema_version 与 Result Bundle schema 不一致")
+        except (OSError, json.JSONDecodeError) as exc:
+            _err(errors, f"result schema 非法: {exc}")
     if "generic_required_sections" in registry:
         _err(errors, "v2 禁止 generic_required_sections")
     stage_dirs = registry.get("stage_dirs")

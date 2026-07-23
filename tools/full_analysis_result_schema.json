@@ -74,12 +74,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["calculation_id", "operation", "inputs"],
+        "required": ["calculation_id", "operation", "args"],
         "properties": {
           "calculation_id": {"type": "string", "pattern": "^calculation\\.[a-z0-9._-]+$"},
           "operation": {"type": "string", "minLength": 1},
-          "inputs": {"type": "object"},
-          "expected": {"type": "object"}
+          "args": {"type": "object"}
         }
       }
     },
