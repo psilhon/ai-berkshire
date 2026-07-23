@@ -210,7 +210,20 @@ def cmd_init(args: argparse.Namespace) -> int:
         "artifacts": [], "facts": [], "sources": [], "calculations": [], "events": [],
     }
     atomic_write_json(root / MANIFEST_REL, manifest)
-    atomic_write_json(root / RUNTIME_STATE_REL, {"state_version": "runtime-state/v1", "run_id": run_id, "budget": {"used": 0, "hard_max": 50}})
+    atomic_write_json(root / RUNTIME_STATE_REL, {
+        "state_version": "runtime-state/v1",
+        "run_id": run_id,
+        "budget": {
+            "normal_target": 40, "stop_dispatch_at": 45, "hard_max": 50,
+            "used": 0, "preflight_count": 0, "reserved": 3,
+        },
+        "concurrency": {"max": 2, "current": 0, "cooldown_until": None},
+        "work_units": [{
+            "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
+            "status": "PENDING", "attempts": 0, "max_attempts": 3,
+            "lease": None, "next_retry_at": None,
+        } for item in registry["skills"]],
+    })
     (root / EVENTS_REL).write_text("", encoding="utf-8")
     for name in ("facts.json", "sources.json", "calculations.json", "artifacts.json"):
         atomic_write_json(root / "evidence" / name, [])
