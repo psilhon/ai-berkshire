@@ -186,6 +186,22 @@ class ContractV2Tests(unittest.TestCase):
             self.assertIn(path.parts[0], stage_dirs, item["skill_id"])
             self.assertTrue(item["artifact"]["artifact_id"].startswith("artifact."))
 
+    def test_each_skill_exposes_synced_core_and_predicate_projection(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        for item in registry["skills"]:
+            self.assertIsInstance(item.get("core"), bool, item["skill_id"])
+            self.assertEqual(item.get("predicates"), [item["applicability"]["predicate"]], item["skill_id"])
+            self.assertIn(item["applicability"]["predicate"], registry["predicates"])
+
+    def test_validator_rejects_stale_predicate_projection(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        registry["skills"][0]["predicates"] = ["stale_predicate"]
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("predicates", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

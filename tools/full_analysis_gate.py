@@ -221,7 +221,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "run_started_at": now_iso(),
         "work_units": [{
             "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
-            "core": item["skill_id"] not in {"deep-company-series", "dyp-ask", "wechat-article"},
+            "core": item["core"],
             "status": "PENDING", "attempts": 0, "max_attempts": 3,
             "lease": None, "next_retry_at": None,
         } for item in registry["skills"]],

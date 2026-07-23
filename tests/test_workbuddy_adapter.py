@@ -24,6 +24,14 @@ class WorkBuddyAdapterTests(unittest.TestCase):
         self.assertIn("result_path", text)
         self.assertIn("不读取报告正文", text)
 
+    def test_adapter_frontmatter_keeps_governance_metadata_in_sync(self):
+        canonical = (REPO / "skills/full-company-analysis.md").read_text(encoding="utf-8")
+        adapter = ADAPTER.read_text(encoding="utf-8")
+        for field in ("owner", "category", "maturity", "review-cadence"):
+            canonical_line = next((line for line in canonical.splitlines() if line.startswith(field + ":")), None)
+            adapter_line = next((line for line in adapter.splitlines() if line.startswith(field + ":")), None)
+            self.assertEqual(adapter_line, canonical_line, field)
+
 
 if __name__ == "__main__":
     unittest.main()

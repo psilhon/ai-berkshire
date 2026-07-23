@@ -171,6 +171,8 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
         if not isinstance(item, dict):
             _err(errors, f"skill 条目必须为对象: {item!r}"); continue
         sid = item.get("skill_id"); label = f"[{sid}:v2]"
+        if not isinstance(item.get("core"), bool):
+            _err(errors, f"{label} core 必须为 bool")
         if "required_sections" in item:
             _err(errors, f"{label} 禁止 per-skill required_sections")
         stage = item.get("stage_dir")
@@ -224,6 +226,10 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
             _err(errors, f"{label} applicability.predicate 未注册")
         elif app.get("alternative") is not None and not isinstance(app["alternative"], str):
             _err(errors, f"{label} applicability.alternative 必须为 null 或字符串")
+        projected = item.get("predicates")
+        actual = app.get("predicate") if isinstance(app, dict) else None
+        if projected != [actual]:
+            _err(errors, f"{label} predicates 必须精确投影 applicability.predicate")
         roles = item.get("roles")
         if not isinstance(roles, dict) or not isinstance(roles.get("required_roles"), list):
             _err(errors, f"{label} roles.required_roles 必须为数组")
