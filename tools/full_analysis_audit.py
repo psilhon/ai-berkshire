@@ -232,18 +232,35 @@ def _eval_conditional_command_operations(skill_id, rule, ev, context):
     limitations = {item.get("code") for item in context["limitations"] if isinstance(item, dict)}
     if available is False and "tushare_unavailable" in limitations:
         return []
-    operations = [item["op"] for item in rule.get("values", [])]
-    passed = _passed_operations(ev)
-    satisfied = sum(1 for operation in operations if operation in passed)
-    ratio = satisfied / len(operations) if operations else 1.0
-    required = rule.get("min_satisfied_ratio", 1.0)
     if available is not True:
         return _violation(
             "missing_capability_attestation", skill_id,
             f"缺 capability {capability!r} 可用性声明")
+    values = rule.get("values", [])
+    passed = _passed_operations(ev)
+    required = rule.get("min_satisfied_ratio", 1.0)
+
+    # 兑结合约声明的容忍标志：对已登记回执并附 limitation 说明的命令，
+    # 在计算满足率分母时予以豁免（结构性不适用 / 真实空数据，均不构成证据缺陷）。
+    exempt_ops: set[str] = set()
+    for receipt in ev["command_receipts"]:
+        op = receipt.get("operation")
+        reason = str(receipt.get("reason") or "")
+        if receipt.get("status") == "FAIL" and reason:
+            if ("market_level_cmd_na" in reason
+                    and rule.get("tolerate_missing_with_limitation")):
+                exempt_ops.add(op)
+            elif ("empty_data" in reason
+                    and rule.get("tolerate_failed_with_limitation")):
+                exempt_ops.add(op)
+
+    eligible = [item["op"] for item in values if item["op"] not in exempt_ops]
+    satisfied = sum(1 for operation in eligible if operation in passed)
+    ratio = satisfied / len(eligible) if eligible else 1.0
     return [] if ratio >= required else _violation(
         "insufficient_conditional_command_operations", skill_id,
-        f"条件命令满足率 {ratio:.3f} < 要求 {required:.3f}")
+        f"条件命令满足率 {ratio:.3f} < 要求 {required:.3f}"
+        f"（合格命令 {len(eligible)}/{len(values)}，豁免 {len(exempt_ops)} 个带说明的失败/不适用命令）")
 
 
 RULE_EVALUATORS = {

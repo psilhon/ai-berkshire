@@ -155,3 +155,17 @@ docs/            — ROADMAP 与专题文档
 - commit message 用中文，描述清楚改了什么
 - 不要推送中间过程文件（如 data_collection.md），只推最终报告
 - 报告写完后主动询问是否推送到 GitHub
+
+## Agent skills
+
+### Issue tracker
+
+本仓库 issue 在 GitHub Issues（`psilhon/ai-berkshire`），用 `gh` CLI 操作。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+保留默认五标签：`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`（由 `/domain-modeling` 按需懒创建，缺失时静默跳过）。详见 `docs/agents/domain.md`。
