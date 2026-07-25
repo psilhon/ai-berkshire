@@ -30,3 +30,15 @@ logs/command-log.jsonl
 # 打包产物（如 skills_*.zip）
 *.zip
 
+# ===== 全量分析运行时 / 一次性辅助脚本：本地私有，不入库 =====
+# 运行时产物：analysis attempts、manifest 状态、租约与心跳数据
+/evidence/
+# 本地运行/派发辅助（头部自标"未提交"，仅供端到端验证）
+tools/_dispatch_helper.py
+tools/_submit_helper.py
+scripts/lease_keeper.py
+scripts/mk_result_bundle.py
+# 一次性修复脚本（fix_*.py）与备份文件（*.bak-*）
+fix_*.py
+*.bak-*
+
