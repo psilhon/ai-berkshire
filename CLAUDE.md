@@ -21,7 +21,7 @@ skills/*.md（Claude Code slash command 源文件，权威）
    └──► codex-skills/*/SKILL.md（生成的 Codex skill 包，Codex 侧规范目标）
 ```
 
-- **改了 `skills/` 下任何文件后必须跑** `python3 scripts/sync-codex-skills.py`
+- **改了 `skills/` 下任何文件后必须跑** `python3 scripts/sync-codex-skills.py`；该命令同时同步 Codex 生成物与 WorkBuddy 全量分析适配器
 - 校验生成物是否最新（不重写文件）：`python3 scripts/sync-codex-skills.py --check`
 - **不要手改生成的 `codex-skills/*/SKILL.md`**；仅 Codex-only 手写包例外（需明确标注，且不得存在同名 `skills/*.md`）
 - Codex 侧行为规则见 `AGENTS.md`（本文件管 Claude Code，AGENTS.md 管 Codex，改流程时两边同步）
@@ -30,11 +30,11 @@ skills/*.md（Claude Code slash command 源文件，权威）
 
 单一公司端到端投研的编排 + 验收体系，三个文件各司其职：
 
-- `tools/full_analysis_contract.json` — 20 项业务契约注册表，是契约集合/产物路径/谓词/角色要求的**唯一机器真源**；任何文档（含编排 skill 本身）都不维护第二份清单
-- `skills/full-company-analysis.md` — 总控编排层，只调度现有业务 skill 不自己做研究；**Phase 2 完成前仅限内部开发调用**，不得对用户宣称"全量分析可用"
-- `tools/full_analysis_gate.py` — 确定性验收器（v1.4），生命周期：`init` → 每项 `begin-skill` →（数据类项由 gate 代跑 `run-ashare-command` 冻结收据）→ `finish-skill` → 每层 `checkpoint` → `set-industry`/`set-review-mode` → `finalize`/`summary`；`contracts` 子命令输出 20 项概览
+- `tools/full_analysis_contract.json` — 13 项业务契约注册表，是契约集合、产物路径、适用性谓词、角色要求、证据规则与运行授权的**唯一机器真源**
+- `skills/full-company-analysis.md` — WorkBuddy 总控编排层，只负责调度、登记总结和触发质量闭环，不直接代写业务单元
+- `tools/full_analysis_gate.py` — 确定性验收器（v2），生命周期：`init` → Runtime 租约与 `ingest-result` → `register-summary` →共享 Audit →语义 Review → `finalize`；N/A 必须通过谓词事实和负向验收报告证明
 
-运行产物按可见性落盘：private（默认）→ `local/company/<公司>/<run_id>/`；public → `local/筛选公司/<公司>/全量分析/<run_id>/`。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
+运行产物落盘到 `local/company/<code>-<公司>/<run_id>/`，其中 `evidence/` 保存租约、账本、Audit、Review 和过程事件。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
 
 ## 常用命令
 
@@ -104,18 +104,14 @@ docs/            — ROADMAP 与专题文档
 | /investment-team | 目录含 README + 01-04 四视角（段永平商业模式/巴菲特财务估值/芒格行业竞争/李录风险管理层）+ `最终报告.md` | `local/reports/{公司名}/` |
 | /investment-research | `{公司名}-research-{YYYYMMDD}.md` | 公司文件夹 |
 | /investment-checklist | `{公司名}-checklist-{YYYYMMDD}.md` | 公司文件夹 |
-| /earnings-review, /earnings-team | `{公司名}-earnings-{期间}.md`（如 `腾讯-earnings-2025Q4.md`） | 公司文件夹 |
+| /earnings-review | `{公司名}-earnings-{期间}.md`（如 `腾讯-earnings-2025Q4.md`） | 公司文件夹 |
 | /management-deep-dive | `{公司名}-management-{YYYYMMDD}.md` | 公司文件夹 |
 | /thesis-tracker | `{公司名}-thesis.md`（长期维护） | 公司文件夹 |
-| /thesis-drift | 对比 `{公司名}-thesis-*.md` 新旧版本 | 公司文件夹 |
 | /news-pulse | `{公司名}-news-{YYYYMMDD}.md` | 公司文件夹 |
-| /deep-company-series | `《看懂{公司名}》-{YYYYMMDD}/` 目录（3-8篇长文）；旧版目录已存在时不覆盖不混放 | 公司文件夹 |
-| /private-company-research | `{公司名}-private-{YYYYMMDD}.md` | 公司文件夹 |
 | /industry-research | `{行业名}-industry-{YYYYMMDD}.md` | 根目录 |
 | /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
 | /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `local/reports/bottleneck-map/` |
-| /portfolio-review | `portfolio-latest.md`（持续更新） | 根目录 |
-| /full-company-analysis | `<run_id>/` 运行目录（路径由 gate 生成，不接受自定义） | private→`local/company/{公司名}/`；public→`local/筛选公司/{公司名}/全量分析/` |
+| /full-company-analysis | `<run_id>/` 运行目录（路径由 Gate 生成） | `local/company/<code>-<公司>/` |
 
 ## 投研分析核心原则（最高优先级）
 

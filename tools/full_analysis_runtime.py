@@ -8,8 +8,15 @@ import json
 import secrets
 import subprocess
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows compatibility
+    fcntl = None
+    import msvcrt
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -21,6 +28,7 @@ BACKOFF_SECONDS = (60, 180)
 RATE_LIMIT_COOLDOWN_SECONDS = 600
 PARTIAL_REPORT = "PARTIAL_REPORT.md"
 SUMMARY_REPORT = "SUMMARY.md"
+LOCK_REL = Path("evidence/locks/runtime-state.lock")
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 # 反凑数刚性指令：随 methodology_text 一并注入执行 Agent，明确"深度优先于字数"
@@ -32,10 +40,48 @@ ANTI_PADDING_DIRECTIVE = """
 写透为止，不设字数上限。每个分析小节须有实质论证（数据、对比、推演），
 不得仅列标题或一句话带过；多视角 skill 必须显式呈现不同角色的分歧与交锋。
 """
+AUTHORIZATION_DIRECTIVE = """
+【全量运行授权信封 · full-analysis-internal/v1】
+本次 run 的启动请求已满足下列内部步骤原本要求的重复确认：
+1. 只读外部研究与数据查询；
+2. 仅在本次 run_root（{run_root}）内写入 attempt、证据与报告；
+3. 输出本次公司研究所需的分析结论。
+因此，方法论中只针对上述三类动作的独立 STOP/询问点视为已满足，继续执行，
+不要在每个 work unit 重复向用户确认。
+
+授权边界不扩张：不得据此执行 push、PR、publish、send、提交表单或任何外部写入；
+不得写出 run_root，不得读取或披露 secret、私人账本或敏感个人数据。
+遇到这些未授权动作时仍须停止并交回主上下文处理。
+"""
 
 
 class RuntimeErrorState(Exception):
     pass
+
+
+@contextmanager
+def runtime_lock(run_root: Path):
+    """Serialize every runtime-state read-modify-write across processes."""
+    path = Path(run_root) / LOCK_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        else:  # pragma: no cover - Windows compatibility
+            handle.seek(0)
+            if handle.read(1) == b"":
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            else:  # pragma: no cover - Windows compatibility
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def now() -> datetime:
@@ -80,6 +126,11 @@ def event(run_root: Path, kind: str, **payload: object) -> None:
 
 
 def initialize(run_root: Path) -> dict:
+    with runtime_lock(run_root):
+        return _initialize_locked(run_root)
+
+
+def _initialize_locked(run_root: Path) -> dict:
     state = load_state(run_root)
     if state["budget"].get("preflight_count", 0) == 0:
         state["budget"]["preflight_count"] = 1
@@ -162,6 +213,11 @@ def _load_registry() -> dict:
 
 
 def next_work(run_root: Path) -> dict:
+    with runtime_lock(run_root):
+        return _next_work_locked(run_root)
+
+
+def _next_work_locked(run_root: Path) -> dict:
     state = load_state(run_root)
     budget = state["budget"]
     if budget["used"] >= budget["hard_max"]:
@@ -201,14 +257,28 @@ def next_work(run_root: Path) -> dict:
     save_state(run_root, state)
     event(run_root, "work_leased", work_unit_id=unit["work_unit_id"], attempt_id=lease["attempt_id"])
     # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）
-    skill = next((s for s in _load_registry().get("skills", []) if s.get("skill_id") == unit["skill_id"]), None)
+    registry = _load_registry()
+    skill = next(
+        (s for s in registry.get("skills", [])
+         if s.get("skill_id") == unit["skill_id"]),
+        None,
+    )
+    authorization = (
+        state.get("authorization")
+        or registry.get("authorization_profile")
+        or {}
+    )
     methodology_text = ""
     if skill:
         spec = skill.get("spec_source")
         if spec:
             spec_path = TOOLS_DIR.parent / spec
             if spec_path.is_file():
-                methodology_text = spec_path.read_text(encoding="utf-8") + ANTI_PADDING_DIRECTIVE
+                methodology_text = (
+                    AUTHORIZATION_DIRECTIVE.format(run_root=Path(run_root))
+                    + spec_path.read_text(encoding="utf-8")
+                    + ANTI_PADDING_DIRECTIVE
+                )
     roles = skill.get("roles", {}) if skill else {}
     return {
         "status": "LEASED",
@@ -223,6 +293,7 @@ def next_work(run_root: Path) -> dict:
         "sections": skill.get("sections", []) if skill else [],
         "roles": roles,
         "fanout_required": bool(roles.get("mode") == "independent_then_integrator"),
+        "authorization": authorization,
         **lease,
     }
 
@@ -249,9 +320,22 @@ def job_started(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str, 
     P1 幂等：若同一 attempt_id 已在前一次调用中切换为 RUNNING（但输出因工具断连丢失），
     直接返回已有状态和 attempt_dir，不重复扣预算、不抛异常。调用方可安全重试。
     """
+    with runtime_lock(run_root):
+        return _job_started_locked(
+            run_root, work_unit_id, attempt_id, nonce, agent_job_id)
+
+
+def _job_started_locked(
+    run_root: Path,
+    work_unit_id: str,
+    attempt_id: str,
+    nonce: str,
+    agent_job_id: str,
+) -> dict:
     state = load_state(run_root)
     if state["budget"]["used"] >= state["budget"]["hard_max"]:
-        raise RuntimeErrorState("硬预算已达 50，拒绝启动 Agent job")
+        raise RuntimeErrorState(
+            f"硬预算已达 {state['budget']['hard_max']}，拒绝启动 Agent job")
     unit = _unit(state, work_unit_id)
     # P1: 幂等检测 — 已 RUNNING 且 attempt_id 匹配 → 直接返回
     if unit["status"] == "RUNNING":
@@ -276,6 +360,13 @@ def job_started(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str, 
 
 
 def heartbeat(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str) -> dict:
+    with runtime_lock(run_root):
+        return _heartbeat_locked(run_root, work_unit_id, attempt_id, nonce)
+
+
+def _heartbeat_locked(
+    run_root: Path, work_unit_id: str, attempt_id: str, nonce: str,
+) -> dict:
     state = load_state(run_root)
     unit = _unit(state, work_unit_id)
     _check_lease(unit, attempt_id, nonce)
@@ -286,6 +377,14 @@ def heartbeat(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str) ->
 
 
 def record_failure(run_root: Path, work_unit_id: str, attempt_id: str, reason: str) -> dict:
+    with runtime_lock(run_root):
+        return _record_failure_locked(
+            run_root, work_unit_id, attempt_id, reason)
+
+
+def _record_failure_locked(
+    run_root: Path, work_unit_id: str, attempt_id: str, reason: str,
+) -> dict:
     state = load_state(run_root)
     unit = _unit(state, work_unit_id)
     lease = unit.get("lease") or {}
@@ -361,7 +460,8 @@ def _accept_result(
 
 
 def submit_result(run_root: Path, registry: Path, result: Path) -> dict:
-    return _accept_result(run_root, registry, result)
+    with runtime_lock(run_root):
+        return _accept_result(run_root, registry, result)
 
 
 def render_partial(run_root: Path, reason: str) -> None:
@@ -382,21 +482,70 @@ def render_partial(run_root: Path, reason: str) -> None:
 
 
 def resume(run_root: Path, now_value: datetime | None = None) -> dict:
+    with runtime_lock(run_root):
+        return _resume_locked(run_root, now_value=now_value)
+
+
+def _resume_locked(
+    run_root: Path, now_value: datetime | None = None,
+) -> dict:
     state = load_state(run_root)
     current = now_value or now()
     started_at = parse_time(state.get("run_started_at"))
     if started_at and current - started_at > timedelta(hours=24):
         return {"status": "NEW_RUN_REQUIRED", "reason": "RUN_OLDER_THAN_24_HOURS"}
     abandoned = []
+    recovered = []
     for unit in state["work_units"]:
         if unit["status"] in {"LEASED", "RUNNING"}:
+            lease = unit.get("lease") or {}
+            old_attempt = lease.get("attempt_id")
+            if old_attempt:
+                result_path = (
+                    Path(run_root) / "evidence/attempts" /
+                    unit["skill_id"] / old_attempt / "result.json"
+                )
+                if result_path.is_file():
+                    try:
+                        _accept_result(
+                            run_root,
+                            DEFAULT_REGISTRY,
+                            result_path,
+                            state=state,
+                            allow_expired=True,
+                            event_kind="orphan_result_recovered_on_resume",
+                        )
+                        recovered.append(unit["work_unit_id"])
+                        event(
+                            run_root,
+                            "orphan_result_validated_on_resume",
+                            work_unit_id=unit["work_unit_id"],
+                            attempt_id=old_attempt,
+                        )
+                        continue
+                    except (
+                        RuntimeErrorState, OSError, json.JSONDecodeError,
+                    ) as exc:
+                        event(
+                            run_root,
+                            "orphan_result_rejected_on_resume",
+                            work_unit_id=unit["work_unit_id"],
+                            attempt_id=old_attempt,
+                            reason=str(exc),
+                        )
             abandoned.append(unit["work_unit_id"])
-            old_attempt = (unit.get("lease") or {}).get("attempt_id")
             if old_attempt:
                 unit.setdefault("abandoned_attempts", []).append(old_attempt)
             unit["status"] = "PENDING"
             unit["lease"] = None
     state["concurrency"]["current"] = 0
     save_state(run_root, state)
-    event(run_root, "runtime_resumed", abandoned=abandoned)
-    return {"status": "RESUMED", "abandoned": abandoned}
+    event(
+        run_root, "runtime_resumed",
+        abandoned=abandoned, recovered=recovered,
+    )
+    return {
+        "status": "RESUMED",
+        "abandoned": abandoned,
+        "recovered": recovered,
+    }

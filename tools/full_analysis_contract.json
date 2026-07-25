@@ -2,13 +2,27 @@
   "schema_version": "full-analysis-contract/v2",
   "manifest_schema_version": "full-analysis-manifest/v2",
   "result_schema_version": "result-schema/v1",
-  "description": "全量公司分析 20 项业务契约唯一机器真源；Gate、Runtime、WorkBuddy adapter 均只读取本注册表。",
+  "description": "全量公司分析 13 项业务契约唯一机器真源；Gate、Runtime、WorkBuddy adapter 均只读取本注册表。",
+  "authorization_profile": {
+    "profile": "full-analysis-internal/v1",
+    "granted": [
+      "read_only_external_research",
+      "run_root_local_writes",
+      "research_conclusions"
+    ],
+    "denied": [
+      "external_publish",
+      "external_messages",
+      "vcs_remote_writes",
+      "writes_outside_run_root",
+      "sensitive_private_data"
+    ]
+  },
   "stage_dirs": {
     "01-data-screen": "01-数据与快筛",
     "02-company-earnings": "02-公司与财报",
     "03-industry-opportunity": "03-行业与机会",
-    "04-thesis-boundary": "04-论文与组合",
-    "05-content": "05-内容生产"
+    "04-thesis-boundary": "04-论文与组合"
   },
   "negative_acceptance_dir": "06-负向验收",
   "pwl_allowlist": [
@@ -32,19 +46,9 @@
     "min_independent_contexts_2",
     "identifiable_key_managers",
     "has_primary_filing_for_period",
-    "earnings_review_complete_and_min_2_contexts",
     "main_business_definable",
-    "listed_and_main_industry_definable",
     "physical_bottleneck_exists",
-    "has_two_pairable_snapshots",
-    "private_run_with_portfolio_input",
-    "is_unlisted",
-    "core_research_passed_min_3_questions",
-    "has_fact_base",
-    "core_research_passed_draft_allowed",
-    "always",
-    "private_portfolio_input",
-    "paired_thesis_snapshots"
+    "always"
   ],
   "skills": [
     {
@@ -245,11 +249,6 @@
               "layer": 3
             },
             {
-              "op": "kline",
-              "feeds": "thesis-drift",
-              "layer": 4
-            },
-            {
               "op": "research-visits",
               "feeds": "investment-research",
               "layer": 2
@@ -274,12 +273,6 @@
               "op": "industry-pe",
               "feeds": "industry-research",
               "layer": 3
-            },
-            {
-              "op": "index-val",
-              "feeds": "portfolio-review",
-              "layer": 4,
-              "optional": true
             },
             {
               "op": "income-stmt",
@@ -310,12 +303,6 @@
               "op": "sector-peers",
               "feeds": "industry-research",
               "layer": 3,
-              "optional": true
-            },
-            {
-              "op": "macro",
-              "feeds": "portfolio-review",
-              "layer": 4,
               "optional": true
             },
             {
@@ -643,7 +630,7 @@
       ],
       "applicability": {
         "predicate": "has_comparable_financial_history",
-        "alternative": "private-company-research"
+        "alternative": null
       },
       "roles": {
         "required_roles": [],
@@ -775,7 +762,7 @@
       ],
       "applicability": {
         "predicate": "has_investable_price",
-        "alternative": "private-company-research"
+        "alternative": null
       },
       "roles": {
         "required_roles": [],
@@ -1219,8 +1206,8 @@
       "artifact": {
         "artifact_id": "artifact.earnings-review",
         "formal_path": "02-公司与财报/08-earnings-review.md",
-        "min_bytes": 8000,
-        "audit_policy": "required"
+        "audit_policy": "required",
+        "min_bytes": 8000
       },
       "sections": [
         {
@@ -1272,32 +1259,56 @@
           "min_content_chars": 1
         },
         {
+          "section_id": "duan_view",
+          "heading": "段永平视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "buffett_view",
+          "heading": "巴菲特视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "munger_view",
+          "heading": "芒格视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "li_view",
+          "heading": "李录视角",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
+          "section_id": "four_master_comparison",
+          "heading": "四大师评分对照",
+          "required": true,
+          "min_content_chars": 1
+        },
+        {
           "section_id": "three_statements",
-          "heading": "三表分析",
+          "heading": "三表核心分析",
           "required": true,
           "min_content_chars": 1
         },
         {
-          "section_id": "management_discussion",
-          "heading": "MD&A",
+          "section_id": "management_tone",
+          "heading": "管理层语气与承诺追踪",
           "required": true,
           "min_content_chars": 1
         },
         {
-          "section_id": "notes",
-          "heading": "附注",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "history_guidance_compare",
-          "heading": "历史与指引对比",
+          "section_id": "synthesis_conclusion",
+          "heading": "合成结论",
           "required": true,
           "min_content_chars": 1
         },
         {
           "section_id": "sample_check",
-          "heading": "抽检结果",
+          "heading": "数据抽检",
           "required": true,
           "min_content_chars": 1
         }
@@ -1307,10 +1318,15 @@
         "alternative": "financial-summary-fallback"
       },
       "roles": {
-        "required_roles": [],
-        "mode": "single_agent",
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
+        "required_roles": [
+          "duan",
+          "buffett",
+          "munger",
+          "li"
+        ],
+        "mode": "independent_then_integrator",
+        "min_independent_contexts": 2,
+        "sequential_cap": "PASS_WITH_LIMITATIONS"
       },
       "evidence_rules": [
         {
@@ -1328,6 +1344,10 @@
         {
           "kind": "min_calculations",
           "n": 1
+        },
+        {
+          "kind": "min_role_runs",
+          "n": 4
         }
       ],
       "pwl_allowlist": [
@@ -1338,139 +1358,6 @@
       "core": true,
       "predicates": [
         "has_primary_filing_for_period"
-      ],
-      "skill_type": "analysis",
-      "min_dissent_points": 1,
-      "min_substantive_sections": 2
-    },
-    {
-      "skill_id": "earnings-team",
-      "category": "02-company-earnings",
-      "stage_dir": "02-company-earnings",
-      "spec_source": "skills/earnings-team.md",
-      "artifact": {
-        "artifact_id": "artifact.earnings-team",
-        "formal_path": "02-公司与财报/09-earnings-team.md",
-        "min_bytes": 6000,
-        "audit_policy": "required"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "four_master_reading",
-          "heading": "四大师解读",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "editor_review",
-          "heading": "编辑意见",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "reader_review",
-          "heading": "读者评审",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "final_draft",
-          "heading": "定稿",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "critical_revision",
-          "heading": "硬伤修订",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "difference_log",
-          "heading": "差异记录",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "earnings_review_complete_and_min_2_contexts",
-        "alternative": "earnings-review"
-      },
-      "roles": {
-        "required_roles": [
-          "duan",
-          "buffett",
-          "munger",
-          "li",
-          "editor",
-          "reader"
-        ],
-        "mode": "independent_then_integrator",
-        "min_independent_contexts": 2,
-        "sequential_cap": "PASS_WITH_LIMITATIONS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "earnings_editorial_review"
-          ]
-        },
-        {
-          "kind": "min_role_runs",
-          "n": 6
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": true,
-      "predicates": [
-        "earnings_review_complete_and_min_2_contexts"
       ],
       "skill_type": "fanout",
       "min_dissent_points": 4,
@@ -1483,7 +1370,7 @@
       "spec_source": "skills/industry-research.md",
       "artifact": {
         "artifact_id": "artifact.industry-research",
-        "formal_path": "03-行业与机会/10-industry-research.md",
+        "formal_path": "03-行业与机会/09-industry-research.md",
         "min_bytes": 8000,
         "audit_policy": "required"
       },
@@ -1613,7 +1500,7 @@
       "spec_source": "skills/industry-funnel.md",
       "artifact": {
         "artifact_id": "artifact.industry-funnel",
-        "formal_path": "03-行业与机会/11-industry-funnel.md",
+        "formal_path": "03-行业与机会/10-industry-funnel.md",
         "min_bytes": 8000,
         "audit_policy": "required"
       },
@@ -1733,7 +1620,7 @@
       "spec_source": "skills/bottleneck-hunter.md",
       "artifact": {
         "artifact_id": "artifact.bottleneck-hunter",
-        "formal_path": "03-行业与机会/12-bottleneck-hunter.md",
+        "formal_path": "03-行业与机会/11-bottleneck-hunter.md",
         "min_bytes": 6000,
         "audit_policy": "required"
       },
@@ -1875,7 +1762,7 @@
       "spec_source": "skills/news-pulse.md",
       "artifact": {
         "artifact_id": "artifact.news-pulse",
-        "formal_path": "03-行业与机会/13-news-pulse.md",
+        "formal_path": "03-行业与机会/12-news-pulse.md",
         "min_bytes": 4000,
         "audit_policy": "advisory"
       },
@@ -2023,7 +1910,7 @@
       "spec_source": "skills/thesis-tracker.md",
       "artifact": {
         "artifact_id": "artifact.thesis-tracker",
-        "formal_path": "04-论文与组合/14-thesis-tracker.md",
+        "formal_path": "04-论文与组合/13-thesis-tracker.md",
         "min_bytes": 6000,
         "audit_policy": "required"
       },
@@ -2141,757 +2028,6 @@
       "skill_type": "analysis",
       "min_dissent_points": 1,
       "min_substantive_sections": 2
-    },
-    {
-      "skill_id": "thesis-drift",
-      "category": "04-thesis-boundary",
-      "stage_dir": "04-thesis-boundary",
-      "spec_source": "skills/thesis-drift.md",
-      "artifact": {
-        "artifact_id": "artifact.thesis-drift",
-        "formal_path": "04-论文与组合/15-thesis-drift.md",
-        "min_bytes": 6000,
-        "audit_policy": "required"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "snapshot_pairing",
-          "heading": "快照配对",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "evidence_normalization",
-          "heading": "证据归一",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "numeric_replay",
-          "heading": "数值重放",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "drift_verdicts",
-          "heading": "漂移逐项判定",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "paired_thesis_snapshots",
-        "alternative": "thesis-tracker"
-      },
-      "roles": {
-        "required_roles": [],
-        "mode": "single_agent",
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "snapshot_drift"
-          ]
-        },
-        {
-          "kind": "min_calculations",
-          "n": 1
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": true,
-      "predicates": [
-        "paired_thesis_snapshots"
-      ],
-      "skill_type": "analysis",
-      "min_dissent_points": 1,
-      "min_substantive_sections": 2
-    },
-    {
-      "skill_id": "portfolio-review",
-      "category": "04-thesis-boundary",
-      "stage_dir": "04-thesis-boundary",
-      "spec_source": "skills/portfolio-review.md",
-      "artifact": {
-        "artifact_id": "artifact.portfolio-review",
-        "formal_path": "04-论文与组合/16-portfolio-review.md",
-        "min_bytes": 6000,
-        "audit_policy": "required"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "concentration",
-          "heading": "集中度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "correlation",
-          "heading": "相关性",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "opportunity_cost",
-          "heading": "机会成本",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "stress_test",
-          "heading": "压力测试",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "rebalance_recommendation",
-          "heading": "调仓建议",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "private_portfolio_input",
-        "alternative": "negative-acceptance"
-      },
-      "roles": {
-        "required_roles": [],
-        "mode": "single_agent",
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "portfolio_action"
-          ]
-        },
-        {
-          "kind": "min_calculations",
-          "n": 1
-        },
-        {
-          "kind": "min_judgments_with_falsification",
-          "n": 1
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": true,
-      "predicates": [
-        "private_portfolio_input"
-      ],
-      "skill_type": "analysis",
-      "min_dissent_points": 1,
-      "min_substantive_sections": 2
-    },
-    {
-      "skill_id": "private-company-research",
-      "category": "04-thesis-boundary",
-      "stage_dir": "04-thesis-boundary",
-      "spec_source": "skills/private-company-research.md",
-      "artifact": {
-        "artifact_id": "artifact.private-company-research",
-        "formal_path": "04-论文与组合/17-private-company-research.md",
-        "min_bytes": 6000,
-        "audit_policy": "required"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "business_dimension",
-          "heading": "商业维度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "financial_dimension",
-          "heading": "财务维度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "industry_dimension",
-          "heading": "行业维度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "governance_dimension",
-          "heading": "治理维度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "technology_dimension",
-          "heading": "技术维度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "alternative_data_dimension",
-          "heading": "替代数据维度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "source_confidence",
-          "heading": "数据来源与置信度",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "estimation_method",
-          "heading": "推算方法",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "is_unlisted",
-        "alternative": "investment-research"
-      },
-      "roles": {
-        "required_roles": [
-          "business",
-          "financial",
-          "industry",
-          "governance",
-          "technology",
-          "alternative-data"
-        ],
-        "mode": "independent_then_integrator",
-        "min_independent_contexts": 2,
-        "sequential_cap": "PASS_WITH_LIMITATIONS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "private_company_conclusion"
-          ]
-        },
-        {
-          "kind": "min_role_runs",
-          "n": 6
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": true,
-      "predicates": [
-        "is_unlisted"
-      ],
-      "skill_type": "fanout",
-      "min_dissent_points": 4,
-      "min_substantive_sections": 3
-    },
-    {
-      "skill_id": "deep-company-series",
-      "category": "05-content",
-      "stage_dir": "05-content",
-      "spec_source": "skills/deep-company-series.md",
-      "artifact": {
-        "artifact_id": "artifact.deep-company-series",
-        "formal_path": "05-内容生产/18-deep-company-series.md",
-        "min_bytes": 6000,
-        "audit_policy": "required"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "series_outline",
-          "heading": "系列篇目清单",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "cross_article_consistency",
-          "heading": "跨篇一致性核查",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "seven_fact_check",
-          "heading": "七项事实核查",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "core_research_passed_min_3_questions",
-        "alternative": "negative-acceptance"
-      },
-      "roles": {
-        "required_roles": [],
-        "mode": "single_agent",
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "series_question_1",
-            "series_question_2",
-            "series_question_3"
-          ]
-        },
-        {
-          "kind": "min_facts",
-          "n": 7
-        },
-        {
-          "kind": "min_judgments_with_falsification",
-          "n": 3
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": false,
-      "predicates": [
-        "core_research_passed_min_3_questions"
-      ],
-      "skill_type": "content",
-      "min_dissent_points": 0,
-      "min_substantive_sections": 1
-    },
-    {
-      "skill_id": "dyp-ask",
-      "category": "05-content",
-      "stage_dir": "05-content",
-      "spec_source": "skills/dyp-ask.md",
-      "artifact": {
-        "artifact_id": "artifact.dyp-ask",
-        "formal_path": "05-内容生产/19-dyp-ask.md",
-        "min_bytes": 600,
-        "audit_policy": "advisory"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "method_simulation_disclaimer",
-          "heading": "方法模拟声明",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "business",
-          "heading": "生意",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "circle_of_competence",
-          "heading": "能力圈",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "management",
-          "heading": "管理层",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "price",
-          "heading": "价格",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "not_to_do",
-          "heading": "不为清单",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "has_fact_base",
-        "alternative": "negative-acceptance"
-      },
-      "roles": {
-        "required_roles": [],
-        "mode": "single_agent",
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "dyp_method_simulation"
-          ]
-        },
-        {
-          "kind": "min_facts",
-          "n": 1
-        },
-        {
-          "kind": "min_judgments_with_falsification",
-          "n": 1
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": false,
-      "predicates": [
-        "has_fact_base"
-      ],
-      "skill_type": "content",
-      "min_dissent_points": 0,
-      "min_substantive_sections": 1
-    },
-    {
-      "skill_id": "wechat-article",
-      "category": "05-content",
-      "stage_dir": "05-content",
-      "spec_source": "skills/wechat-article.md",
-      "artifact": {
-        "artifact_id": "artifact.wechat-article",
-        "formal_path": "05-内容生产/20-wechat-article.md",
-        "min_bytes": 4000,
-        "audit_policy": "required"
-      },
-      "sections": [
-        {
-          "section_id": "data_cutoff",
-          "heading": "数据截止日",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "sources_scope",
-          "heading": "直接来源",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "limitations",
-          "heading": "限制",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "research_disclaimer",
-          "heading": "仅供学习研究",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "core_conclusion",
-          "heading": "核心结论",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "downstream_evidence",
-          "heading": "下游证据",
-          "required": true,
-          "min_content_chars": 80
-        },
-        {
-          "section_id": "contract_calculations",
-          "heading": "契约计算",
-          "required": false,
-          "min_content_chars": 0
-        },
-        {
-          "section_id": "draft",
-          "heading": "初稿",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "editor_review",
-          "heading": "编辑意见",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "reader_feedback",
-          "heading": "读者意见",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "final_draft",
-          "heading": "定稿",
-          "required": true,
-          "min_content_chars": 1
-        },
-        {
-          "section_id": "critical_revision_closure",
-          "heading": "硬伤修订闭环",
-          "required": true,
-          "min_content_chars": 1
-        }
-      ],
-      "applicability": {
-        "predicate": "core_research_passed_draft_allowed",
-        "alternative": "negative-acceptance"
-      },
-      "roles": {
-        "required_roles": [
-          "author",
-          "editor",
-          "reader"
-        ],
-        "mode": "independent_then_integrator",
-        "min_independent_contexts": 0,
-        "sequential_cap": "PASS"
-      },
-      "evidence_rules": [
-        {
-          "kind": "required_judgment_rule_ids",
-          "values": [
-            "publication_revision_closure"
-          ]
-        },
-        {
-          "kind": "min_role_runs",
-          "n": 3
-        }
-      ],
-      "pwl_allowlist": [
-        "tushare_unavailable",
-        "web_bandwidth_degraded",
-        "ephemeral_source"
-      ],
-      "core": false,
-      "predicates": [
-        "core_research_passed_draft_allowed"
-      ],
-      "skill_type": "content",
-      "min_dissent_points": 0,
-      "min_substantive_sections": 1
     }
   ]
 }

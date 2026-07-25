@@ -150,7 +150,7 @@ class FullAnalysisE2ETests(unittest.TestCase):
         run_id = manifest["run"]["run_id"]
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
         by_id = {item["skill_id"]: item for item in registry["skills"]}
-        for _ in range(20):
+        for _ in range(13):
             leased = self.cli("next-work", "--run-root", self.run_root)
             self.assertEqual(leased.returncode, 0, leased.stdout + leased.stderr)
             lease = json.loads(leased.stdout)
@@ -193,6 +193,33 @@ class FullAnalysisE2ETests(unittest.TestCase):
             result_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
             submitted = self.cli("submit-result", "--run-root", self.run_root, "--registry", REGISTRY, "--result", result_path)
             self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
+        summary_dir = self.run_root / "evidence/attempts/summary"
+        summary_dir.mkdir(parents=True)
+        summary_path = summary_dir / "summary.md"
+        current_manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        artifact_index = "\n".join(
+            record["path"]
+            for item in current_manifest["skills"]
+            for record in item["artifact_records"]
+        )
+        summary_path.write_text(
+            "# 核心结论速览\n" + "\n".join(
+                f"## {heading}\n{heading}结论均来自已登记正式产物。" * 100
+                for heading in (
+                    "主干①·投资分析", "主干②·财报研读", "主干③·行业分析",
+                    "补充与参考", "产物索引", "数据截止日", "仅供学习研究",
+                )
+            ) + "\n" + artifact_index,
+            encoding="utf-8",
+        )
+        registered_summary = self.cli(
+            "register-summary", "--run-root", self.run_root,
+            "--registry", REGISTRY, "--summary", summary_path,
+        )
+        self.assertEqual(
+            registered_summary.returncode, 0,
+            registered_summary.stdout + registered_summary.stderr)
         audit = self.cli("audit", "--run-root", self.run_root, "--registry", REGISTRY)
         self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
         before_review = subprocess.run(

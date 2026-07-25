@@ -40,8 +40,10 @@ def _manifest_projection(manifest: dict) -> dict:
             "attempts": item.get("attempts") or [],
             "artifact_records": item.get("artifact_records") or [],
             "limitations": item.get("limitations") or [],
+            "not_applicable": item.get("not_applicable"),
         } for item in manifest.get("skills", [])],
         "artifacts": manifest.get("artifacts") or [],
+        "delivery": manifest.get("delivery") or {},
     }
     for ledger in LEDGERS:
         projection[ledger] = manifest.get(ledger) or ([] if ledger != "capabilities" else {})

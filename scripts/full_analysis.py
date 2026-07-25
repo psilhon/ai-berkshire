@@ -75,6 +75,10 @@ def parser() -> argparse.ArgumentParser:
     submit = sub.add_parser("submit-result", help=argparse.SUPPRESS)
     submit.add_argument("--run-root", required=True); submit.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     submit.add_argument("--result", required=True)
+    summary = sub.add_parser("register-summary", help="登记并冻结最终总结报告")
+    summary.add_argument("--run-root", required=True)
+    summary.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
+    summary.add_argument("--summary", required=True)
     # P2 语义评审层
     rev = sub.add_parser("review", help="语义评审（prepare/ingest/summarize）")
     rev_sub = rev.add_subparsers(dest="review_command", required=True)
@@ -131,6 +135,7 @@ def main(argv=None) -> int:
         if args.command == "heartbeat": emit(runtime.heartbeat(root, args.work_unit_id, args.attempt_id, args.lease_nonce)); return 0
         if args.command == "record-failure": emit(runtime.record_failure(root, args.work_unit_id, args.attempt_id, args.reason)); return 0
         if args.command == "submit-result": emit(runtime.submit_result(root, Path(args.registry), Path(args.result))); return 0
+        if args.command == "register-summary": return gate.cmd_register_summary(args)
         if args.command == "review":
             if args.review_command == "prepare":
                 return review.cmd_prepare(args)

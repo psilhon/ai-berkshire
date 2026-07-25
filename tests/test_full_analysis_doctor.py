@@ -182,11 +182,11 @@ class DoctorTests(unittest.TestCase):
 
     def test_margin_cv_divergence_fires(self):
         # 指纹4 关键判别：原始 bytes CV 高（floor 差异大）但标准化 margin CV 低。
-        # 6 个分析单元 margin 1.05（贴线），其余 1.30（不贴线）→ thin_share≈0.35<0.40（指纹1不触发）
+        # 4 个分析单元 margin 1.05（贴线），其余 1.30（不贴线）→ thin_share≈0.36<0.40（指纹1不触发）
         analytic = _analytic_ids(self.floors)
         size_ov = {}
         for i, sid in enumerate(analytic):
-            size_ov[sid] = 1.05 if i < 6 else 1.30
+            size_ov[sid] = 1.05 if i < 4 else 1.30
         ids = list(self.floors)
         _build_run(self.root, self.floors, size_overrides=size_ov, heartbeat_skills=ids)
         report = doctor.diagnose(self.root, REGISTRY)
@@ -198,8 +198,8 @@ class DoctorTests(unittest.TestCase):
     def test_tail_gap_warns(self):
         # 前半程有心跳、尾部连续 ≥8 单元无心跳 → 后半程直写告警
         ran = [sid for sid, st in [(s, "PASS") for s in self.floors]]
-        # 前 8 个单元发心跳，尾部 12 个无 → tail_gap=12
-        hb = ran[:8]
+        # 前 5 个单元发心跳，尾部 8 个无 → tail_gap=8
+        hb = ran[:5]
         _build_run(self.root, self.floors, heartbeat_skills=hb)
         report = doctor.diagnose(self.root, REGISTRY)
         self.assertGreaterEqual(report["tail_gap"], doctor.TAIL_GAP_THRESHOLD)

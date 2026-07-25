@@ -11,6 +11,8 @@ REPO = Path(__file__).resolve().parents[1]
 GATE = REPO / "tools" / "full_analysis_gate.py"
 AUDIT = REPO / "tools" / "full_analysis_audit.py"
 REGISTRY = REPO / "tools" / "full_analysis_contract.json"
+sys.path.insert(0, str(REPO / "tools"))
+import full_analysis_gate as gate_module  # noqa: E402
 
 
 def run_gate(root, *args):
@@ -83,10 +85,10 @@ class GateV2Tests(unittest.TestCase):
         self.assertEqual(manifest["manifest_schema_version"], "full-analysis-manifest/v2")
         self.assertEqual(manifest["run"]["status"], "RUNNING")
         self.assertEqual(manifest["company"]["code"], "000651.SZ")
-        self.assertEqual(len(manifest["skills"]), 20)
+        self.assertEqual(len(manifest["skills"]), 13)
         self.assertTrue((self.run_root / "evidence/attempts").is_dir())
         self.assertTrue((self.run_root / "evidence/work-packets").is_dir())
-        self.assertTrue((self.run_root / "05-内容生产").is_dir())
+        self.assertTrue((self.run_root / "04-论文与组合").is_dir())
         self.assertFalse((self.run_root / "manifest.json").exists())
 
     def test_ingest_promotes_attempt_artifact_and_updates_skill_atomically(self):
@@ -131,7 +133,7 @@ class GateV2Tests(unittest.TestCase):
         self.assertEqual(skill["artifact_records"][0]["sha256"], digest)
 
     def _bundle(self, *, skill_id, attempt_id, artifact_id, rel, size, digest,
-                status="PASS", error=None):
+                status="PASS", error=None, not_applicable=None):
         run_id = json.loads((self.run_root / "evidence/00-analysis-manifest.json")
                             .read_text())["run"]["run_id"]
         return {
@@ -146,6 +148,7 @@ class GateV2Tests(unittest.TestCase):
             "judgments": [], "limitations": [], "pwl_candidates": [],
             "started_at": "2026-07-23T12:00:00+08:00",
             "completed_at": "2026-07-23T12:01:00+08:00", "error": error,
+            "not_applicable": not_applicable,
         }
 
     def _write_attempt(self, skill_id, attempt_id, body):
@@ -223,6 +226,197 @@ class GateV2Tests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PENDING", result.stdout + result.stderr)
 
+    def test_register_summary_binds_human_delivery_to_manifest(self):
+        self.init()
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for item in manifest["skills"]:
+            item["status"] = "NOT_APPLICABLE"
+            formal = self.run_root / f"06-负向验收/{item['skill_id']}.md"
+            formal.write_text("负向验收测试产物", encoding="utf-8")
+            item["artifact_records"] = [{
+                "artifact_id": f"artifact.na.{item['skill_id']}",
+                "path": str(formal.relative_to(self.run_root)),
+                "bytes": formal.stat().st_size,
+                "sha256": hashlib.sha256(formal.read_bytes()).hexdigest(),
+                "formal": True,
+                "accepted": True,
+            }]
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False),
+                                 encoding="utf-8")
+        summary_dir = self.run_root / "evidence/attempts/summary"
+        summary_dir.mkdir(parents=True)
+        summary = summary_dir / "summary.md"
+        body = "# 核心结论速览\n" + "\n".join(
+            f"## {heading}\n{heading}内容均来自正式产物。" * 100
+            for heading in (
+                "主干①·投资分析", "主干②·财报研读", "主干③·行业分析",
+                "补充与参考", "产物索引", "数据截止日", "仅供学习研究",
+            )
+        ) + "\n" + "\n".join(
+            record["path"]
+            for item in manifest["skills"]
+            for record in item["artifact_records"]
+        )
+        summary.write_text(body, encoding="utf-8")
+
+        registered = run_gate(
+            self.root, "register-summary", "--run-root", self.run_root,
+            "--registry", REGISTRY, "--summary", summary,
+        )
+
+        self.assertEqual(registered.returncode, 0,
+                         registered.stdout + registered.stderr)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        record = manifest["delivery"]["summary"]
+        self.assertTrue(record["accepted"])
+        self.assertEqual(record["sha256"],
+                         hashlib.sha256(summary.read_bytes()).hexdigest())
+        self.assertTrue((self.run_root / record["path"]).is_file())
+
+    def test_finalize_rejects_terminal_run_without_registered_summary(self):
+        self.init()
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for item in manifest["skills"]:
+            item["status"] = "NOT_APPLICABLE"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False),
+                                 encoding="utf-8")
+
+        result = run_gate(
+            self.root, "finalize", "--run-root", self.run_root,
+            "--registry", REGISTRY,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("总结报告", result.stdout + result.stderr)
+
+    def test_review_gate_rejects_custom_scope_that_omits_required_targets(self):
+        self.init()
+        review_dir = self.run_root / "evidence/review"
+        review_dir.mkdir(parents=True)
+        (review_dir / "review-index.json").write_text(json.dumps({
+            "run_id": "test-run",
+            "scope": [],
+            "briefs": {},
+        }), encoding="utf-8")
+        (review_dir / "review-result-placeholder.json").write_text(
+            "{}", encoding="utf-8")
+
+        result = gate_module._run_review_gate(self.run_root, REGISTRY)
+
+        self.assertEqual(result["status"], "incomplete")
+        self.assertIn("delivery-summary", result["missing_scope"])
+        self.assertIn("investment-research", result["missing_scope"])
+
+    def test_ingest_rejects_not_applicable_without_gate_verifiable_proof(self):
+        self.init()
+        skill_id = "quality-screen"
+        bp, rel, size, digest = self._write_attempt(
+            skill_id, "attempt-na-empty", "# 不适用结论\n无\n")
+        bundle = self._bundle(
+            skill_id=skill_id, attempt_id="attempt-na-empty",
+            artifact_id=f"artifact.na.{skill_id}", rel=rel, size=size,
+            digest=digest, status="NOT_APPLICABLE",
+        )
+
+        result = self._ingest(bp, bundle)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not_applicable", result.stdout + result.stderr)
+
+    def test_ingest_rejects_not_applicable_for_always_applicable_skill(self):
+        self.init()
+        skill_id = "investment-research"
+        body = "\n".join([
+            "# 不适用结论", "无法执行。" * 80,
+            "## 判定事实", "事实。" * 80,
+            "## 证据来源", "来源。" * 80,
+            "## 替代路径", "替代。" * 80,
+            "## 限制", "限制。" * 80,
+        ])
+        bp, rel, size, digest = self._write_attempt(
+            skill_id, "attempt-na-always", body)
+        bundle = self._bundle(
+            skill_id=skill_id, attempt_id="attempt-na-always",
+            artifact_id=f"artifact.na.{skill_id}", rel=rel, size=size,
+            digest=digest, status="NOT_APPLICABLE",
+            not_applicable={
+                "predicate": "always_applicable",
+                "fact_id": "fact.investment-research.applicable",
+                "alternative": None,
+            },
+        )
+        bundle["fact_updates"] = [{
+            "fact_id": "fact.investment-research.applicable",
+            "field": "always_applicable", "value": False,
+            "source_ids": ["src.fake"],
+        }]
+        bundle["source_records"] = [{
+            "source_id": "src.fake", "url": "https://example.invalid/fake",
+            "retrieved_at": "2026-07-25", "source_type": "other",
+        }]
+        bundle["limitations"] = [{"code": "not_applicable", "detail": "测试"}]
+
+        result = self._ingest(bp, bundle)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("始终适用", result.stdout + result.stderr)
+
+    def test_ingest_accepts_gate_verified_not_applicable_and_promotes_negative_report(self):
+        self.init()
+        skill_id = "quality-screen"
+        body = "\n".join([
+            "# 不适用结论", "缺少可比财务历史，无法执行质量筛选。" * 60,
+            "## 判定事实", "可比财务历史不可得。" * 60,
+            "## 证据来源", "交易所披露记录仅覆盖当前期间。" * 60,
+            "## 替代路径", "转入限制清单并保留后续复核。" * 60,
+            "## 限制", "结论只说明适用性，不代表公司质量。" * 60,
+        ])
+        bp, rel, size, digest = self._write_attempt(
+            skill_id, "attempt-na-valid", body)
+        bundle = self._bundle(
+            skill_id=skill_id, attempt_id="attempt-na-valid",
+            artifact_id=f"artifact.na.{skill_id}", rel=rel, size=size,
+            digest=digest, status="NOT_APPLICABLE",
+            not_applicable={
+                "predicate": "has_comparable_financial_history",
+                "fact_id": "fact.quality-screen.comparable-history",
+                "alternative": None,
+            },
+        )
+        bundle["fact_updates"] = [{
+            "fact_id": "fact.quality-screen.comparable-history",
+            "field": "has_comparable_financial_history", "value": False,
+            "source_ids": ["src.quality-screen.filing-index"],
+        }]
+        bundle["source_records"] = [{
+            "source_id": "src.quality-screen.filing-index",
+            "url": "https://example.invalid/filing-index",
+            "retrieved_at": "2026-07-25", "source_type": "filing",
+        }]
+        bundle["limitations"] = [{
+            "code": "not_applicable",
+            "detail": "可比财务历史不可得，已使用负向验收。",
+        }]
+
+        result = self._ingest(bp, bundle)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        formal = self.run_root / "06-负向验收/quality-screen.md"
+        self.assertTrue(formal.is_file())
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        entry = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == skill_id
+        )
+        self.assertEqual(entry["status"], "NOT_APPLICABLE")
+        self.assertEqual(entry["not_applicable"]["predicate"],
+                         "has_comparable_financial_history")
+        self.assertEqual(entry["artifact_records"][0]["path"],
+                         "06-负向验收/quality-screen.md")
+
     def test_ingest_rejects_single_padded_section_when_contract_requires_structure(self):
         self.init()
         skill_id = "quality-screen"
@@ -285,6 +479,16 @@ class GateV2Tests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text())
         for item in manifest["skills"]:
             item["status"] = "NOT_APPLICABLE"
+        summary = self.run_root / "格力电器-全量分析-总结报告.md"
+        summary.write_text("测试总结", encoding="utf-8")
+        manifest["delivery"] = {"summary": {
+            "artifact_id": "artifact.delivery-summary",
+            "path": summary.name,
+            "bytes": summary.stat().st_size,
+            "sha256": hashlib.sha256(summary.read_bytes()).hexdigest(),
+            "formal": True,
+            "accepted": True,
+        }}
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         audited = subprocess.run(
             [sys.executable, str(AUDIT), "--run-root", str(self.run_root),

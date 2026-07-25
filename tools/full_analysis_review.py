@@ -43,9 +43,9 @@ DEFAULT_REVIEW_SCOPE = [
     "investment-checklist",
     "management-deep-dive",
     "earnings-review",
-    "earnings-team",
     "industry-research",
     "thesis-tracker",
+    "delivery-summary",
 ]
 
 # 五维度评审协议：每个维度的检查要点，嵌入简报供评审 Agent 使用
@@ -93,6 +93,7 @@ REVIEW_PROTOCOL = {
 }
 
 REPORTABLE_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS"}
+REVIEWABLE_STATUSES = REPORTABLE_STATUSES | {"NOT_APPLICABLE"}
 
 
 def load_manifest(run_root: Path) -> dict:
@@ -123,6 +124,15 @@ def _digest(value) -> str:
 
 def _evidence_for_skill(manifest: dict, skill_id: str) -> dict:
     """提取归因到指定 skill 的完整结构化证据。"""
+    if skill_id == "delivery-summary":
+        return {
+            "facts": manifest.get("facts") or [],
+            "sources": manifest.get("sources") or [],
+            "calculations": manifest.get("calculations") or [],
+            "judgments": manifest.get("judgments") or [],
+            "command_receipts": manifest.get("command_receipts") or [],
+            "role_runs": manifest.get("role_runs") or [],
+        }
     facts = [f for f in manifest.get("facts", []) if f.get("skill_id") == skill_id]
     calcs = [c for c in manifest.get("calculations", []) if c.get("skill_id") == skill_id]
     judgments = [j for j in manifest.get("judgments", []) if j.get("skill_id") == skill_id]
@@ -156,14 +166,26 @@ def _read_report(run_root: Path, skill_item: dict) -> str | None:
     return fp.read_text(encoding="utf-8")
 
 
+def required_review_scope(manifest: dict) -> list[str]:
+    """Return the minimum production review scope for this manifest."""
+    scope = list(DEFAULT_REVIEW_SCOPE)
+    for item in manifest.get("skills", []):
+        if (item.get("status") == "NOT_APPLICABLE"
+                and item.get("skill_id") not in scope):
+            scope.append(item["skill_id"])
+    return scope
+
+
 def cmd_prepare(args: argparse.Namespace) -> int:
     """为每个评审范围内的核心 skill 生成评审简报。"""
     root = Path(args.run_root)
     registry = load_registry(Path(args.registry))
     manifest = load_manifest(root)
-    scope = args.scope.split(",") if args.scope else DEFAULT_REVIEW_SCOPE
-    scope_set = set(scope)
-
+    scope = (
+        args.scope.split(",")
+        if args.scope
+        else required_review_scope(manifest)
+    )
     # 构建 contract 索引
     contract_skills = {s["skill_id"]: s for s in registry.get("skills", [])}
     manifest_skills = {s["skill_id"]: s for s in manifest.get("skills", [])}
@@ -174,13 +196,30 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     brief_index = {}
 
     for skill_id in scope:
-        m_item = manifest_skills.get(skill_id)
-        if not m_item:
-            continue
-        status = m_item.get("status")
-        if status not in REPORTABLE_STATUSES:
-            continue  # N/A 或未完成单元不做语义评审
-        c_item = contract_skills.get(skill_id, {})
+        if skill_id == "delivery-summary":
+            summary = (manifest.get("delivery") or {}).get("summary")
+            if not summary:
+                continue
+            m_item = {
+                "status": "PASS",
+                "artifact_records": [summary],
+            }
+            c_item = {
+                "sections": [{"heading": heading} for heading in (
+                    "核心结论速览", "主干①·投资分析", "主干②·财报研读",
+                    "主干③·行业分析", "补充与参考", "产物索引",
+                )],
+                "core": True,
+                "roles": {"mode": "single_agent"},
+            }
+        else:
+            m_item = manifest_skills.get(skill_id)
+            if not m_item:
+                continue
+            status = m_item.get("status")
+            if status not in REVIEWABLE_STATUSES:
+                continue
+            c_item = contract_skills.get(skill_id, {})
         evidence = _evidence_for_skill(manifest, skill_id)
         report_text = _read_report(root, m_item)
         if report_text is None:

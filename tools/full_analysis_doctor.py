@@ -38,8 +38,8 @@ THIN_MARGIN_RATIO = 1.15
 CLIFF_THIN_SHARE = 0.40
 # 数据类 skill（下限本就低，不计入深度贴线/分化统计）
 DATA_SKILLS = {"ashare-data", "financial-data"}
-# 轻量内容类（下限极低，天然贴线，豁免贴线告警）
-LIGHT_SKILLS = {"dyp-ask"}
+# 轻量内容类（下限极低，天然贴线，豁免贴线告警）；当前为空。
+LIGHT_SKILLS = set()
 # 指纹4：深度分化不足的判定阈值（基于标准化 margin 的变异系数）
 CV_FLOOR = 0.25                    # margin 变异系数低于该值 → 离散度过低
 DIVERGENCE_THIN_SHARE = 0.30       # 且贴线单元占比 ≥ 该值 → 批量骨架化嫌疑

@@ -49,6 +49,28 @@ NON_SUBSTANTIVE_SECTION_IDS = {
     "downstream_evidence", "contract_calculations", "command_receipts",
     "source_dates", "warnings_gaps",
 }
+NA_PREDICATE_FIELDS = {
+    "has_comparable_financial_history": "has_comparable_financial_history",
+    "has_investable_price": "has_investable_price",
+    "identifiable_key_managers": "identifiable_key_managers",
+    "has_primary_filing_for_period": "has_primary_filing_for_period",
+    "main_business_definable": "main_business_definable",
+    "physical_bottleneck_exists": "physical_bottleneck_exists",
+}
+ALWAYS_APPLICABLE_PREDICATES = {"always", "always_applicable", "is_a_share"}
+NA_REQUIRED_HEADINGS = ("不适用结论", "判定事实", "证据来源", "替代路径", "限制")
+SUMMARY_REQUIRED_HEADINGS = (
+    "核心结论速览",
+    "主干①·投资分析",
+    "主干②·财报研读",
+    "主干③·行业分析",
+    "补充与参考",
+    "产物索引",
+    "数据截止日",
+    "仅供学习研究",
+)
+NA_MIN_BYTES = 800
+SUMMARY_MIN_BYTES = 2500
 
 
 class GateError(Exception):
@@ -113,8 +135,8 @@ def load_registry(path: Path) -> dict:
     registry = load_json(path, "注册表")
     if registry.get("schema_version") != "full-analysis-contract/v2":
         raise GateError("只接受 full-analysis-contract/v2 注册表", 2)
-    if len(registry.get("skills", [])) != 20:
-        raise GateError("注册表必须恰好包含 20 个 skill", 2)
+    if len(registry.get("skills", [])) != 13:
+        raise GateError("注册表必须恰好包含 13 个 skill", 2)
     return registry
 
 
@@ -192,6 +214,67 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
             raise GateError(f"{bundle['skill_id']} 必须恰好提交 1 个正式 artifact")
         if bundle["artifact_records"][0].get("artifact_id") != expected:
             raise GateError(f"artifact_id 不匹配: 期望 {expected}")
+        if bundle.get("not_applicable") is not None:
+            raise GateError("PASS/PASS_WITH_LIMITATIONS 不得携带 not_applicable")
+    elif bundle["status"] == "NOT_APPLICABLE":
+        expected_na = f"artifact.na.{bundle['skill_id']}"
+        if len(bundle["artifact_records"]) != 1:
+            raise GateError(
+                f"{bundle['skill_id']} 的 NOT_APPLICABLE 必须恰好提交 1 个负向验收 artifact")
+        if bundle["artifact_records"][0].get("artifact_id") != expected_na:
+            raise GateError(f"负向验收 artifact_id 不匹配: 期望 {expected_na}")
+        _validate_not_applicable(bundle, skill, load_manifest(run_root))
+    elif bundle.get("not_applicable") is not None:
+        raise GateError("非 NOT_APPLICABLE 状态不得携带 not_applicable")
+
+
+def _validate_not_applicable(bundle: dict, skill: dict, manifest: dict) -> None:
+    proof = bundle.get("not_applicable")
+    if not isinstance(proof, dict):
+        raise GateError("NOT_APPLICABLE 必须提供可由 Gate 验证的 not_applicable 证明")
+    expected_predicate = (skill.get("applicability") or {}).get("predicate")
+    if proof.get("predicate") != expected_predicate:
+        raise GateError(
+            f"not_applicable predicate 不匹配: 期望 {expected_predicate!r}")
+    if proof.get("alternative") != (skill.get("applicability") or {}).get("alternative"):
+        raise GateError("not_applicable alternative 与 Contract 不一致")
+    if expected_predicate in ALWAYS_APPLICABLE_PREDICATES:
+        raise GateError(
+            f"{skill['skill_id']} 的适用性谓词 {expected_predicate!r} 始终适用，不得标记 N/A")
+
+    fact = next(
+        (item for item in bundle.get("fact_updates") or []
+         if item.get("fact_id") == proof.get("fact_id")),
+        None,
+    )
+    if not fact:
+        raise GateError("not_applicable.fact_id 必须引用本次提交的判定事实")
+    if expected_predicate == "min_independent_contexts_2":
+        valid_value = (
+            fact.get("field") == "independent_context_count"
+            and isinstance(fact.get("value"), int)
+            and not isinstance(fact.get("value"), bool)
+            and fact["value"] < 2
+        )
+    else:
+        valid_value = (
+            fact.get("field") == NA_PREDICATE_FIELDS.get(expected_predicate)
+            and fact.get("value") is False
+        )
+    if not valid_value:
+        raise GateError(
+            f"not_applicable 判定事实不能证明谓词 {expected_predicate!r} 为假")
+
+    source_ids = fact.get("source_ids") or []
+    known_source_ids = {
+        item.get("source_id")
+        for item in [*(manifest.get("sources") or []), *(bundle.get("source_records") or [])]
+        if item.get("source_id")
+    }
+    if not source_ids or any(source_id not in known_source_ids for source_id in source_ids):
+        raise GateError("not_applicable 判定事实必须引用已登记来源")
+    if not bundle.get("limitations"):
+        raise GateError("NOT_APPLICABLE 必须显式记录 limitations")
 
 
 def build_run_root(repo_root: Path, code: str, company: str) -> Path:
@@ -231,17 +314,18 @@ def cmd_init(args: argparse.Namespace) -> int:
                    for item in registry["skills"]],
         "artifacts": [], "facts": [], "sources": [], "calculations": [],
         "judgments": [], "command_receipts": [], "role_runs": [],
-        "capabilities": {}, "events": [],
+        "capabilities": {}, "events": [], "delivery": {"summary": None},
     }
     atomic_write_json(root / MANIFEST_REL, manifest)
     atomic_write_json(root / RUNTIME_STATE_REL, {
         "state_version": "runtime-state/v1",
         "run_id": run_id,
         "budget": {
-            "normal_target": 40, "stop_dispatch_at": 45, "hard_max": 50,
-            "used": 0, "preflight_count": 0, "reserved": 3,
+            "normal_target": 26, "stop_dispatch_at": 30, "hard_max": 33,
+            "used": 0, "preflight_count": 0, "reserved": 0,
         },
         "concurrency": {"max": 4, "current": 0, "cooldown_until": None},
+        "authorization": registry["authorization_profile"],
         "run_started_at": now_iso(),
         "work_units": [{
             "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
@@ -477,10 +561,18 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if source.stat().st_size != record.get("bytes") or sha256_file(source) != record.get("sha256"):
             raise GateError(f"artifact bytes/sha256 与 Result Bundle 不一致: {rel}")
         # 防坍塌软下限：仅挡住 403 字节式空报告，不作为深度目标（深度由实质校验保证）
-        min_bytes = skill["artifact"].get("min_bytes")
+        min_bytes = (
+            skill["artifact"].get("min_bytes")
+            if accepted_status else NA_MIN_BYTES
+        )
         if isinstance(min_bytes, int) and min_bytes > 0 and source.stat().st_size < min_bytes:
             raise GateError(f"artifact 字节数 {source.stat().st_size} < 防坍塌下限 {min_bytes}（{skill['skill_id']}）；报告过浅，拒收退回重试")
-        formal_rel = safe_relative(root, skill["artifact"]["formal_path"])
+        formal_rel = safe_relative(
+            root,
+            skill["artifact"]["formal_path"]
+            if accepted_status
+            else f"{registry['negative_acceptance_dir']}/{skill['skill_id']}.md",
+        )
         prepared.append((source, root / formal_rel, formal_rel, record))
 
     # 多角色 skill 必须存在各角色独立备忘录（仅 PASS/PASS_WITH_LIMITATIONS 时校验，NOT_APPLICABLE 跳过）
@@ -531,6 +623,18 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             raise GateError(
                 f"实质校验未通过（{skill['skill_id']}）：" + "；".join(sub_errs)
             )
+    elif bundle["status"] == "NOT_APPLICABLE" and prepared:
+        try:
+            txt = prepared[0][0].read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            txt = ""
+        missing_headings = [
+            heading for heading in NA_REQUIRED_HEADINGS
+            if not re.search(rf"^#{{1,6}}\s+{re.escape(heading)}\s*$", txt, re.M)
+        ]
+        if missing_headings:
+            raise GateError(
+                f"负向验收报告缺必需章节: {missing_headings}")
 
     # ===== 阶段二：事务化晋级（校验已全部通过，此处只做原子复制与状态登记）=====
     records = []
@@ -543,7 +647,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         verified_role_runs.append(record)
     entry = next(item for item in manifest["skills"] if item["skill_id"] == bundle["skill_id"])
     entry.update({"status": bundle["status"], "attempts": [*entry.get("attempts", []), bundle["attempt_id"]],
-                  "artifact_records": records, "limitations": bundle["limitations"], "updated_at": now_iso()})
+                  "artifact_records": records, "limitations": bundle["limitations"],
+                  "not_applicable": bundle.get("not_applicable"),
+                  "updated_at": now_iso()})
     manifest["artifacts"] = [r for item in manifest["skills"] for r in item.get("artifact_records", [])]
     _merge_provenance(
         manifest,
@@ -553,6 +659,83 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     save_manifest(root, manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
     print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))
+    return 0
+
+
+def cmd_register_summary(args: argparse.Namespace) -> int:
+    root, registry = Path(args.run_root), load_registry(Path(args.registry))
+    manifest = load_manifest(root)
+    incomplete = [
+        item["skill_id"] for item in manifest["skills"]
+        if item.get("status") not in TERMINAL_STATUSES
+    ]
+    if incomplete:
+        raise GateError(
+            f"总结报告只能在全部业务单元终态后登记，未完成={incomplete}")
+    missing_artifacts = [
+        item["skill_id"] for item in manifest["skills"]
+        if not item.get("artifact_records")
+    ]
+    if missing_artifacts:
+        raise GateError(
+            f"总结报告登记前每个业务单元都必须有正式或负向验收产物，缺失={missing_artifacts}")
+
+    source = Path(args.summary)
+    if not source.is_absolute():
+        source = root / source
+    try:
+        resolved = source.resolve(strict=True)
+        rel = resolved.relative_to(root.resolve())
+    except (OSError, ValueError) as exc:
+        raise GateError(f"总结报告必须位于 run_root 内: {source}: {exc}")
+    if not rel.as_posix().startswith("evidence/attempts/summary/"):
+        raise GateError("总结报告必须先写入 evidence/attempts/summary/")
+    if not resolved.is_file() or resolved.is_symlink():
+        raise GateError("总结报告必须是普通 Markdown 文件")
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise GateError(f"总结报告不可读: {exc}")
+    if resolved.stat().st_size < SUMMARY_MIN_BYTES:
+        raise GateError(
+            f"总结报告字节数 {resolved.stat().st_size} < 下限 {SUMMARY_MIN_BYTES}")
+    missing_headings = [
+        heading for heading in SUMMARY_REQUIRED_HEADINGS
+        if not re.search(rf"^#{{1,6}}\s+{re.escape(heading)}\s*$", text, re.M)
+    ]
+    if missing_headings:
+        raise GateError(f"总结报告缺必需章节: {missing_headings}")
+    indexed_paths = [
+        record["path"]
+        for item in manifest["skills"]
+        for record in item.get("artifact_records") or []
+    ]
+    missing_index = [path for path in indexed_paths if path not in text]
+    if missing_index:
+        raise GateError(
+            f"总结报告的产物索引未覆盖全部正式产物: {missing_index}")
+
+    company = re.sub(r"[/\\\\\\x00-\\x1f]+", "-", manifest["company"]["name"]).strip()
+    formal_rel = Path(f"{company}-全量分析-总结报告.md")
+    formal = root / formal_rel
+    atomic_copy(resolved, formal)
+    record = {
+        "artifact_id": "artifact.delivery-summary",
+        "path": formal_rel.as_posix(),
+        "bytes": formal.stat().st_size,
+        "sha256": sha256_file(formal),
+        "formal": True,
+        "accepted": True,
+        "registered_at": now_iso(),
+    }
+    manifest.setdefault("delivery", {})["summary"] = record
+    save_manifest(root, manifest)
+    append_event(root, {
+        "type": "summary_registered",
+        "path": record["path"],
+        "sha256": record["sha256"],
+    })
+    print(json.dumps(record, ensure_ascii=False))
     return 0
 
 
@@ -601,6 +784,28 @@ def _verify_formal_artifacts(root: Path, manifest: dict) -> list[dict]:
                 "path": rel,
                 "reason": "role_sha256_mismatch",
             })
+    summary = (manifest.get("delivery") or {}).get("summary")
+    if summary:
+        rel = summary.get("path", "")
+        fp = root / rel
+        if not fp.is_file() or fp.is_symlink():
+            corrupt.append({
+                "skill_id": "delivery-summary",
+                "path": rel,
+                "reason": "summary_missing",
+            })
+        elif fp.stat().st_size != summary.get("bytes"):
+            corrupt.append({
+                "skill_id": "delivery-summary",
+                "path": rel,
+                "reason": "summary_size_mismatch",
+            })
+        elif sha256_file(fp) != summary.get("sha256"):
+            corrupt.append({
+                "skill_id": "delivery-summary",
+                "path": rel,
+                "reason": "summary_sha256_mismatch",
+            })
     return corrupt
 
 
@@ -620,6 +825,10 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: PENDING/非终态={pending}; 缺正式产物={missing}")
+    if not (manifest.get("delivery") or {}).get("summary"):
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError("finalize 未准出: 缺少已登记的最终总结报告")
     audit_path = root / "evidence/audit/audit-result.json"
     if not audit_path.is_file():
         manifest["run"]["status"] = "PARTIAL"
@@ -673,6 +882,19 @@ def _run_review_gate(root: Path, registry: Path) -> dict:
         review_dir = root / "evidence/review"
         if not review_dir.is_dir() or not list(review_dir.glob("review-result-*.json")):
             return {"status": "not_run"}
+        index = load_json(
+            review_dir / "review-index.json",
+            "语义评审索引",
+        )
+        required_scope = set(
+            module.required_review_scope(load_manifest(root)))
+        prepared_scope = set(index.get("scope") or [])
+        missing_scope = sorted(required_scope - prepared_scope)
+        if missing_scope:
+            return {
+                "status": "incomplete",
+                "missing_scope": missing_scope,
+            }
         # 聚合已有评审结果
         summary, _ = module.aggregate(root)
         summary_path = root / "evidence/review/semantic-review-summary.json"
@@ -746,6 +968,10 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--run-root", required=True)
     ingest.add_argument("--registry", default=DEFAULT_REGISTRY)
     ingest.add_argument("--result", required=True)
+    summary = sub.add_parser("register-summary")
+    summary.add_argument("--run-root", required=True)
+    summary.add_argument("--registry", default=DEFAULT_REGISTRY)
+    summary.add_argument("--summary", required=True)
     finalize = sub.add_parser("finalize")
     finalize.add_argument("--run-root", required=True)
     finalize.add_argument("--registry", default=DEFAULT_REGISTRY)
@@ -755,7 +981,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return {"init": cmd_init, "ingest-result": cmd_ingest, "finalize": cmd_finalize}[args.command](args)
+        return {
+            "init": cmd_init,
+            "ingest-result": cmd_ingest,
+            "register-summary": cmd_register_summary,
+            "finalize": cmd_finalize,
+        }[args.command](args)
     except GateError as exc:
         print(f"❌ {exc}")
         return exc.code

@@ -24,18 +24,11 @@ EXPECTED_SKILLS = {
     "investment-team",
     "management-deep-dive",
     "earnings-review",
-    "earnings-team",
     "industry-research",
     "industry-funnel",
     "bottleneck-hunter",
     "news-pulse",
     "thesis-tracker",
-    "thesis-drift",
-    "portfolio-review",
-    "private-company-research",
-    "deep-company-series",
-    "dyp-ask",
-    "wechat-article",
 }
 
 MACHINE_SECTIONS = {
@@ -84,7 +77,7 @@ class ContractV2Tests(unittest.TestCase):
             {item["skill_id"] for item in registry["skills"]},
             EXPECTED_SKILLS,
         )
-        self.assertEqual(len(registry["skills"]), 20)
+        self.assertEqual(len(registry["skills"]), 13)
 
     def test_real_registry_uses_structured_sections_not_generic_title_arrays(self):
         registry = load_contract()
@@ -114,24 +107,15 @@ class ContractV2Tests(unittest.TestCase):
             "physical_bottleneck_exists",
         )
         self.assertEqual(
-            by_id["portfolio-review"]["applicability"]["predicate"],
-            "private_portfolio_input",
-        )
-        self.assertEqual(
-            by_id["private-company-research"]["applicability"]["predicate"],
-            "is_unlisted",
-        )
-        self.assertEqual(
-            by_id["thesis-drift"]["applicability"]["predicate"],
-            "paired_thesis_snapshots",
-        )
-        self.assertEqual(
             by_id["investment-team"]["roles"]["required_roles"],
             ["duan", "buffett", "munger", "li"],
         )
         self.assertEqual(
-            by_id["earnings-team"]["roles"]["required_roles"],
-            ["duan", "buffett", "munger", "li", "editor", "reader"],
+            by_id["earnings-review"]["roles"]["required_roles"],
+            ["duan", "buffett", "munger", "li"],
+        )
+        self.assertEqual(
+            by_id["earnings-review"]["skill_type"], "fanout",
         )
         self.assertEqual(
             by_id["news-pulse"]["roles"]["required_roles"],
@@ -149,6 +133,16 @@ class ContractV2Tests(unittest.TestCase):
         self.assertIn("single_context_fallback", registry["pwl_forbidden"])
         self.assertIn("manual_intervention", registry["pwl_forbidden"])
         self.assertIn("budget_exhausted", registry["pwl_forbidden"])
+
+    def test_validator_rejects_authorization_scope_expansion(self):
+        registry = load_contract()
+        registry["authorization_profile"]["granted"].append(
+            "external_publish")
+
+        result = self.run_validator(registry)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("authorization_profile", result.stdout + result.stderr)
 
     def test_validator_rejects_v1_schema(self):
         registry = load_contract()
@@ -178,7 +172,7 @@ class ContractV2Tests(unittest.TestCase):
         result = self.run_validator(registry)
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("20", result.stdout + result.stderr)
+        self.assertIn("13", result.stdout + result.stderr)
 
     def test_every_artifact_path_is_under_confirmed_stage_directory(self):
         registry = load_contract()

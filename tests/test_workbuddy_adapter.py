@@ -32,6 +32,17 @@ class WorkBuddyAdapterTests(unittest.TestCase):
             adapter_line = next((line for line in adapter.splitlines() if line.startswith(field + ":")), None)
             self.assertEqual(adapter_line, canonical_line, field)
 
+    def test_adapter_is_exact_copy_of_canonical_workflow(self):
+        canonical = (
+            REPO / "skills/full-company-analysis.md"
+        ).read_text(encoding="utf-8")
+        adapter = ADAPTER.read_text(encoding="utf-8")
+        self.assertEqual(
+            adapter,
+            canonical,
+            "WorkBuddy 生产适配器必须由 canonical workflow 原样同步",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

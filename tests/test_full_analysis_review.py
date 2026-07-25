@@ -1,5 +1,6 @@
 """P2 语义评审层测试：aggregate 聚合逻辑、ingest 校验、prepare 简报生成。"""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -339,6 +340,64 @@ class CliIntegrationTests(unittest.TestCase):
         # 验证 summary 文件
         summary_path = self.run_root / "evidence/review/semantic-review-summary.json"
         self.assertTrue(summary_path.exists())
+
+    def test_prepare_includes_registered_delivery_summary_and_global_evidence(self):
+        self._setup_run_with_artifact("investment-research")
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        summary_path = self.run_root / "测试公司-全量分析-总结报告.md"
+        summary_path.write_text("# 核心结论速览\n总结内容", encoding="utf-8")
+        summary_digest = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+        manifest["delivery"] = {"summary": {
+            "artifact_id": "artifact.delivery-summary",
+            "path": summary_path.name,
+            "bytes": summary_path.stat().st_size,
+            "sha256": summary_digest,
+            "formal": True,
+            "accepted": True,
+        }}
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False),
+                                 encoding="utf-8")
+
+        prep = self.cli(
+            "review", "prepare", "--run-root", self.run_root,
+            "--scope", "delivery-summary",
+        )
+
+        self.assertEqual(prep.returncode, 0, prep.stdout + prep.stderr)
+        brief = json.loads(
+            (self.run_root /
+             "evidence/review/review-brief-delivery-summary.json").read_text())
+        self.assertEqual(brief["skill_id"], "delivery-summary")
+        self.assertEqual(brief["report"]["sha256"], summary_digest)
+        self.assertEqual(brief["evidence"]["fact_count"], 1)
+
+    def test_default_prepare_automatically_reviews_not_applicable_reports(self):
+        self._setup_run_with_artifact("quality-screen")
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["skills"][0]["status"] = "NOT_APPLICABLE"
+        manifest["skills"][0]["not_applicable"] = {
+            "predicate": "has_comparable_financial_history",
+            "fact_id": "f.1",
+            "alternative": None,
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False),
+                                 encoding="utf-8")
+
+        prep = self.cli(
+            "review", "prepare", "--run-root", self.run_root,
+        )
+
+        self.assertEqual(prep.returncode, 0, prep.stdout + prep.stderr)
+        output = json.loads(prep.stdout)
+        self.assertEqual(
+            [item["skill_id"] for item in output["prepared"]],
+            ["quality-screen"],
+        )
+        self.assertTrue(
+            (self.run_root /
+             "evidence/review/review-brief-quality-screen.json").is_file())
 
     def test_ingest_rejects_invalid_schema(self):
         self._setup_run_with_artifact("investment-research")

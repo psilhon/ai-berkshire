@@ -163,6 +163,16 @@
         "retryable": {"type": "boolean"}
       }
     },
+    "not_applicable": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["predicate", "fact_id", "alternative"],
+      "properties": {
+        "predicate": {"type": "string", "minLength": 1},
+        "fact_id": {"type": "string", "minLength": 1},
+        "alternative": {"type": ["string", "null"]}
+      }
+    },
     "key_claims": {
       "type": "array",
       "description": "关键判断与溯源；每条挂 source_ids，供 Gate 实质校验优先使用",

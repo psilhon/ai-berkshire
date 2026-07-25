@@ -103,11 +103,36 @@ class RuntimeTests(unittest.TestCase):
     def test_start_initializes_budget_and_counts_preflight_once(self):
         self.start()
         state = self.state()
-        self.assertEqual(state["budget"]["hard_max"], 50)
-        self.assertEqual(state["budget"]["stop_dispatch_at"], 45)
+        self.assertEqual(state["budget"]["hard_max"], 33)
+        self.assertEqual(state["budget"]["stop_dispatch_at"], 30)
         self.assertEqual(state["budget"]["used"], 1)
         self.assertEqual(state["budget"]["preflight_count"], 1)
-        self.assertEqual(len(state["work_units"]), 20)
+        self.assertEqual(len(state["work_units"]), 13)
+        authorization = state["authorization"]
+        self.assertEqual(
+            authorization["profile"],
+            "full-analysis-internal/v1",
+        )
+        self.assertIn("read_only_external_research",
+                      authorization["granted"])
+        self.assertIn("external_publish", authorization["denied"])
+
+    def test_next_work_injects_bounded_unattended_authorization(self):
+        self.start()
+
+        leased = self.cli("next-work", "--run-root", self.run_root)
+
+        self.assertEqual(leased.returncode, 0, leased.stdout + leased.stderr)
+        payload = json.loads(leased.stdout)
+        self.assertEqual(
+            payload["authorization"]["profile"],
+            "full-analysis-internal/v1",
+        )
+        methodology = payload["methodology_text"]
+        self.assertIn("本次 run 的启动请求已满足", methodology)
+        self.assertIn("只读外部研究", methodology)
+        self.assertIn("run_root", methodology)
+        self.assertIn("不得据此执行 push、PR、publish、send", methodology)
 
     def test_next_work_and_job_started_enforce_four_concurrent_leases(self):
         self.start()
@@ -145,11 +170,11 @@ class RuntimeTests(unittest.TestCase):
         self.start()
         path = self.run_root / "evidence/runtime-state.json"
         state = self.state()
-        state["budget"]["used"] = 50
+        state["budget"]["used"] = state["budget"]["hard_max"]
         path.write_text(json.dumps(state), encoding="utf-8")
         result = self.cli("next-work", "--run-root", self.run_root)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("50", result.stdout + result.stderr)
+        self.assertIn(str(state["budget"]["hard_max"]), result.stdout + result.stderr)
         self.assertTrue((self.run_root / "PARTIAL_REPORT.md").is_file())
         self.assertTrue((self.run_root / "SUMMARY.md").is_file())
 
@@ -168,6 +193,67 @@ class RuntimeTests(unittest.TestCase):
         state = self.state()
         unit = next(x for x in state["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
         self.assertIn(leased["attempt_id"], unit["abandoned_attempts"])
+
+    def test_resume_recovers_valid_orphan_before_abandoning_live_lease(self):
+        self.start()
+        leased = self.lease_and_start()
+        self.write_result(leased)
+
+        resumed = self.cli("resume", "--run-root", self.run_root)
+
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+        payload = json.loads(resumed.stdout)
+        self.assertIn(leased["work_unit_id"], payload["recovered"])
+        unit = next(
+            item for item in self.state()["work_units"]
+            if item["work_unit_id"] == leased["work_unit_id"]
+        )
+        self.assertEqual(unit["status"], "DONE")
+        self.assertNotIn(
+            leased["attempt_id"], unit.get("abandoned_attempts", []))
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        skill = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == leased["skill_id"]
+        )
+        self.assertEqual(skill["status"], "PASS")
+
+    def test_concurrent_job_started_updates_are_serialized_without_lost_budget(self):
+        self.start()
+        leases = [
+            json.loads(
+                self.cli("next-work", "--run-root", self.run_root).stdout)
+            for _ in range(4)
+        ]
+        processes = []
+        for index, leased in enumerate(leases):
+            processes.append(subprocess.Popen(
+                [
+                    sys.executable, str(CLI), "job-started",
+                    "--run-root", str(self.run_root),
+                    "--work-unit-id", leased["work_unit_id"],
+                    "--attempt-id", leased["attempt_id"],
+                    "--lease-nonce", leased["lease_nonce"],
+                    "--agent-job-id", f"job-concurrent-{index}",
+                ],
+                cwd=self.root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ))
+        completed = [process.communicate(timeout=20) for process in processes]
+
+        for process, (stdout, stderr) in zip(processes, completed):
+            self.assertEqual(process.returncode, 0, stdout + stderr)
+        state = self.state()
+        self.assertEqual(state["budget"]["used"], 5)
+        self.assertEqual(
+            sum(unit["status"] == "RUNNING" for unit in state["work_units"]),
+            4,
+        )
+        self.assertTrue(
+            (self.run_root / "evidence/locks/runtime-state.lock").is_file())
 
     def test_submit_result_rejects_bundle_not_bound_to_current_lease_before_gate(self):
         self.start()

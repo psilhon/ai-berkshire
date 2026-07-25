@@ -2623,7 +2623,7 @@ def cmd_express(code: str):
 def cmd_kline(code: str, days: int = 120):
     """前复权日线序列——Tushare daily + adj_factor。
 
-    补管线"无复权 OHLC 序列"缺口：独立历史价格源（对 news-pulse/thesis-drift），
+    补管线"无复权 OHLC 序列"缺口：独立历史价格源（对 news-pulse/thesis-tracker），
     前复权处理跨越分红/送转，可与腾讯 qfq 日线交叉。
     """
     client = _get_tushare_client()

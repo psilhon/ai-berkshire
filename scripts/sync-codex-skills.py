@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_SKILLS = ROOT / "skills"
 CODEX_SKILLS = ROOT / "codex-skills"
+WORKBUDDY_SOURCE = CLAUDE_SKILLS / "full-company-analysis.md"
+WORKBUDDY_TARGET = ROOT / "workbuddy-skills/full-company-analysis/SKILL.md"
 
 
 def split_frontmatter(text: str) -> tuple[str | None, str]:
@@ -117,16 +119,31 @@ def main() -> None:
             target.write_text(content, encoding="utf-8")
         count += 1
 
+    workbuddy_content = WORKBUDDY_SOURCE.read_text(encoding="utf-8")
+    if check:
+        if (not WORKBUDDY_TARGET.exists()
+                or WORKBUDDY_TARGET.read_text(encoding="utf-8") != workbuddy_content):
+            stale.append(str(WORKBUDDY_TARGET.relative_to(ROOT)))
+    else:
+        WORKBUDDY_TARGET.parent.mkdir(parents=True, exist_ok=True)
+        WORKBUDDY_TARGET.write_text(workbuddy_content, encoding="utf-8")
+
     if check:
         if stale:
             print("Codex skills are out of date:")
             for path in stale:
                 print(f"  {path}")
             raise SystemExit(1)
-        print(f"Checked {count} Codex skills in {CODEX_SKILLS.relative_to(ROOT)}")
+        print(
+            f"Checked {count} Codex skills and WorkBuddy adapter "
+            f"in {CODEX_SKILLS.relative_to(ROOT)}"
+        )
         return
 
-    print(f"Generated {count} Codex skills in {CODEX_SKILLS.relative_to(ROOT)}")
+    print(
+        f"Generated {count} Codex skills and WorkBuddy adapter "
+        f"in {CODEX_SKILLS.relative_to(ROOT)}"
+    )
 
 
 if __name__ == "__main__":

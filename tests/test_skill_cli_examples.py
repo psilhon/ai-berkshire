@@ -5,7 +5,7 @@ Verifies that:
 1. The canonical cross-validate fixture actually parses and exits 0.
 2. The three broken legacy forms (--metric / array --values / --sources)
    are rejected with exit code 2.
-3. skills/earnings-review.md and skills/earnings-team.md no longer contain
+3. skills/earnings-review.md no longer contains
    the broken financial_rigor --metric/--sources usage.
 """
 
@@ -86,7 +86,6 @@ class TestSkillFilesNoBrokenExamples(unittest.TestCase):
 
     SKILL_FILES = [
         ROOT / "skills" / "earnings-review.md",
-        ROOT / "skills" / "earnings-team.md",
     ]
 
     def _rigor_blocks(self, text):

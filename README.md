@@ -12,7 +12,7 @@
 
 > 📮 **仓库是全量框架，公众号是精选。** 真正值得深研的公司，加上报告之外我自己的判断与取舍，都在微信公众号「**复利炼丹炉**」——[扫码关注 ↓](#精选研究首发于公众号)
 
-[实盘业绩](#real-track-record) · [为什么不能直接问AI](#为什么不能直接问-ai) · [Skills 一览](#skills-一览20个) · [快速开始](#快速开始) · [实战报告](#实战研究报告) · [设计理念](#设计理念) · [公众号](#精选研究首发于公众号)
+[实盘业绩](#real-track-record) · [为什么不能直接问AI](#为什么不能直接问-ai) · [Skills 一览](#skills-一览13-个业务-skill--1-个编排-skill) · [快速开始](#快速开始) · [实战报告](#实战研究报告) · [设计理念](#设计理念) · [公众号](#精选研究首发于公众号)
 
 ---
 
@@ -164,13 +164,13 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 
 **三层设计哲学**：
-- **Skill 层**：把"你要做什么"抽象成 20 个明确入口——深度研究、财报分析、行业筛选、持仓管理、思维工具，按场景选用
-- **Agent 层**：团队型 skill（如 `/investment-team`、`/earnings-team`）由 Team Lead 并行调度 4 个大师视角 Agent——各自独立搜索、独立判断、互相挑战，最后综合研判；轻量 skill 不经过这一层，直连工具快进快出
+- **Skill 层**：13 个业务入口覆盖数据、公司、财报、行业、论文与风险，另有 1 个受治理的全量编排入口
+- **Agent 层**：团队型 skill（如 `/investment-team`、`/earnings-review`）由 Team Lead 并行调度 4 个大师视角 Agent——各自独立搜索、独立判断、互相挑战，最后综合研判；轻量 skill 不经过这一层，直连工具快进快出
 - **工具层**：精确计算、实时检索、报告抽检——保证每份报告的数据严谨性可验证
 
 ### 单公司全量分析（WorkBuddy）
 
-无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis/SKILL.md`](workbuddy-skills/full-company-analysis/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 20 项业务契约。Runtime 负责租约、重试、恢复与 50 次硬预算；Gate 负责 Result Bundle v1、正式产物原子晋级、共享 Audit 和最终准出。每次运行的中间产物统一位于 `local/company/<code>-<name>/<run-id>/evidence/`。
+无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis/SKILL.md`](workbuddy-skills/full-company-analysis/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 13 项业务契约。Runtime 负责租约、重试、恢复与 33 次硬预算；Gate 负责 Result Bundle v1、N/A 负向验收、正式产物与总结报告原子晋级、共享 Audit、语义 Review 和最终准出。每次运行的中间产物统一位于 `local/company/<code>-<name>/<run-id>/evidence/`。
 
 ```bash
 python3 scripts/full_analysis.py start \
@@ -181,7 +181,7 @@ python3 scripts/full_analysis.py start \
 
 ---
 
-## Skills 一览（20个）
+## Skills 一览（13 个业务 Skill + 1 个编排 Skill）
 
 ### 🔬 深度研究类
 
@@ -190,15 +190,12 @@ python3 scripts/full_analysis.py start \
 | [`/investment-research`](skills/investment-research.md) | 四大师综合深度分析 | 对一家上市公司进行全方位投资研究 |
 | [`/investment-team`](skills/investment-team.md) | 多Agent并行投研团队 | 4个Agent并行研究，最快速、最全面 |
 | [`/management-deep-dive`](skills/management-deep-dive.md) | 管理层纵深研究 | "买股票就是买人"——当管理层是核心变量时深挖 |
-| [`/private-company-research`](skills/private-company-research.md) | 未上市公司深度研究 | 研究蚂蚁、SpaceX等信息稀缺的未上市公司 |
-| [`/deep-company-series`](skills/deep-company-series.md) | 8篇长文系列拆一家公司 | 公众号级深度系列，12万字从认知重置到决策闭环 |
 
 ### 📊 财报分析类
 
 | Skill | 用途 | 适合场景 |
 |-------|------|---------|
 | [`/earnings-review`](skills/earnings-review.md) | 财报精读（一手资料） | 只读原始财报，不依赖二手研报，像巴菲特一样读年报 |
-| [`/earnings-team`](skills/earnings-team.md) | 财报精读团队 + 公众号发布 | 四大师并行解读财报 → 编辑润色 → 读者评审 → 可发布文章 |
 
 ### 🏭 行业筛选类
 
@@ -214,19 +211,21 @@ python3 scripts/full_analysis.py start \
 
 | Skill | 用途 | 适合场景 |
 |-------|------|---------|
-| [`/portfolio-review`](skills/portfolio-review.md) | 组合管理与优化 | 从"研究公司"升级到"管理组合"——仓位、集中度、再平衡 |
 | [`/thesis-tracker`](skills/thesis-tracker.md) | 投资论文追踪 | 买入后的纪律系统：持续跟踪论文是否被证伪 |
-| [`/thesis-drift`](skills/thesis-drift.md) | 投资论文漂移检测 | 对比两份论文/报告，区分事实变化、估值变化与措辞变化 |
 | [`/news-pulse`](skills/news-pulse.md) | 股价异动快速归因 | 股价大涨/大跌时10分钟搞清"发生了什么" |
 
 ### 🧠 思维工具类
 
 | Skill | 用途 | 适合场景 |
 |-------|------|---------|
-| [`/dyp-ask`](skills/dyp-ask.md) | 段永平问答 | 以段永平的方式思考任何问题——商业、投资、人生 |
 | [`/financial-data`](skills/financial-data.md) | 财务数据获取与交叉验证规范 | 确保关键数据来自2个独立来源，误差>1%告警 |
 | [`/ashare-data`](skills/ashare-data.md) | A股数据管线统一入口 | 行情/财务/公告/市场信号一键取数，标注来源与数据时间 |
-| [`/wechat-article`](skills/wechat-article.md) | 微信公众号文章 | 作者、编辑、读者三Agent协作，产出可发布文章 |
+
+### 🎛 编排层
+
+| Skill | 用途 | 适合场景 |
+|-------|------|---------|
+| [`/full-company-analysis`](skills/full-company-analysis.md) | 13 项单公司全量分析 | 需要 Runtime、Gate、Audit、Review 和总结报告完整闭环 |
 
 ---
 
@@ -333,12 +332,9 @@ cd ai-berkshire
 /investment-research 腾讯
 /investment-team 美团
 /management-deep-dive 王兴 美团
-/private-company-research SpaceX
-/deep-company-series 拼多多
 
 # 财报分析
 /earnings-review 腾讯 2025Q4
-/earnings-team PDD 2025年报
 
 # 行业筛选
 /industry-research 核电
@@ -347,16 +343,16 @@ cd ai-berkshire
 /bottleneck-hunter AI基础设施
 /investment-checklist 茅台, 英伟达, 苹果
 
-# 持仓管理
-/portfolio-review 腾讯30%, 美团20%, 茅台20%, 现金30%
+# 论文与风险
 /thesis-tracker 拼多多
-/thesis-drift 拼多多 local/reports/拼多多-thesis-2025Q4.md reports/拼多多-thesis-2026Q1.md
 /news-pulse 腾讯
 
-# 思维工具
-/dyp-ask 拼多多的护城河到底在哪里？
+# 数据工具
 /ashare-data 600519
-/wechat-article 美团
+/financial-data 腾讯
+
+# 单公司全量分析
+/full-company-analysis 格力电器 000651.SZ
 ```
 
 在 Codex 中安装后重启 Codex，然后直接按 skill 名称描述任务，例如：
@@ -366,8 +362,7 @@ cd ai-berkshire
 使用 earnings-review 分析 PDD 2025年报
 使用 industry-funnel 筛选 AI算力
 使用 bottleneck-hunter 扫描 AI基础设施瓶颈
-使用 thesis-drift 对比拼多多两份投资论文
-使用 wechat-article 写美团投研文章
+使用 full-company-analysis 完整研究格力电器
 ```
 
 如果安装了 Codex slash prompts，重启 Codex 后也可以在 `/` 菜单里搜索这些 prompt。Codex 官方的 custom prompt 入口通常显示为 `prompts:<name>`，例如：
@@ -557,41 +552,7 @@ cd ai-berkshire
 
 ---
 
-### 6. `/private-company-research` — 未上市公司深度研究
-
-专为信息稀缺的未上市公司设计的"侦探式"研究框架：
-
-**核心差异化**：
-- **财务数据拼凑**：从招股书、母公司财报、融资新闻、行业数据多源拼凑
-- **置信度标注**：每个数据点标注 🟢高 / 🟡中 / 🔴低 置信度
-- **多方法估值交叉**：融资估值法 + 可比公司法 + DCF + 终局倒推法
-- **退出路径分析**：IPO/并购/二级转让全路径评估
-
-**输出示例摘录**：
-
-> #### 公司画像速览：SpaceX
->
-> | 项目 | 内容 |
-> |------|------|
-> | 最新估值 | ~$350B (2025年二级市场) 🟡 |
-> | 推算收入 | ~$130亿 (2024年) 🟡 |
-> | Starlink用户 | 400万+ (2024年底) 🟢 |
-> | 发射次数 | 100+ 次/年 (2024年) 🟢 |
->
-> #### 估值判断
->
-> | 方法 | 估值区间 | 说明 |
-> |------|---------|------|
-> | 最近融资 | $350B | 二级市场报价，有流动性溢价 |
-> | 可比公司法 | $200-280B | 对标电信+航天+国防 |
-> | DCF(中性) | $250-350B | 假设Starlink 2027年$300亿收入 |
-> | 终局倒推 | $400-600B | 假设星链成为全球电信基础设施 |
->
-> **综合合理估值区间：$250B - $400B**
-
----
-
-### 7. `/news-pulse` — 股价异动新闻归因
+### 6. `/news-pulse` — 股价异动新闻归因
 
 专为"股价大涨/大跌时快速搞清发生了什么"设计的情报响应 Skill。**不是深度投研，是 10-15 分钟的快速归因**——避免持仓异动时陷入小作文焦虑或盲目止损。
 

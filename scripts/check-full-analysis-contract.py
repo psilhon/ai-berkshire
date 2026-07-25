@@ -16,10 +16,8 @@ from pathlib import Path
 EXPECTED_SKILLS = {
     "ashare-data", "financial-data", "quality-screen", "investment-checklist",
     "investment-research", "investment-team", "management-deep-dive",
-    "earnings-review", "earnings-team", "industry-research", "industry-funnel",
-    "bottleneck-hunter", "news-pulse", "thesis-tracker", "thesis-drift",
-    "portfolio-review", "private-company-research", "deep-company-series",
-    "dyp-ask", "wechat-article",
+    "earnings-review", "industry-research", "industry-funnel",
+    "bottleneck-hunter", "news-pulse", "thesis-tracker",
 }
 EXPECTED_SCHEMA = {
     "schema_version": "full-analysis-contract/v2",
@@ -28,7 +26,7 @@ EXPECTED_SCHEMA = {
 }
 EXPECTED_STAGE_KEYS = {
     "01-data-screen", "02-company-earnings", "03-industry-opportunity",
-    "04-thesis-boundary", "05-content",
+    "04-thesis-boundary",
 }
 MACHINE_SECTIONS = {
     "data_cutoff", "sources_scope", "limitations", "research_disclaimer",
@@ -43,6 +41,21 @@ EVIDENCE_KINDS = {
     "required_command_operations", "conditional_command_operations",
 }
 SEQUENTIAL_CAPS = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE_PASS"}
+EXPECTED_AUTHORIZATION = {
+    "profile": "full-analysis-internal/v1",
+    "granted": [
+        "read_only_external_research",
+        "run_root_local_writes",
+        "research_conclusions",
+    ],
+    "denied": [
+        "external_publish",
+        "external_messages",
+        "vcs_remote_writes",
+        "writes_outside_run_root",
+        "sensitive_private_data",
+    ],
+}
 
 
 def _err(errors: list[str], message: str) -> None:
@@ -189,6 +202,12 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
             _err(errors, f"result schema 非法: {exc}")
     if "generic_required_sections" in registry:
         _err(errors, "v2 禁止 generic_required_sections")
+    if registry.get("authorization_profile") != EXPECTED_AUTHORIZATION:
+        _err(
+            errors,
+            "authorization_profile 必须与 full-analysis-internal/v1 "
+            "封闭授权边界完全一致",
+        )
     stage_dirs = registry.get("stage_dirs")
     if not isinstance(stage_dirs, dict) or set(stage_dirs) != EXPECTED_STAGE_KEYS:
         _err(errors, "stage_dirs 必须包含完整五阶段键")
@@ -204,11 +223,11 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
     skills = registry.get("skills")
     if not isinstance(skills, list):
         return errors + ["顶层 skills 必须为数组"]
-    if len(skills) != 20:
-        _err(errors, f"skills 必须恰好 20 项, 实际 {len(skills)} 项")
+    if len(skills) != 13:
+        _err(errors, f"skills 必须恰好 13 项, 实际 {len(skills)} 项")
     ids = [s.get("skill_id") for s in skills if isinstance(s, dict)]
     if set(ids) != EXPECTED_SKILLS or len(ids) != len(set(ids)):
-        _err(errors, "skill_id 必须与 20 项白名单完全一致且无重复")
+        _err(errors, "skill_id 必须与 13 项白名单完全一致且无重复")
     paths: dict[str, str] = {}
     known = set(ids)
     ashare_commands, cli_error = _ashare_cli_commands(repo_root)
@@ -338,7 +357,7 @@ def main() -> None:
         for error in errors:
             print(f"  - {error}")
         raise SystemExit(1)
-    print("✅ 注册表校验通过: Contract v2 的 20 项契约结构合法")
+    print("✅ 注册表校验通过: Contract v2 的 13 项契约结构合法")
 
 
 if __name__ == "__main__":

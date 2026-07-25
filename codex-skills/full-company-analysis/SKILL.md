@@ -32,7 +32,7 @@ This skill is generated from `skills/full-company-analysis.md` so Claude Code an
 python3 scripts/full_analysis.py start --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
 ```
 
-只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 20 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
+只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 
 ## Agent 调度纪律
 
@@ -53,7 +53,7 @@ python3 scripts/full_analysis.py job-started \
 <run_root>/evidence/attempts/<skill_id>/<attempt_id>/
 ```
 
-Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。除 facts/sources/calculation requests 外，必须按当前 skill 的 `evidence_rules` 填写结构化 `judgments`、`command_receipts` 与 `capability_records`；缺少任何已注册规则所需账本时 Audit 必须失败。多角色单元的 `role_runs` 不接受 Agent 自证，由 Gate 根据实际 `role-<role>.md` 备忘录生成并绑定路径、字节数与 SHA-256。计算请求只能提交 operation/args，重放结果由共享 Audit Job 调用 `financial_rigor.py` 生成，Agent 不得自证。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。
+Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。除 facts/sources/calculation requests 外，必须按当前 skill 的 `evidence_rules` 填写结构化 `judgments`、`command_receipts` 与 `capability_records`；缺少任何已注册规则所需账本时 Audit 必须失败。多角色单元的 `role_runs` 不接受 Agent 自证，由 Gate 根据实际 `role-<role>.md` 备忘录生成并绑定路径、字节数与 SHA-256。计算请求只能提交 operation/args，重放结果由共享 Audit Job 调用 `financial_rigor.py` 生成，Agent 不得自证。`NOT_APPLICABLE` 不是自报状态：必须提交 `not_applicable` 结构、带来源的判定事实和负向验收报告；`always`/`always_applicable` 单元不得 N/A。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。
 
 **派发前必读 `next-work` 注入的规范**：每次 `next-work` 返回的 payload 内含 `methodology_text`（即 `skills/<skill_id>.md` 完整方法论）、`sections`（章节与最低字数要求）、`min_bytes`（本报告字节下限）与 `roles`/`fanout_required`。执行 Agent 必须以 `methodology_text` 为强制规范完整落地，**不得仅凭 skill 名称凭记忆发挥**；报告字节数必须 ≥ `min_bytes`，否则 Gate 拒收。
 
@@ -66,7 +66,7 @@ python3 scripts/full_analysis.py submit-result \
   --run-root <run_root> --result <attempt_dir>/result.json
 ```
 
-租约期间按需调用 `heartbeat`。Agent 失败调用 `record-failure`；429 只走 Runtime 的全局冷却与降并发，禁止手工绕过预算。达到 45 次后停止非核心派生重试；达到 50 次立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。
+租约期间按需调用 `heartbeat`。Agent 失败调用 `record-failure`；429 只走 Runtime 的全局冷却与降并发，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
 
 ## 执行一致性纪律（防质量坍塌，强制）
 
@@ -78,19 +78,25 @@ python3 scripts/full_analysis.py submit-result \
 
 ## 恢复与收口
 
-WorkBuddy 重启后调用 `resume`。Runtime 会把旧的 `LEASED/RUNNING` 尝试标为 abandoned 并为未完成 work unit 重新排队；已经被 Gate 接受的正式产物可复用。
+WorkBuddy 重启后调用 `resume`。Runtime 会先检查活动租约目录中的孤儿 Result Bundle：Gate 验证通过则直接接管为 DONE；无结果或验证失败才标为 abandoned 并重新排队。已经被 Gate 接受的正式产物可复用。
 
 所有 work unit 收口后执行：
 
 ```text
+# 主上下文只读汇总正式产物，先写入：
+# <run_root>/evidence/attempts/summary/summary.md
+python3 scripts/full_analysis.py register-summary \
+  --run-root <run_root> --summary <run_root>/evidence/attempts/summary/summary.md
 python3 scripts/full_analysis.py audit --run-root <run_root>
 python3 scripts/full_analysis.py review prepare --run-root <run_root>
-# 为每个 review-brief-<skill>.json 派独立评审 Agent，逐份 review ingest
+# 为每个核心单元、全部 N/A 与 delivery-summary 的简报派独立评审 Agent，逐份 review ingest
 python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 ```
 
-Audit 不通过、Audit 快照过期、语义评审范围/五维度不完整、评审与当前报告或证据摘要不一致，或仍有 `PENDING/RUNNING/FAILED` 时均不得准出。任何 ingest/返工都会使旧 Audit 与 Review 失效，必须重新执行。最终报告只能引用 Audit-PASS 的事实、来源和已重放计算；任何降级必须使用注册表允许的 PWL 原因并显式写入限制。
+总结报告是正式交付，不是 Gate 外附件。它必须包含核心结论、投资/财报/行业三条主干、补充参考、产物索引、数据截止日和免责声明，只能综合已登记正式产物，不得引入新取数或新推理。Gate 会冻结其路径、字节数和 SHA-256；Review 会使用全部归因证据检查总结，修改总结或任一底层证据都会使旧 Audit/Review 过期。
+
+Audit 不通过、总结缺失、Audit 快照过期、语义评审范围/五维度不完整、评审与当前报告或证据摘要不一致，或仍有 `PENDING/RUNNING/FAILED` 时均不得准出。任何 ingest、总结重登记或返工都会使旧 Audit 与 Review 失效，必须重新执行。最终报告只能引用 Audit-PASS 的事实、来源和已重放计算；任何降级必须使用注册表允许的 PWL 原因并显式写入限制。
 
 finalize 之后（或随时）执行质量体检：
 
