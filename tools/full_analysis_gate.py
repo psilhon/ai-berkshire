@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""全量公司分析 Gate v2：只负责确定性登记、晋级与最终收口。
+"""全量公司分析 Gate v2：负责确定性登记、实质验收、晋级与最终收口。
 
 WorkBuddy Runtime 负责调度；Gate 不启动 Agent、不读取报告正文做主观判断，
-只验证 Contract/Result Bundle、路径、哈希和状态机。
+但会确定性验证 Contract/Result Bundle、报告结构、路径、哈希和状态机。
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from full_analysis_snapshot import analysis_snapshot
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -42,6 +44,11 @@ ROLE_NAME_MAP = {
     "alternative-data": "另类", "integrator": "整合",
 }
 NAMED_DISSENT_DEFAULT = 2               # 扇出类需 >=2 角色在分歧处交锋
+NON_SUBSTANTIVE_SECTION_IDS = {
+    "data_cutoff", "sources_scope", "limitations", "research_disclaimer",
+    "downstream_evidence", "contract_calculations", "command_receipts",
+    "source_dates", "warnings_gaps",
+}
 
 
 class GateError(Exception):
@@ -222,7 +229,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         "company": {"code": args.code, "name": args.company},
         "skills": [{"skill_id": item["skill_id"], "status": "PENDING", "attempts": [], "artifact_records": []}
                    for item in registry["skills"]],
-        "artifacts": [], "facts": [], "sources": [], "calculations": [], "events": [],
+        "artifacts": [], "facts": [], "sources": [], "calculations": [],
+        "judgments": [], "command_receipts": [], "role_runs": [],
+        "capabilities": {}, "events": [],
     }
     atomic_write_json(root / MANIFEST_REL, manifest)
     atomic_write_json(root / RUNTIME_STATE_REL, {
@@ -277,12 +286,40 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
       - 分歧/反面检验标记数（防片面，逼出不同视角交锋）
       - 扇出类具名分歧（>=2 角色在分歧处交锋）
       - 标题占比（防骨架/注水）
-    contract.sections 仍由 Runtime 注入给执行 Agent 作为结构建议，但非闸门硬匹配。
+    contract.sections 是确定性准出契约；required/min_content_chars/min_substantive_sections
+    均在此执行，避免"注册了章节规则但 Gate 不检查"。
     """
     errors: list[str] = []
     stype = skill.get("skill_type", "analysis")
     blocks = _section_blocks(text)
-    # 1. 分歧 / 反面检验标记（防片面，逼出不同视角交锋）
+    bodies_by_heading: dict[str, list[str]] = {}
+    for heading, body in blocks:
+        bodies_by_heading.setdefault(heading, []).append(body)
+
+    # 1. 必需章节与章节最小内容
+    substantive_bodies = set()
+    for section in skill.get("sections", []):
+        if not section.get("required"):
+            continue
+        heading = section.get("heading", "")
+        bodies = bodies_by_heading.get(heading, [])
+        if not bodies:
+            errors.append(f"缺必需章节: {heading}")
+            continue
+        normalized = re.sub(r"\s+", "", "\n".join(bodies))
+        minimum = section.get("min_content_chars", 0)
+        if len(normalized) < minimum:
+            errors.append(f"章节 {heading} 正文 {len(normalized)} < 下限 {minimum}")
+            continue
+        if section.get("section_id") not in NON_SUBSTANTIVE_SECTION_IDS and len(normalized) >= max(80, minimum):
+            substantive_bodies.add(normalized)
+    required_substantive = skill.get("min_substantive_sections", 0)
+    if required_substantive and len(substantive_bodies) < required_substantive:
+        errors.append(
+            f"实质章节 {len(substantive_bodies)} < 下限 {required_substantive}"
+            "（重复正文只计一次）")
+
+    # 2. 分歧 / 反面检验标记（防片面，逼出不同视角交锋）
     dissent_pts = len(DISSENT_RE.findall(text))
     need_d = skill.get("min_dissent_points", 0)
     if need_d and dissent_pts < need_d:
@@ -318,12 +355,25 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
 CANONICAL_PIPELINE_SOURCE = "src.ashare_pipeline"
 
 
-def _merge_provenance(manifest: dict, bundle: dict) -> None:
+def _merge_provenance(
+    manifest: dict,
+    bundle: dict,
+    *,
+    verified_role_runs: list[dict] | None = None,
+) -> None:
+    # 证据归因：用 bundle 自带的 skill_id 给每条 fact/calc 打标记（向后兼容，不改 result schema）。
+    # 让 Audit 能按 skill 计算应有证据、强制执行 contract 的 evidence_rules。
+    owner_skill = bundle.get("skill_id")
+    manifest.setdefault("judgments", [])
+    manifest.setdefault("command_receipts", [])
+    manifest.setdefault("role_runs", [])
+    manifest.setdefault("capabilities", {})
     known_sources = {s.get("source_id") for s in manifest["sources"] if s.get("source_id")}
     for src in bundle.get("source_records") or []:
         sid = src.get("source_id")
         if not sid or sid in known_sources:
             continue
+        src = {**src, "skill_id": owner_skill} if owner_skill else src
         manifest["sources"].append(src)
         known_sources.add(sid)
 
@@ -334,6 +384,8 @@ def _merge_provenance(manifest: dict, bundle: dict) -> None:
         if not isinstance(refs, list) or not refs:
             # 无来源的管线事实：挂接规范管线来源，保证可追溯
             fact = {**fact, "source_ids": [CANONICAL_PIPELINE_SOURCE]}
+        if owner_skill and not fact.get("skill_id"):
+            fact = {**fact, "skill_id": owner_skill}
         if fid and fid in fact_index:
             manifest["facts"][fact_index[fid]] = fact
         else:
@@ -346,8 +398,55 @@ def _merge_provenance(manifest: dict, bundle: dict) -> None:
         cid = calc.get("calculation_id")
         if not cid or cid in calc_ids:
             continue
+        calc = {**calc, "skill_id": owner_skill} if owner_skill else calc
         manifest["calculations"].append(calc)
         calc_ids.add(cid)
+
+    judgment_index = {
+        judgment.get("judgment_id"): i
+        for i, judgment in enumerate(manifest["judgments"])
+        if judgment.get("judgment_id")
+    }
+    for judgment in bundle.get("judgments") or []:
+        record = {**judgment, "skill_id": owner_skill}
+        jid = record.get("judgment_id")
+        if jid in judgment_index:
+            manifest["judgments"][judgment_index[jid]] = record
+        else:
+            if jid:
+                judgment_index[jid] = len(manifest["judgments"])
+            manifest["judgments"].append(record)
+
+    receipt_ids = {
+        receipt.get("receipt_id")
+        for receipt in manifest["command_receipts"]
+        if receipt.get("receipt_id")
+    }
+    for receipt in bundle.get("command_receipts") or []:
+        if receipt.get("receipt_id") in receipt_ids:
+            continue
+        record = {**receipt, "skill_id": owner_skill}
+        manifest["command_receipts"].append(record)
+        receipt_ids.add(record.get("receipt_id"))
+
+    role_keys = {
+        (record.get("skill_id"), record.get("attempt_id"), record.get("role_id"))
+        for record in manifest["role_runs"]
+    }
+    # 角色运行不得由 Agent 自证；只接收 Gate 从实际独立备忘录生成的记录。
+    for role_run in verified_role_runs or []:
+        record = {
+            **role_run,
+            "skill_id": owner_skill,
+            "attempt_id": bundle.get("attempt_id"),
+        }
+        key = (record.get("skill_id"), record.get("attempt_id"), record.get("role_id"))
+        if key not in role_keys:
+            manifest["role_runs"].append(record)
+            role_keys.add(key)
+
+    for capability in bundle.get("capability_records") or []:
+        manifest["capabilities"][capability["capability"]] = capability["available"]
 
     # 确保规范管线来源在账本中登记（供事实挂接引用）
     if any(CANONICAL_PIPELINE_SOURCE in (f.get("source_ids") or []) for f in manifest["facts"]) \
@@ -365,7 +464,11 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     bundle = load_json(Path(args.result), "Result Bundle")
     validate_result_bundle(bundle, root, registry)
     skill = find_skill(registry, bundle["skill_id"])
-    records = []
+
+    accepted_status = bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}
+
+    # ===== 阶段一：只读校验（全部通过后才晋级；被拒 attempt 绝不触碰正式文件）=====
+    prepared: list[tuple[Path, Path, Path, dict]] = []  # (source, formal, formal_rel, record)
     for record in bundle["artifact_records"]:
         rel = safe_relative(root, record.get("path", ""))
         source = root / rel
@@ -378,30 +481,49 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if isinstance(min_bytes, int) and min_bytes > 0 and source.stat().st_size < min_bytes:
             raise GateError(f"artifact 字节数 {source.stat().st_size} < 防坍塌下限 {min_bytes}（{skill['skill_id']}）；报告过浅，拒收退回重试")
         formal_rel = safe_relative(root, skill["artifact"]["formal_path"])
-        formal = root / formal_rel
-        atomic_copy(source, formal)
-        accepted = {**record, "path": str(formal_rel), "formal": True, "accepted": True}
-        records.append(accepted)
+        prepared.append((source, root / formal_rel, formal_rel, record))
+
     # 多角色 skill 必须存在各角色独立备忘录（仅 PASS/PASS_WITH_LIMITATIONS 时校验，NOT_APPLICABLE 跳过）
+    verified_role_memos: list[tuple[Path, Path, dict]] = []
     roles = skill.get("roles") or {}
-    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"} and roles.get("mode") == "independent_then_integrator":
+    if accepted_status and roles.get("mode") == "independent_then_integrator":
         attempt_dir = (root / safe_relative(root, bundle["artifact_records"][0].get("path", ""))).parent
         missing = []
         for role in roles.get("required_roles", []):
             if role == "integrator":
                 continue
             memo = attempt_dir / f"role-{role}.md"
-            if not memo.is_file() or memo.stat().st_size < 300:
+            if not memo.is_file() or memo.is_symlink() or memo.stat().st_size < 300:
                 missing.append(role)
+                continue
+            formal_rel = Path(
+                "evidence/roles",
+                bundle["skill_id"],
+                bundle["attempt_id"],
+                memo.name,
+            )
+            verified_role_memos.append((
+                memo,
+                root / formal_rel,
+                {
+                    "role_id": role,
+                    "status": "PASS",
+                    "artifact_path": formal_rel.as_posix(),
+                    "bytes": memo.stat().st_size,
+                    "sha256": sha256_file(memo),
+                    "verified_by_gate": True,
+                },
+            ))
         if missing:
             raise GateError(
                 f"多角色 skill {skill['skill_id']} 缺角色独立备忘录: {missing}；"
                 f"须先为各角色产出 role-<role>.md（>=300 字节）再整合"
             )
+
     # 实质校验：防凑数 / 防空壳 / 防片面（替代纯字节门槛）
-    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}:
+    if accepted_status and prepared:
         try:
-            txt = source.read_text(encoding="utf-8")
+            txt = prepared[0][0].read_text(encoding="utf-8")
         except Exception:
             txt = ""
         sub_errs = _substance_errors(skill, txt)
@@ -409,20 +531,88 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             raise GateError(
                 f"实质校验未通过（{skill['skill_id']}）：" + "；".join(sub_errs)
             )
+
+    # ===== 阶段二：事务化晋级（校验已全部通过，此处只做原子复制与状态登记）=====
+    records = []
+    for source, formal, formal_rel, record in prepared:
+        atomic_copy(source, formal)
+        records.append({**record, "path": str(formal_rel), "formal": True, "accepted": True})
+    verified_role_runs = []
+    for source, formal, record in verified_role_memos:
+        atomic_copy(source, formal)
+        verified_role_runs.append(record)
     entry = next(item for item in manifest["skills"] if item["skill_id"] == bundle["skill_id"])
     entry.update({"status": bundle["status"], "attempts": [*entry.get("attempts", []), bundle["attempt_id"]],
                   "artifact_records": records, "limitations": bundle["limitations"], "updated_at": now_iso()})
     manifest["artifacts"] = [r for item in manifest["skills"] for r in item.get("artifact_records", [])]
-    _merge_provenance(manifest, bundle)
+    _merge_provenance(
+        manifest,
+        bundle,
+        verified_role_runs=verified_role_runs,
+    )
     save_manifest(root, manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
     print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))
     return 0
 
 
+def _verify_formal_artifacts(root: Path, manifest: dict) -> list[dict]:
+    """复核每个已接受正式产物的实际字节/哈希与 manifest 记录一致。
+
+    返回不一致项列表（含 skill_id/path/reason）；空列表 = 全部一致。
+    用于 finalize 兜底，防止"manifest 合格、正式文件被覆盖/污染"的隐蔽状态。
+    """
+    corrupt: list[dict] = []
+    for item in manifest.get("skills", []):
+        for record in item.get("artifact_records") or []:
+            rel = record.get("path", "")
+            fp = root / rel
+            if not fp.is_file():
+                corrupt.append({"skill_id": item["skill_id"], "path": rel, "reason": "missing"})
+                continue
+            if fp.stat().st_size != record.get("bytes"):
+                corrupt.append({"skill_id": item["skill_id"], "path": rel, "reason": "size_mismatch"})
+            elif sha256_file(fp) != record.get("sha256"):
+                corrupt.append({"skill_id": item["skill_id"], "path": rel, "reason": "sha256_mismatch"})
+    for record in manifest.get("role_runs") or []:
+        rel = record.get("artifact_path", "")
+        fp = root / rel
+        if not record.get("verified_by_gate"):
+            corrupt.append({
+                "skill_id": record.get("skill_id"),
+                "path": rel,
+                "reason": "role_not_verified",
+            })
+        elif not fp.is_file() or fp.is_symlink():
+            corrupt.append({
+                "skill_id": record.get("skill_id"),
+                "path": rel,
+                "reason": "role_missing",
+            })
+        elif fp.stat().st_size != record.get("bytes"):
+            corrupt.append({
+                "skill_id": record.get("skill_id"),
+                "path": rel,
+                "reason": "role_size_mismatch",
+            })
+        elif sha256_file(fp) != record.get("sha256"):
+            corrupt.append({
+                "skill_id": record.get("skill_id"),
+                "path": rel,
+                "reason": "role_sha256_mismatch",
+            })
+    return corrupt
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     root, registry = Path(args.run_root), load_registry(Path(args.registry))
     manifest = load_manifest(root)
+    # 完整性前置：先复核正式文件与 manifest 记录一致（捕获"manifest 合格、正式文件被覆盖/污染"）
+    corrupt = _verify_formal_artifacts(root, manifest)
+    if corrupt:
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError(f"finalize 未准出: 正式文件与 manifest 哈希不一致={corrupt}")
     states = {item["status"] for item in manifest["skills"]}
     pending = [item["skill_id"] for item in manifest["skills"] if item["status"] not in TERMINAL_STATUSES]
     missing = [item["skill_id"] for item in manifest["skills"] if item["status"] in {"PASS", "PASS_WITH_LIMITATIONS"} and not item.get("artifact_records")]
@@ -440,11 +630,105 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: Audit status={audit.get('status')!r}")
+    current_snapshot = analysis_snapshot(manifest, Path(args.registry))
+    if any(audit.get(key) != current_snapshot[key]
+           for key in ("snapshot_schema_version", "registry_sha256", "snapshot_digest")):
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError("finalize 未准出: Audit 快照与当前 manifest/registry 不一致，须重新 Audit")
+    review_info = _run_review_gate(root, Path(args.registry))
+    if (review_info.get("status") != "ok"
+            or review_info.get("verdict") != "REVIEW_PASSED"):
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError(
+            "finalize 未准出: 语义评审未完整通过 "
+            f"status={review_info.get('status')!r} verdict={review_info.get('verdict')!r}")
     manifest["run"]["status"] = "APPROVED" if "FAIL" not in states else "FAILED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})
-    print(json.dumps({"run_root": str(root), "status": manifest["run"]["status"]}, ensure_ascii=False))
+    # 健康体检（advisory，非阻断）：把"过了闸门但仍可能坍塌"的执行退化指纹显性化。
+    # 永不影响准出与退出码——任何异常都被捕获并记录 doctor_unavailable，绝不静默。
+    doctor_info = _run_doctor_advisory(root, Path(args.registry))
+    print(json.dumps({"run_root": str(root), "status": manifest["run"]["status"],
+                      "doctor_status": doctor_info["status"],
+                      "doctor_verdict": doctor_info["verdict"],
+                      "review_status": review_info["status"],
+                      "review_verdict": review_info.get("verdict")}, ensure_ascii=False))
     return 0
+
+
+def _run_review_gate(root: Path, registry: Path) -> dict:
+    """聚合语义评审结果；缺失、不完整、过期或异常均由 finalize 阻断准出。"""
+    try:
+        import importlib.util
+
+        review_path = TOOLS_DIR / "full_analysis_review.py"
+        if not review_path.is_file():
+            return {"status": "not_available"}
+        spec = importlib.util.spec_from_file_location("full_analysis_review", review_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+        review_dir = root / "evidence/review"
+        if not review_dir.is_dir() or not list(review_dir.glob("review-result-*.json")):
+            return {"status": "not_run"}
+        # 聚合已有评审结果
+        summary, _ = module.aggregate(root)
+        summary_path = root / "evidence/review/semantic-review-summary.json"
+        _atomic_write_json_safe(summary_path, summary)
+        print(f"[review] {summary['overall_verdict']}  "
+              f"评审 {summary['skills_reviewed']} 个核心单元  "
+              f"findings {summary['total_findings']}  "
+              f"(high={summary['severity_counts']['high']} "
+              f"medium={summary['severity_counts']['medium']} "
+              f"low={summary['severity_counts']['low']})", file=sys.stderr)
+        if summary["skills_review_required"]:
+            print(f"[review] ⚠️  需定向返工: {summary['skills_review_required']}", file=sys.stderr)
+        return {"status": "ok", "verdict": summary["overall_verdict"]}
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ 语义评审聚合不可用（finalize 将拒绝准出）: {exc}", file=sys.stderr)
+        try:
+            append_event(root, {"type": "review_unavailable", "reason": str(exc)})
+        except Exception:  # noqa: BLE001
+            pass
+        return {"status": "unavailable"}
+
+
+def _atomic_write_json_safe(path: Path, data) -> None:
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _run_doctor_advisory(root: Path, registry: Path) -> dict:
+    """调用 full_analysis_doctor 做执行完整性体检，写 evidence/doctor-report.json 并打印。
+
+    非阻断：诊断结果仅作参考，不参与 APPROVE/FAIL 判定。
+    可见性：doctor 成功返回 {"status":"ok","verdict":...}；
+    失败（DoctorError 等）不静默——写 doctor_unavailable 事件 + stderr，返回 {"status":"unavailable"}。
+    """
+    try:
+        import importlib.util
+
+        doctor_path = TOOLS_DIR / "full_analysis_doctor.py"
+        spec = importlib.util.spec_from_file_location("full_analysis_doctor", doctor_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        report = module.diagnose(root, registry)
+        # 原子写入报告，避免半成品污染 evidence/
+        tmp = root / "evidence/doctor-report.json.tmp"
+        tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, root / "evidence/doctor-report.json")
+        print(module.render(report), file=sys.stderr)
+        return {"status": "ok", "verdict": report["verdict"]}
+    except Exception as exc:  # noqa: BLE001 — advisory 永不中断 finalize，但必须留痕
+        print(f"⚠️  doctor 不可用（不影响准出）: {exc}", file=sys.stderr)
+        try:
+            append_event(root, {"type": "doctor_unavailable", "reason": str(exc)})
+        except Exception:  # noqa: BLE001 — 事件写入失败也不能中断
+            pass
+        return {"status": "unavailable", "verdict": None}
 
 
 def build_parser() -> argparse.ArgumentParser:

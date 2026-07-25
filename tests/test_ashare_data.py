@@ -495,6 +495,20 @@ class _FakeTsClient:
         return {"ok": True, "data": list(data), "source": f"tushare.{api_name}"}
 
 
+class TestMarginCommand(unittest.TestCase):
+    @mock.patch.object(ashare_data, "_get_tushare_client")
+    def test_without_code_queries_market_summary(self, get_client):
+        client = _FakeTsClient([])
+        get_client.return_value = client
+
+        with redirect_stdout(StringIO()) as output:
+            ok = ashare_data.cmd_margin(None, "20260725")
+
+        self.assertTrue(ok)
+        self.assertIn("融资融券汇总", output.getvalue())
+        self.assertEqual(client.calls, [("margin", {"trade_date": "20260725"})])
+
+
 class TestManagersCommand(unittest.TestCase):
     @mock.patch.object(ashare_data, "_get_tushare_client")
     def test_shows_current_manager_bios(self, get_client):

@@ -68,12 +68,43 @@ def _ashare_cli_commands(repo_root: Path) -> tuple[set[str] | None, str | None]:
     return commands, None
 
 
+def _audit_evaluator_kinds(repo_root: Path) -> tuple[set[str] | None, str | None]:
+    """独立解析 Audit evaluator 注册表，防止 Contract 规则注册后无人执行。"""
+    path = repo_root / "tools" / "full_analysis_audit.py"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        return None, f"Audit evaluator 注册表不可读或语法非法: {exc}"
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "RULE_EVALUATORS"
+                   for target in node.targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            return None, "RULE_EVALUATORS 必须是字面量字典"
+        kinds = {
+            key.value for key in node.value.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+        return kinds, None
+    return None, "Audit 未声明 RULE_EVALUATORS"
+
+
 def _validate_evidence(errors: list[str], label: str, rules: object,
                        known_skills: set[str], ashare_commands: set[str] | None) -> None:
     if not isinstance(rules, list) or not rules:
         _err(errors, f"{label} evidence_rules 必须为非空数组")
         return
+    # 跨字段一致性：kind 唯一（同一 skill 不允许重复证据规则类型）
+    kinds = [r.get("kind") for r in rules if isinstance(r, dict)]
+    dup_kinds = sorted({k for k in kinds if kinds.count(k) > 1})
+    if dup_kinds:
+        _err(errors, f"{label} evidence_rules kind 重复: {dup_kinds}")
     registered_ops: set[str] = set()
+    min_facts: int | None = None
+    min_dual: int | None = None
+    req_fields_count: int | None = None
     for rule in rules:
         if not isinstance(rule, dict) or rule.get("kind") not in EVIDENCE_KINDS:
             _err(errors, f"{label} evidence_rule kind 非法: {rule!r}")
@@ -83,6 +114,10 @@ def _validate_evidence(errors: list[str], label: str, rules: object,
             n = rule.get("n")
             if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
                 _err(errors, f"{label} evidence_rule n 必须为正整数: {rule!r}")
+            elif kind == "min_facts":
+                min_facts = n
+            elif kind == "min_dual_source_facts":
+                min_dual = n
         elif kind == "conditional_command_operations":
             if rule.get("capability") != "tushare_configured":
                 _err(errors, f"{label} conditional capability 非法")
@@ -111,8 +146,20 @@ def _validate_evidence(errors: list[str], label: str, rules: object,
             if not isinstance(values, list) or not values or any(
                     not isinstance(v, str) or not v for v in values):
                 _err(errors, f"{label} evidence values 必须为非空字符串数组")
-            if kind == "required_command_operations" and isinstance(values, list):
-                registered_ops.update(v for v in values if isinstance(v, str))
+            else:
+                if kind == "required_fact_fields":
+                    req_fields_count = len(values)
+                    dup_fields = sorted({v for v in values if values.count(v) > 1})
+                    if dup_fields:
+                        _err(errors, f"{label} required_fact_fields 值重复: {dup_fields}")
+                if kind == "required_command_operations":
+                    registered_ops.update(values)
+    # 跨字段一致性：min_facts 必须 >= required_fact_fields 数量（否则逻辑不可达）
+    if min_facts is not None and req_fields_count is not None and min_facts < req_fields_count:
+        _err(errors, f"{label} min_facts({min_facts}) < required_fact_fields 数量({req_fields_count})，逻辑不可达")
+    # 跨字段一致性：min_dual_source_facts 不得超过 min_facts（否则逻辑不可达）
+    if min_facts is not None and min_dual is not None and min_dual > min_facts:
+        _err(errors, f"{label} min_dual_source_facts({min_dual}) > min_facts({min_facts})，逻辑不可达")
     if ashare_commands is not None and label.startswith("[ashare-data:"):
         missing = sorted(registered_ops - ashare_commands)
         if missing:
@@ -167,6 +214,13 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
     ashare_commands, cli_error = _ashare_cli_commands(repo_root)
     if cli_error:
         _err(errors, cli_error)
+    evaluator_kinds, evaluator_error = _audit_evaluator_kinds(repo_root)
+    if evaluator_error:
+        _err(errors, evaluator_error)
+    elif evaluator_kinds != EVIDENCE_KINDS:
+        _err(errors, "Audit evaluator 与 Contract evidence kind 不一致: "
+             f"missing={sorted(EVIDENCE_KINDS - evaluator_kinds)} "
+             f"extra={sorted(evaluator_kinds - EVIDENCE_KINDS)}")
     for item in skills:
         if not isinstance(item, dict):
             _err(errors, f"skill 条目必须为对象: {item!r}"); continue
@@ -204,6 +258,7 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
             _err(errors, f"{label} sections 必须为非空数组")
         else:
             section_ids = []
+            section_headings = []
             for section in sections:
                 if not isinstance(section, dict):
                     _err(errors, f"{label} section 必须为对象"); continue
@@ -211,14 +266,21 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
                 section_ids.append(section_id)
                 if not isinstance(section_id, str) or not section_id.isidentifier() or not section_id.isascii():
                     _err(errors, f"{label} section_id 非法: {section_id!r}")
-                if not isinstance(section.get("heading"), str) or not section["heading"]:
+                heading = section.get("heading")
+                section_headings.append(heading)
+                if not isinstance(heading, str) or not heading:
                     _err(errors, f"{label} section heading 缺失")
                 if not isinstance(section.get("required"), bool):
                     _err(errors, f"{label} section required 必须为 bool")
-                if not isinstance(section.get("min_content_chars"), int) or section["min_content_chars"] < 0:
+                min_chars = section.get("min_content_chars")
+                if not isinstance(min_chars, int) or isinstance(min_chars, bool) or min_chars < 0:
                     _err(errors, f"{label} section min_content_chars 非法")
+                elif section.get("required") is True and min_chars <= 0:
+                    _err(errors, f"{label} required section {section_id!r} min_content_chars 必须 > 0")
             if len(section_ids) != len(set(section_ids)):
                 _err(errors, f"{label} section_id 必须唯一")
+            if len(section_headings) != len(set(section_headings)):
+                _err(errors, f"{label} section heading 必须唯一")
             if not MACHINE_SECTIONS.issubset(set(section_ids)):
                 _err(errors, f"{label} 缺少机器必需章节")
         app = item.get("applicability")
@@ -243,6 +305,23 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
                 _err(errors, f"{label} min_independent_contexts 非法")
             if roles.get("sequential_cap") not in SEQUENTIAL_CAPS:
                 _err(errors, f"{label} sequential_cap 非法")
+            role_rules = [
+                rule for rule in item.get("evidence_rules", [])
+                if isinstance(rule, dict) and rule.get("kind") == "min_role_runs"
+            ]
+            if roles.get("mode") == "single_agent" and role_rules:
+                _err(errors, f"{label} single_agent 不得配置 min_role_runs")
+            if roles.get("mode") == "independent_then_integrator" and role_rules:
+                verifiable_roles = [
+                    role for role in roles["required_roles"]
+                    if role != "integrator"
+                ]
+                if role_rules[0].get("n", 0) > len(verifiable_roles):
+                    _err(
+                        errors,
+                        f"{label} min_role_runs 超过可验证独立角色数 "
+                        f"{len(verifiable_roles)}",
+                    )
         _validate_evidence(errors, label, item.get("evidence_rules"), known, ashare_commands)
     return errors
 

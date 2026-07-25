@@ -43,7 +43,7 @@ python3 scripts/full_analysis.py job-started \
 <run_root>/evidence/attempts/<skill_id>/<attempt_id>/
 ```
 
-Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。完成后调用：
+Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据，并按 `evidence_rules` 填写 `judgments`、`command_receipts`、`capability_records`；多角色单元的 `role_runs` 由 Gate 根据实际角色备忘录生成并绑定路径、字节数与 SHA-256，不接受 Agent 自证。计算只提交请求，由共享 Audit Job 重放，Agent 不得自证。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。完成后调用：
 
 ```text
 python3 scripts/full_analysis.py submit-result \
@@ -51,6 +51,10 @@ python3 scripts/full_analysis.py submit-result \
 ```
 
 租约期间按需调用 `heartbeat`。Agent 失败调用 `record-failure`；429 只走 Runtime 的全局冷却与降并发，禁止手工绕过预算。达到 45 次后停止非核心派生重试；达到 50 次立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。
+
+## 执行一致性纪律（防质量坍塌，强制）
+
+每个 work unit 必须由独立原生 Agent 完成，主上下文只做调度，不得直接撰写分析正文。若会话经历过上下文摘要/压缩，后续未完成单元必须继续派真子 Agent + 重新外部取数，严禁凭压缩摘要在主上下文"顺手写完"。长任务 Agent 须周期性 `heartbeat`——全程零心跳却产出全部单元≈主上下文直写，doctor 会告警，须复核 10 号后单元。扇出单元必须用 Task 工具派独立角色 Agent，不得单 Agent 串行扮演。
 
 ## 恢复与收口
 
@@ -60,9 +64,16 @@ WorkBuddy 重启后调用 `resume`。Runtime 会把旧的 `LEASED/RUNNING` 尝�
 
 ```text
 python3 scripts/full_analysis.py audit --run-root <run_root>
+python3 scripts/full_analysis.py review prepare --run-root <run_root>
+# 派独立评审 Agent，逐份 review ingest
+python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 ```
 
-Audit 不通过或仍有 `PENDING/RUNNING/FAILED` 时不得生成准出报告。最终报告只能引用 Audit-PASS 的事实、来源和计算；任何降级必须使用注册表允许的 PWL 原因并显式写入限制。
+Audit 不通过、Audit/Review 快照过期、评审范围或五维度不完整，或仍有 `PENDING/RUNNING/FAILED` 时不得准出。任何 ingest/返工后必须重跑 Audit 与 Review。最终报告只能引用 Audit-PASS 的事实、来源和已重放计算；任何降级必须使用注册表允许的 PWL 原因并显式写入限制。
+
+finalize 之后（或随时）执行质量体检：`python3 scripts/full_analysis.py doctor --run-root <run_root>`。doctor 是 advisory 非阻断诊断，捕捉"过 Gate 下限但仍可能坍塌"的指纹（大量单元贴线 / 零 heartbeat / 深度分化不足）——过下限 ≠ 同等深度。若 WARN：人工复核点名单元，确属坍塌则按返工路径（目标单元置 PENDING + manifest 置 PARTIAL + 记录 rework_initiated）重派真子 Agent 返工后重跑 audit+finalize。
+
+Benchmark 只比较同公司、同 `as_of`、同 Contract digest 且全部 `APPROVED` 的 run；缺失事实、计算或判断一律计为不稳定。
 
 所有产出仅供学习研究，不构成投资建议。

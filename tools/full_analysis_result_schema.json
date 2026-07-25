@@ -64,6 +64,7 @@
           "url": {"type": "string", "minLength": 1},
           "retrieved_at": {"type": "string", "minLength": 1},
           "source_type": {"type": "string", "enum": ["filing", "exchange", "web", "news", "tool", "other"]},
+          "publisher": {"type": "string", "minLength": 1},
           "title": {"type": "string"},
           "published_at": {"type": "string"}
         }
@@ -94,6 +95,45 @@
           "conclusion": {"type": "string", "minLength": 1},
           "falsification": {"type": "array", "items": {"type": "string"}, "minItems": 1},
           "fact_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "command_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["receipt_id", "operation", "status"],
+        "properties": {
+          "receipt_id": {"type": "string", "minLength": 1},
+          "operation": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["PASS", "UNAVAILABLE", "FAIL"]},
+          "detail": {"type": "string"}
+        }
+      }
+    },
+    "role_runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role_id", "status"],
+        "properties": {
+          "role_id": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["PASS", "FAIL"]},
+          "artifact_path": {"type": "string"}
+        }
+      }
+    },
+    "capability_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "available"],
+        "properties": {
+          "capability": {"type": "string", "minLength": 1},
+          "available": {"type": "boolean"}
         }
       }
     },

@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import json
 import subprocess
 import sys
@@ -10,6 +11,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 CONTRACT = REPO / "tools" / "full_analysis_contract.json"
 VALIDATOR = REPO / "scripts" / "check-full-analysis-contract.py"
+VALIDATOR_SPEC = importlib.util.spec_from_file_location("contract_validator", VALIDATOR)
+VALIDATOR_MODULE = importlib.util.module_from_spec(VALIDATOR_SPEC)
+VALIDATOR_SPEC.loader.exec_module(VALIDATOR_MODULE)
 
 EXPECTED_SKILLS = {
     "ashare-data",
@@ -201,6 +205,100 @@ class ContractV2Tests(unittest.TestCase):
         result = self.run_validator(registry)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("predicates", result.stdout + result.stderr)
+
+    def _skill_with(self, registry, skill_id, evidence_rules):
+        for item in registry["skills"]:
+            if item["skill_id"] == skill_id:
+                item["evidence_rules"] = evidence_rules
+                return
+        raise AssertionError(f"skill 不存在: {skill_id}")
+
+    def test_validator_rejects_duplicate_evidence_kind(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        # financial-data 原本无 min_facts，注入两条重复 min_facts
+        self._skill_with(registry, "financial-data", [
+            {"kind": "required_fact_fields", "values": ["revenue"]},
+            {"kind": "min_facts", "n": 2},
+            {"kind": "min_facts", "n": 3},
+        ])
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("kind 重复", result.stdout + result.stderr)
+
+    def test_validator_rejects_role_run_rule_for_single_agent(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        skill = next(
+            item for item in registry["skills"]
+            if item["skill_id"] == "management-deep-dive"
+        )
+        skill["evidence_rules"].append({"kind": "min_role_runs", "n": 1})
+
+        result = self.run_validator(registry)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("single_agent", result.stdout + result.stderr)
+
+    def test_validator_rejects_min_facts_below_required_fields(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        self._skill_with(registry, "financial-data", [
+            {"kind": "required_fact_fields", "values": ["revenue", "margin", "eps"]},
+            {"kind": "min_facts", "n": 1},  # 1 < 3，逻辑不可达
+        ])
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("逻辑不可达", result.stdout + result.stderr)
+
+    def test_validator_rejects_duplicate_required_fact_fields(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        self._skill_with(registry, "financial-data", [
+            {"kind": "required_fact_fields", "values": ["revenue", "revenue"]},
+        ])
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("required_fact_fields 值重复", result.stdout + result.stderr)
+
+    def test_validator_rejects_dual_source_exceeding_min_facts(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        self._skill_with(registry, "financial-data", [
+            {"kind": "required_fact_fields", "values": ["revenue"]},
+            {"kind": "min_facts", "n": 1},
+            {"kind": "min_dual_source_facts", "n": 2},  # 2 > 1，逻辑不可达
+        ])
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("逻辑不可达", result.stdout + result.stderr)
+
+    def test_validator_rejects_duplicate_section_heading(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        skill = registry["skills"][0]
+        dup = copy.deepcopy(skill["sections"][0])
+        dup["section_id"] = "dup_heading_section"  # 改 id 规避 section_id 唯一性
+        skill["sections"].append(dup)  # heading 与 sections[0] 相同
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("heading 必须唯一", result.stdout + result.stderr)
+
+    def test_validator_rejects_zero_min_content_chars_on_required_section(self):
+        registry = load_contract()
+        self.assert_v2_header(registry)
+        skill = registry["skills"][0]
+        required_sec = next(s for s in skill["sections"] if s.get("required"))
+        required_sec["min_content_chars"] = 0
+        result = self.run_validator(registry)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("min_content_chars 必须 > 0", result.stdout + result.stderr)
+
+    def test_audit_evaluator_registry_covers_every_allowed_evidence_kind(self):
+        kinds, error = VALIDATOR_MODULE._audit_evaluator_kinds(REPO)
+
+        self.assertIsNone(error)
+        self.assertEqual(kinds, VALIDATOR_MODULE.EVIDENCE_KINDS)
 
 
 if __name__ == "__main__":

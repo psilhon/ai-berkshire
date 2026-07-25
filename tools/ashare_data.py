@@ -757,10 +757,11 @@ def cmd_income_stmt(code: str, years: int = 5, json_output: bool = False):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
     all_rows = []
     for ey in end_years:
-        r = client.query("income", params={"ts_code": f"{code}.SH", "end_date": ey}, fields=[])
+        r = client.query("income", params={"ts_code": ts_code, "end_date": ey}, fields=[])
         if r.get("ok"):
             all_rows.extend(r["data"])
     if json_output:
@@ -775,10 +776,11 @@ def cmd_balance_sheet(code: str, years: int = 5, json_output: bool = False):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
     all_rows = []
     for ey in end_years:
-        r = client.query("balancesheet", params={"ts_code": f"{code}.SH", "end_date": ey}, fields=[])
+        r = client.query("balancesheet", params={"ts_code": ts_code, "end_date": ey}, fields=[])
         if r.get("ok"):
             all_rows.extend(r["data"])
     if json_output:
@@ -793,10 +795,11 @@ def cmd_cash_flow(code: str, years: int = 5, json_output: bool = False):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
     all_rows = []
     for ey in end_years:
-        r = client.query("cashflow", params={"ts_code": f"{code}.SH", "end_date": ey}, fields=[])
+        r = client.query("cashflow", params={"ts_code": ts_code, "end_date": ey}, fields=[])
         if r.get("ok"):
             all_rows.extend(r["data"])
     if json_output:
@@ -811,9 +814,10 @@ def cmd_money_flow(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("moneyflow", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("moneyflow", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare moneyflow 查询失败: {r.get('message', '未知')}")
         return False
@@ -837,9 +841,10 @@ def cmd_factors(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("stk_factor_pro", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("stk_factor_pro", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare stk_factor_pro 查询失败: {r.get('message', '未知')}")
         return False
@@ -910,7 +915,8 @@ def cmd_name_history(code: str):
     client = _get_tushare_client()
     if not client:
         return False
-    r = client.query("namechange", params={"ts_code": f"{code}.SH"}, fields=[])
+    ts_code = normalize_code(code).secu_code
+    r = client.query("namechange", params={"ts_code": ts_code}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare namechange 查询失败: {r.get('message', '未知')}")
         return False
@@ -931,9 +937,10 @@ def cmd_limit_price(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("stk_limit", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("stk_limit", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ stk_limit 查询失败: {r.get('message', '未知')}")
         return False
@@ -981,9 +988,10 @@ def cmd_weekly(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("weekly", params={"ts_code": f"{code}.SH", "trade_date": trade_date, "fields": "ts_code,trade_date,open,high,low,close,vol,amount"}, fields=[])
+    r = client.query("weekly", params={"ts_code": ts_code, "trade_date": trade_date, "fields": "ts_code,trade_date,open,high,low,close,vol,amount"}, fields=[])
     if not r.get("ok"):
         print(f"❌ weekly 查询失败: {r.get('message', '未知')}")
         return False
@@ -1007,9 +1015,10 @@ def cmd_monthly(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("monthly", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("monthly", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ monthly 查询失败: {r.get('message', '未知')}")
         return False
@@ -1056,9 +1065,10 @@ def cmd_cyq_chips(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("cyq_perf", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("cyq_perf", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ cyq_perf 查询失败: {r.get('message', '未知')}")
         return False
@@ -1137,9 +1147,10 @@ def cmd_unblock(code: str, end_date: str = None, limit: int = 10):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not end_date:
         end_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("share_float", params={"ts_code": f"{code}.SH", "end_date": end_date}, fields=[])
+    r = client.query("share_float", params={"ts_code": ts_code, "end_date": end_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ share_float 查询失败: {r.get('message', '未知')}")
         return False
@@ -1160,9 +1171,10 @@ def cmd_block_trade(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("block_trade", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("block_trade", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ block_trade 查询失败: {r.get('message', '未知')}")
         return False
@@ -1207,9 +1219,10 @@ def cmd_stk_factor(code: str, trade_date: str = None):
     client = _get_tushare_client()
     if not client:
         return False
+    ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
-    r = client.query("stk_factor", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+    r = client.query("stk_factor", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ stk_factor 查询失败: {r.get('message', '未知')}")
         return False
@@ -1239,7 +1252,8 @@ def cmd_analyst_reports(code: str, limit: int = 20):
     client = _get_tushare_client()
     if not client:
         return False
-    r = client.query("report_rc", params={"ts_code": f"{code}.SH"}, fields=[])
+    ts_code = normalize_code(code).secu_code
+    r = client.query("report_rc", params={"ts_code": ts_code}, fields=[])
     if not r.get("ok"):
         print(f"❌ report_rc 查询失败: {r.get('message', '未知')}")
         return False
@@ -1344,7 +1358,8 @@ def cmd_margin(code: str = None, trade_date: str = None):
         trade_date = datetime.now().strftime("%Y%m%d")
     if code:
         # 个股融资融券明细
-        r = client.query("margin_detail", params={"ts_code": f"{code}.SH", "trade_date": trade_date}, fields=[])
+        ts_code = normalize_code(code).secu_code
+        r = client.query("margin_detail", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
         if not r.get("ok"):
             # fallback to summary
             r = client.query("margin", params={"trade_date": trade_date}, fields=[])

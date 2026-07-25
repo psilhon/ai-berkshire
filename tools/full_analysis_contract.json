@@ -55,7 +55,7 @@
       "artifact": {
         "artifact_id": "artifact.ashare-data",
         "formal_path": "01-数据与快筛/01-ashare-data.md",
-        "min_bytes": 800,
+        "min_bytes": 3000,
         "audit_policy": "advisory"
       },
       "sections": [
@@ -446,7 +446,7 @@
       "artifact": {
         "artifact_id": "artifact.financial-data",
         "formal_path": "01-数据与快筛/02-financial-data.md",
-        "min_bytes": 800,
+        "min_bytes": 3000,
         "audit_policy": "required"
       },
       "sections": [
@@ -570,7 +570,7 @@
       "artifact": {
         "artifact_id": "artifact.quality-screen",
         "formal_path": "01-数据与快筛/03-quality-screen.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -690,7 +690,7 @@
       "artifact": {
         "artifact_id": "artifact.investment-checklist",
         "formal_path": "01-数据与快筛/04-investment-checklist.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -820,7 +820,7 @@
       "artifact": {
         "artifact_id": "artifact.investment-research",
         "formal_path": "02-公司与财报/05-investment-research.md",
-        "min_bytes": 1500,
+        "min_bytes": 12000,
         "audit_policy": "required"
       },
       "sections": [
@@ -950,7 +950,7 @@
       "artifact": {
         "artifact_id": "artifact.investment-team",
         "formal_path": "02-公司与财报/06-investment-team.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1087,7 +1087,7 @@
       "artifact": {
         "artifact_id": "artifact.management-deep-dive",
         "formal_path": "02-公司与财报/07-management-deep-dive.md",
-        "min_bytes": 1500,
+        "min_bytes": 8000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1194,10 +1194,6 @@
           ]
         },
         {
-          "kind": "min_role_runs",
-          "n": 4
-        },
-        {
           "kind": "min_judgments_with_falsification",
           "n": 1
         }
@@ -1223,7 +1219,7 @@
       "artifact": {
         "artifact_id": "artifact.earnings-review",
         "formal_path": "02-公司与财报/08-earnings-review.md",
-        "min_bytes": 1500,
+        "min_bytes": 8000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1355,7 +1351,7 @@
       "artifact": {
         "artifact_id": "artifact.earnings-team",
         "formal_path": "02-公司与财报/09-earnings-team.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1488,7 +1484,7 @@
       "artifact": {
         "artifact_id": "artifact.industry-research",
         "formal_path": "03-行业与机会/10-industry-research.md",
-        "min_bytes": 1500,
+        "min_bytes": 8000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1618,7 +1614,7 @@
       "artifact": {
         "artifact_id": "artifact.industry-funnel",
         "formal_path": "03-行业与机会/11-industry-funnel.md",
-        "min_bytes": 1500,
+        "min_bytes": 8000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1738,7 +1734,7 @@
       "artifact": {
         "artifact_id": "artifact.bottleneck-hunter",
         "formal_path": "03-行业与机会/12-bottleneck-hunter.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -1880,7 +1876,7 @@
       "artifact": {
         "artifact_id": "artifact.news-pulse",
         "formal_path": "03-行业与机会/13-news-pulse.md",
-        "min_bytes": 1500,
+        "min_bytes": 4000,
         "audit_policy": "advisory"
       },
       "sections": [
@@ -2028,7 +2024,7 @@
       "artifact": {
         "artifact_id": "artifact.thesis-tracker",
         "formal_path": "04-论文与组合/14-thesis-tracker.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -2154,7 +2150,7 @@
       "artifact": {
         "artifact_id": "artifact.thesis-drift",
         "formal_path": "04-论文与组合/15-thesis-drift.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -2268,7 +2264,7 @@
       "artifact": {
         "artifact_id": "artifact.portfolio-review",
         "formal_path": "04-论文与组合/16-portfolio-review.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -2392,7 +2388,7 @@
       "artifact": {
         "artifact_id": "artifact.private-company-research",
         "formal_path": "04-论文与组合/17-private-company-research.md",
-        "min_bytes": 1500,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -2537,7 +2533,7 @@
       "artifact": {
         "artifact_id": "artifact.deep-company-series",
         "formal_path": "05-内容生产/18-deep-company-series.md",
-        "min_bytes": 600,
+        "min_bytes": 6000,
         "audit_policy": "required"
       },
       "sections": [
@@ -2781,7 +2777,7 @@
       "artifact": {
         "artifact_id": "artifact.wechat-article",
         "formal_path": "05-内容生产/20-wechat-article.md",
-        "min_bytes": 600,
+        "min_bytes": 4000,
         "audit_policy": "required"
       },
       "sections": [

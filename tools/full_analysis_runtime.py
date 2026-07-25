@@ -93,6 +93,67 @@ def _active_units(state: dict) -> list[dict]:
     return [unit for unit in state["work_units"] if unit.get("status") in {"LEASED", "RUNNING"}]
 
 
+def _sweep_expired_leases(state: dict, run_root: Path) -> int:
+    """清理过期租约（LEASED）和卡住 job（RUNNING 过期无心跳）。
+
+    处理三种来源的僵死状态：
+    1. job-started 工具断连 → unit 卡在 LEASED
+    2. Agent 启动后心跳中断（崩溃/无限循环/网络断开）→ unit 卡在 RUNNING
+    3. Agent 正常完成但 submit-result 通知丢失 → orphan result 在磁盘上
+
+    每种状态先检查孤儿产物（Agent 静默完成），再决定 PENDING/RETRY_WAIT/DONE。
+    """
+    current = now()
+    swept = 0
+    for unit in state["work_units"]:
+        if unit["status"] not in {"LEASED", "RUNNING"}:
+            continue
+        lease = unit.get("lease") or {}
+        expires = parse_time(lease.get("expires_at"))
+        if not expires or expires > current:
+            continue
+        attempt_id = lease.get("attempt_id")
+        if attempt_id:
+            # 通用孤儿产物恢复：Agent 已完成但 submit-result 通知丢失
+            result_path = Path(run_root) / "evidence/attempts" / unit["skill_id"] / attempt_id / "result.json"
+            if result_path.is_file():
+                try:
+                    old_status = unit["status"]
+                    _accept_result(
+                        run_root, DEFAULT_REGISTRY, result_path,
+                        state=state, allow_expired=True, event_kind="orphan_result_recovered",
+                    )
+                    swept += 1
+                    event(run_root, "orphan_result_validated", work_unit_id=unit["work_unit_id"],
+                          attempt_id=attempt_id, from_status=old_status)
+                    continue
+                except (RuntimeErrorState, OSError, json.JSONDecodeError) as exc:
+                    event(run_root, "orphan_result_rejected", work_unit_id=unit["work_unit_id"],
+                          attempt_id=attempt_id, reason=str(exc))
+            unit.setdefault("abandoned_attempts", []).append(attempt_id)
+        # P2: RUNNING 过期无产物 → Agent 心跳丢失（崩溃/超时），记录失败
+        if unit["status"] == "RUNNING":
+            reason = "heartbeat_lost" if unit["lease"].get("started_at") else "job_timeout"
+            if unit["attempts"] >= unit["max_attempts"]:
+                unit["status"] = "FAILED"
+                event(run_root, "job_failed", work_unit_id=unit["work_unit_id"],
+                      attempt_id=attempt_id, reason=reason, max_attempts_reached=True)
+            else:
+                unit["status"] = "RETRY_WAIT"
+                delay = BACKOFF_SECONDS[min(unit["attempts"] - 1, 1)]
+                unit["next_retry_at"] = iso(current + timedelta(seconds=delay))
+                event(run_root, "job_timed_out", work_unit_id=unit["work_unit_id"],
+                      attempt_id=attempt_id, reason=reason, next_retry_at=unit["next_retry_at"])
+        else:  # LEASED
+            unit["status"] = "PENDING"
+        unit["lease"] = None
+        swept += 1
+    if swept:
+        save_state(run_root, state)
+        event(run_root, "expired_or_stuck_swept", swept=swept)
+    return swept
+
+
 def _load_registry() -> dict:
     try:
         return json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
@@ -109,6 +170,8 @@ def next_work(run_root: Path) -> dict:
     cooldown = parse_time(state["concurrency"].get("cooldown_until"))
     if cooldown and cooldown > now():
         return {"status": "NO_WORK", "reason": "RATE_LIMIT_COOLDOWN", "cooldown_until": iso(cooldown)}
+    # P1+P2: 清理过期租约和卡住的 RUNNING job（心跳丢失/工具断连）
+    _sweep_expired_leases(state, run_root)
     active = _active_units(state)
     if len(active) >= state["concurrency"]["max"]:
         return {"status": "NO_WORK", "reason": "CONCURRENCY_LIMIT"}
@@ -181,10 +244,23 @@ def _check_lease(unit: dict, attempt_id: str, nonce: str) -> None:
 
 
 def job_started(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str, agent_job_id: str) -> dict:
+    """注册 Agent job 启动，将 work_unit 从 LEASED 切换到 RUNNING。
+
+    P1 幂等：若同一 attempt_id 已在前一次调用中切换为 RUNNING（但输出因工具断连丢失），
+    直接返回已有状态和 attempt_dir，不重复扣预算、不抛异常。调用方可安全重试。
+    """
     state = load_state(run_root)
     if state["budget"]["used"] >= state["budget"]["hard_max"]:
         raise RuntimeErrorState("硬预算已达 50，拒绝启动 Agent job")
     unit = _unit(state, work_unit_id)
+    # P1: 幂等检测 — 已 RUNNING 且 attempt_id 匹配 → 直接返回
+    if unit["status"] == "RUNNING":
+        lease = unit.get("lease") or {}
+        if lease.get("attempt_id") == attempt_id:
+            attempt_dir = Path(run_root) / "evidence/attempts" / unit["skill_id"] / attempt_id
+            event(run_root, "job_started_idempotent", work_unit_id=work_unit_id, attempt_id=attempt_id)
+            return {"status": "RUNNING", "attempt_dir": str(attempt_dir),
+                    "budget_used": state["budget"]["used"], "idempotent": True}
     _check_lease(unit, attempt_id, nonce)
     if unit["status"] != "LEASED":
         raise RuntimeErrorState(f"work unit 不是 LEASED: {unit['status']}")
@@ -231,21 +307,61 @@ def record_failure(run_root: Path, work_unit_id: str, attempt_id: str, reason: s
     return {"status": unit["status"], "attempts": unit["attempts"], "next_retry_at": unit.get("next_retry_at")}
 
 
-def submit_result(run_root: Path, registry: Path, result: Path) -> dict:
+def _validate_result_lease(state: dict, bundle: dict, *, allow_expired: bool = False) -> dict:
+    """在 Gate 产生任何副作用前，将 Result Bundle 绑定到当前活动租约。"""
+    if bundle.get("run_id") != state.get("run_id"):
+        raise RuntimeErrorState("Result Bundle run_id 与 Runtime 不匹配")
+    work_unit_id = bundle.get("work_unit_id")
+    if not isinstance(work_unit_id, str):
+        raise RuntimeErrorState("Result Bundle work_unit_id 缺失")
+    unit = _unit(state, work_unit_id)
+    if unit.get("skill_id") != bundle.get("skill_id"):
+        raise RuntimeErrorState("Result Bundle skill_id 与 work unit 不匹配")
+    if unit.get("status") not in {"RUNNING", "LEASED"}:
+        raise RuntimeErrorState(f"submit-result 状态非法: {unit.get('status')}")
+    lease = unit.get("lease") or {}
+    expected = {
+        "attempt_id": lease.get("attempt_id"),
+        "lease_nonce": lease.get("lease_nonce"),
+        "agent_job_id": lease.get("agent_job_id"),
+    }
+    actual = {key: bundle.get(key) for key in expected}
+    if actual != expected or not all(expected.values()):
+        raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
+    expires = parse_time(lease.get("expires_at"))
+    if not allow_expired and expires and expires <= now():
+        raise RuntimeErrorState("Result Bundle 对应租约已过期")
+    return unit
+
+
+def _accept_result(
+    run_root: Path,
+    registry: Path,
+    result: Path,
+    *,
+    state: dict | None = None,
+    allow_expired: bool = False,
+    event_kind: str = "result_submitted",
+) -> dict:
+    bundle = json.loads(result.read_text(encoding="utf-8"))
+    current_state = state if state is not None else load_state(run_root)
+    unit = _validate_result_lease(current_state, bundle, allow_expired=allow_expired)
     gate = Path(__file__).resolve().parent / "full_analysis_gate.py"
     completed = subprocess.run([sys.executable, str(gate), "ingest-result", "--run-root", str(run_root), "--registry", str(registry), "--result", str(result)], capture_output=True, text=True)
     if completed.returncode:
         raise RuntimeErrorState(completed.stdout + completed.stderr)
-    bundle = json.loads(result.read_text(encoding="utf-8"))
-    state = load_state(run_root)
-    unit = _unit(state, f"wu-{bundle['skill_id']}")
-    if unit["status"] not in {"RUNNING", "LEASED"}:
-        raise RuntimeErrorState(f"submit-result 状态非法: {unit['status']}")
     unit["status"] = "DONE" if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"} else "FAILED"
     unit["lease"] = None
-    save_state(run_root, state)
-    event(run_root, "result_submitted", work_unit_id=unit["work_unit_id"], status=unit["status"])
+    current_state["concurrency"]["current"] = max(
+        0, current_state["concurrency"].get("current", 0) - 1)
+    save_state(run_root, current_state)
+    event(run_root, event_kind, work_unit_id=unit["work_unit_id"],
+          attempt_id=bundle["attempt_id"], status=unit["status"])
     return {"status": unit["status"], "gate": completed.stdout.strip()}
+
+
+def submit_result(run_root: Path, registry: Path, result: Path) -> dict:
+    return _accept_result(run_root, registry, result)
 
 
 def render_partial(run_root: Path, reason: str) -> None:
