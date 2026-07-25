@@ -44,6 +44,9 @@ ROLE_NAME_MAP = {
     "alternative-data": "另类", "integrator": "整合",
 }
 NAMED_DISSENT_DEFAULT = 2               # 扇出类需 >=2 角色在分歧处交锋
+# 实质小节判定门槛（归一化后字符数）：低于此值视为"一句话带过/占位"，不计入实质章节。
+# 防凑数的关键闸门——逼出真论证（数据/对比/推演），而非短占位。非"写作字数目标"。
+SUBSTANTIVE_MIN_CHARS = 150
 NON_SUBSTANTIVE_SECTION_IDS = {
     "data_cutoff", "sources_scope", "limitations", "research_disclaimer",
     "downstream_evidence", "contract_calculations", "command_receipts",
@@ -395,7 +398,7 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
         if len(normalized) < minimum:
             errors.append(f"章节 {heading} 正文 {len(normalized)} < 下限 {minimum}")
             continue
-        if section.get("section_id") not in NON_SUBSTANTIVE_SECTION_IDS and len(normalized) >= max(80, minimum):
+        if section.get("section_id") not in NON_SUBSTANTIVE_SECTION_IDS and len(normalized) >= max(SUBSTANTIVE_MIN_CHARS, minimum):
             substantive_bodies.add(normalized)
     required_substantive = skill.get("min_substantive_sections", 0)
     if required_substantive and len(substantive_bodies) < required_substantive:

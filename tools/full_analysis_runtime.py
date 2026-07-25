@@ -31,7 +31,9 @@ SUMMARY_REPORT = "SUMMARY.md"
 LOCK_REL = Path("evidence/locks/runtime-state.lock")
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
-# 反凑数刚性指令：随 methodology_text 一并注入执行 Agent，明确"深度优先于字数"
+# 反凑数刚性指令：随 methodology_text 一并注入执行 Agent，明确"深度优先于字数"。
+# 关键口径：payload 里的 min_bytes 是 Gate 的"拒收地板"（挡住空壳式坍塌），
+# 绝非写作目标——严禁 Agent 奔着字节数注水。深度由实质校验保证，字数不设目标。
 ANTI_PADDING_DIRECTIVE = """
 【质量自觉 · 反凑数】
 完整性 = 推理链完整 + 关键判断有数据/来源支撑 + 分歧被显式标记。
@@ -39,6 +41,11 @@ ANTI_PADDING_DIRECTIVE = """
 一份短而精、解决核心问题的分析，远胜一份长而空、只在重述框架的分析。
 写透为止，不设字数上限。每个分析小节须有实质论证（数据、对比、推演），
 不得仅列标题或一句话带过；多视角 skill 必须显式呈现不同角色的分歧与交锋。
+
+【关于长度 · 必读】
+派发包里的 min_bytes 只是拒收地板——用来挡住空壳式坍塌报告，不是你要凑的写作目标。
+严禁奔着字节数写：数据写到位、推理写透即止，宁短勿水。
+真实有效的短报告永远优于注水的长报告；详略由问题本身决定，不由字数决定。
 """
 AUTHORIZATION_DIRECTIVE = """
 【全量运行授权信封 · full-analysis-internal/v1】
@@ -286,7 +293,14 @@ def _next_work_locked(run_root: Path) -> dict:
         "skill_id": unit["skill_id"],
         "methodology_path": skill.get("spec_source") if skill else None,
         "methodology_text": methodology_text,
-        "min_bytes": skill["artifact"]["min_bytes"] if skill else None,
+        # 校准路线（防凑数）：不把 min_bytes 具体数字暴露给执行 Agent——它是 Gate 的拒收
+        # 地板（挡空壳式坍塌），不是写作目标；奔字数写是凑数的根源。保留 key（值为 None）
+        # 以兼容下游派发脚本，深度由 _substance_errors 实质校验保证。
+        "min_bytes": None,
+        "length_policy": (
+            "min_bytes 仅是拒收地板，不是写作目标；数据写到位、推理写透即止，"
+            "宁短勿水。深度由实质校验保证，详略由问题本身决定。"
+        ),
         "skill_type": skill.get("skill_type") if skill else None,
         "min_dissent_points": skill.get("min_dissent_points") if skill else None,
         "min_substantive_sections": skill.get("min_substantive_sections") if skill else None,

@@ -73,20 +73,126 @@ WorkBuddy 重启后调用 `resume`。Runtime 会先检查活动租约目录中�
 所有 work unit 收口后执行：
 
 ```text
-# 主上下文只读汇总正式产物，先写入：
+# 步骤 A：编排器派 deep-summary Agent（独立原生 Agent），
+# 读取 13 份正式产物，按总结报告章节结构忠实熔炼，写入：
 # <run_root>/evidence/attempts/summary/summary.md
+# （主上下文不得代写；Agent 须遵循下方「总结产出纪律」）
+
+# 步骤 B：登记并冻结总结（Gate 校验章节/字节/产物索引覆盖）
 python3 scripts/full_analysis.py register-summary \
   --run-root <run_root> --summary <run_root>/evidence/attempts/summary/summary.md
+
+# 步骤 C：审计 + 语义评审 + 准出
 python3 scripts/full_analysis.py audit --run-root <run_root>
 python3 scripts/full_analysis.py review prepare --run-root <run_root>
-# 为每个核心单元、全部 N/A 与 delivery-summary 的简报派独立评审 Agent，逐份 review ingest
+# 为 scope 内每个 skill 派独立评审 Agent（见语义评审纪律）
 python3 scripts/full_analysis.py review summarize --run-root <run_root>
+python3 tools/full_analysis_gate.py finalize --run-root <run_root>
+
+# 步骤 D：finalize APPROVED 后，编排器派 html-express Agent（独立原生 Agent），
+# 将已冻结的 <公司名>-全量分析-总结报告.md 渲染为 HTML 展示件
+```
+
+> **为什么 register-summary 必须在 audit 之前**：`analysis_snapshot` 的投影包含 `manifest.delivery`，register-summary 写入 `delivery.summary` 会改变快照摘要。若 audit 先于 register-summary 执行，finalize 的快照一致性校验将因摘要不匹配而拒绝准出。
+
+### 总结产出纪律（步骤 A，deep-summary Agent 强制）
+
+编排器派发 deep-summary Agent 时，指令必须包含：
+
+- **输入**：13 份正式产物的绝对路径（从 manifest 的 `skills[].artifact_records[].path` 取得）+ `as_of` 日期 + 公司名/代码。
+- **方法论**：遵循 deep-summary skill 的忠实熔炼纪律（`references/distillation-guide.md`）——只读、只提炼，不 WebSearch、不取新数、不做新推理。
+- **输出格式**：必须包含 `register-summary` 要求的 8 个必需章节（核心结论速览 / 主干①·投资分析 / 主干②·财报研读 / 主干③·行业分析 / 补充与参考 / 产物索引 / 数据截止日 / 仅供学习研究），字节 ≥ 2500。
+- **产物索引**：必须逐条列出 13 份正式产物的完整相对路径，缺一即被 `register-summary` 拒收。
+- **写入路径**：`<run_root>/evidence/attempts/summary/summary.md`。
+- **禁止**：不得引入新数据/新推理/新结论；不得调用 `register-summary`/`audit`/`finalize`（这些由编排器执行）；不得触碰 `evidence/` 下其他文件。
+
+总结报告是正式交付，不是 Gate 外附件。只能综合已登记正式产物，不得引入新取数或新推理。Gate 会冻结其路径、字节数和 SHA-256；Review 会使用全部归因证据检查总结，修改总结或任一底层证据都会使旧 Audit/Review 过期。
+
+### HTML 版总结报告（步骤 D，html-express Agent 派生展示件）
+
+finalize **APPROVED 之后**，编排器派独立原生 Agent，用 `/html-express` 把已冻结的 markdown 总结渲染为自包含 HTML（`<公司名>-全量分析-总结报告.html`，放在 run root），作为可读性更强的展示件。纪律：
+
+- **它是 markdown 的派生展示件，不是 Gate 产物**：不参与 audit/review/finalize，不进入 manifest，不改变任何 digest。Gate 的准出真源永远是 markdown。
+- **只在 APPROVED 后生成**：markdown 已被 Gate 冻结，HTML 才有稳定真源；finalize 前生成会因后续评审返工而失效。
+- **100% 忠实于 APPROVED markdown**：不得引入新数据、新推理或新结论；每个数字必须能在 markdown 中找到对应。
+- **遵循 html-express 设计系统**：自包含单文件、内联 tokens.css（cream paper / terracotta / trust 墨蓝 / serif）、组件化（metric-card / data-table / comparison-table / timeline / badge / quote-card / details / columns）；可加 masthead、节导航、滚动显现等微交互。
+- **生成后必查**：① 无占位符残留（`填这里/Lorem/TBD/TODO/placeholder/待填`）② 关键数字全部在位（营收/归母/ROE/PE/估值区间等逐一 grep）③ 标签全闭合（`<section>/<table>/<div>` 开闭计数相等）④ 标题与锚点完整。
+- **markdown 一旦被编辑并重新 finalize，HTML 必须重新生成**：旧 HTML 立即作废，不得与新 APPROVED 版本并存误导。
+
+## 语义评审纪律（P2，强制）
+
+确定性 Gate 回答“产物是否存在、是否达标、是否可追溯”（结构层）；**语义评审回答“结论是否真的被证据支持、冲突是否解决、反面证据是否被处理”（语义层）**，是 Gate 与 doctor 之间的中间层。它能抓到结构层抓不到的跨产物语义吞漏（如总结只呈现主基准估值、吞掉保守基准悲观情景；跨单元数字误植）。**完整 REVIEW_PASSED 是 finalize 准出的必要条件**——8 个 scope skill 全部有有效评审结果、无 REVIEW_REQUIRED、无 high finding、无 stale/invalid。
+
+默认评审范围（`required_review_scope`）：8 个高判断密度核心单元 `investment-research / investment-team / investment-checklist / management-deep-dive / earnings-review / industry-research / thesis-tracker / delivery-summary`，外加全部 `NOT_APPLICABLE` 单元。
+
+**review-result schema（`semantic-review/v1`）**——评审子 Agent 每个 skill 产出一份 JSON，ingest 时按此严格校验，任一字段不合规即拒收：
+
+- `review_schema_version` 必须恰为 `"semantic-review/v1"`；
+- `skill_id` / `run_id` / `brief_digest` / `report_digest` / `evidence_digest` 均为非空字符串，且必须与对应 `review-brief-<skill>.json` 中的值**逐字一致**（digest 绑定，见下）；
+- `verdict` ∈ {`PASS`, `REVIEW_REQUIRED`}；存在任一 high finding 时 verdict 不得为 PASS；
+- `dimensions` 必须**恰好覆盖五个维度且不得重复**，每维 `verdict` ∈ {`PASS`, `FINDING`}：
+  1. `evidence_support`（核心结论是否由归因证据支持，有无过度推断）
+  2. `unresolved_conflicts`（双源事实分歧是否解释，是否形式挂双源）
+  3. `counter_evidence`（看空/分歧证据是否被同等力度处理，有无稻草人）
+  4. `valuation_consistency`（估值假设与事实是否内部自洽，情景是否全偏乐观）
+  5. `limitations_completeness`（限制项是否完整，有无未披露重大不确定性）
+- `findings` 每条含 `dimension` / `severity`∈{high,medium,low} / `description` / `evidence_refs`（非空数组）/ `remediation`；dimensions 中标 FINDING 的维度集合必须与 findings 覆盖的维度集合**完全一致**。
+
+最小合规模板：
+
+```json
+{
+  "review_schema_version": "semantic-review/v1",
+  "skill_id": "investment-research",
+  "run_id": "<逐字复制简报>",
+  "brief_digest": "<逐字复制简报>",
+  "report_digest": "<逐字复制简报 report.sha256>",
+  "evidence_digest": "<逐字复制简报 evidence.sha256>",
+  "verdict": "PASS",
+  "dimensions": [
+    {"dimension": "evidence_support", "verdict": "PASS"},
+    {"dimension": "unresolved_conflicts", "verdict": "PASS"},
+    {"dimension": "counter_evidence", "verdict": "PASS"},
+    {"dimension": "valuation_consistency", "verdict": "PASS"},
+    {"dimension": "limitations_completeness", "verdict": "PASS"}
+  ],
+  "findings": []
+}
+```
+
+**评审子 Agent 派发纪律**：`review prepare` 后，为 scope 内每个 skill 派一个**独立原生 Agent**（只读各自的 `evidence/review/review-brief-<skill>.json`），要求其逐维检查并产出 review-result。已知机械性 bug（务必规避）：
+
+- **禁止编造 evidence_refs**：finding 的证据引用必须真实存在于该 skill 的归因 facts/sources/calculations 或报告正文，不得凭印象虚构；
+- **digest 逐字复制**：`run_id`/`brief_digest`/`report_digest`/`evidence_digest` 从简报原样复制，不得重新计算或改写，否则 ingest 因摘要不匹配拒收；
+- **JSON 内引号转义**：description/remediation 字符串内避免未转义 ASCII 双引号，改用中文引号「」或转义，否则 JSON 解析失败；
+- **键名严格对齐 schema**：维度项用 `dimension`/`verdict`，不得写成 `name`/`result` 之类别名；
+- 每份评审结果写入 `evidence/review/review-result-<skill>.json`（ingest 落盘路径），随后逐个执行 `review ingest --run-root <run_root> --review <该路径>`。
+
+**digest 绑定与过期机制**：ingest 与 aggregate 都精确比对三个 digest。`report_digest`=报告正文 SHA-256，`evidence_digest`=归因证据的规范化 SHA-256。因此：**编辑总结报告会改变 `report_digest`，使 delivery-summary 的评审结果过期**（但 manifest.facts 未变，故其余 7 个 skill 的 evidence_digest 与评审结果仍有效）；**编辑任一底层证据会改变相关 skill 的 evidence_digest**。`register-summary` 改 manifest 又会使 audit 快照过期。任何 ingest、总结重登记或返工都使旧 Audit 与 Review 失效，必须按链重跑。
+
+**编辑总结后的返工链（强制顺序，缺一即被 finalize 拒出）**：
+
+```text
+# 1) 派 deep-summary Agent 重写 <run_root>/evidence/attempts/summary/summary.md（修 finding 或扩写深度）
+# 2) 重登记总结（改 manifest，使 audit 快照过期）
+python3 scripts/full_analysis.py register-summary --run-root <run_root> --summary <绝对路径>/summary.md
+# 3) 重跑 audit 刷新快照（finalize 校验 audit 快照与当前 manifest 一致，manifest 一变必须重跑）
+python3 scripts/full_analysis.py audit --run-root <run_root>
+# 4) 删除过期的 delivery-summary 评审结果（report_digest 已变）
+rm <run_root>/evidence/review/review-result-delivery-summary.json
+# 5) 重生成简报（刷新 delivery-summary 的 digest 绑定）
+python3 scripts/full_analysis.py review prepare --run-root <run_root>
+# 6) 派独立评审 Agent 复审 delivery-summary，写 review-result 后 ingest
+python3 scripts/full_analysis.py review ingest --run-root <run_root> --review <run_root>/evidence/review/review-result-delivery-summary.json
+# 7) 重新聚合至 REVIEW_PASSED
+python3 scripts/full_analysis.py review summarize --run-root <run_root>
+# 8) 准出
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 ```
 
-总结报告是正式交付，不是 Gate 外附件。它必须包含核心结论、投资/财报/行业三条主干、补充参考、产物索引、数据截止日和免责声明，只能综合已登记正式产物，不得引入新取数或新推理。Gate 会冻结其路径、字节数和 SHA-256；Review 会使用全部归因证据检查总结，修改总结或任一底层证据都会使旧 Audit/Review 过期。
+返工时**不得以 override 评审代替修正**：语义评审的价值就在于抓真实缺陷，凡 high/medium finding 必须先修正总结源文件或底层证据，再重走全链路、由独立评审确认修复。`register-summary` 与 `review ingest` 均须传**绝对路径**，相对路径会双重拼接报错。返工链跑完、重新 finalize APPROVED 后，若 run root 已存在 HTML 展示件，必须按「HTML 版总结报告」纪律重新生成，使 HTML 与最新 APPROVED markdown 一致。
 
-Audit 不通过、总结缺失、Audit 快照过期、语义评审范围/五维度不完整、评审与当前报告或证据摘要不一致，或仍有 `PENDING/RUNNING/FAILED` 时均不得准出。任何 ingest、总结重登记或返工都会使旧 Audit 与 Review 失效，必须重新执行。最终报告只能引用 Audit-PASS 的事实、来源和已重放计算；任何降级必须使用注册表允许的 PWL 原因并显式写入限制。
+Audit 不通过、总结缺失、Audit 快照过期、语义评审范围/五维度不完整、评审与当前报告或证据摘要不一致，或仍有 `PENDING/RUNNING/FAILED` 时均不得准出。最终报告只能引用 Audit-PASS 的事实、来源和已重放计算；任何降级必须使用注册表允许的 PWL 原因并显式写入限制。
 
 finalize 之后（或随时）执行质量体检：
 
