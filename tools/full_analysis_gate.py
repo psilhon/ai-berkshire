@@ -430,6 +430,16 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
         ratio = head_chars / len(text)
         if ratio > HEADING_RATIO_CAP:
             errors.append(f"标题占比 {ratio:.2f} > {HEADING_RATIO_CAP}（骨架/注水嫌疑）")
+    # 5. ## 后紧跟 ### 诊断（帮助 Agent 定位"正文为 0"的具体章节）
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        m_h2 = re.match(r"^##\s+(.+)$", ln)
+        if m_h2 and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            if re.match(r"^###\s+", nxt):
+                errors.append(
+                    f"章节「{m_h2.group(1).strip()}」后紧跟 ### 子标题，"
+                    "缺少正文段落（需在 ## 与 ### 之间插入 ≥150 字正文）")
     return errors
 
 
@@ -859,6 +869,9 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     manifest["run"]["status"] = "APPROVED" if "FAIL" not in states else "FAILED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})
+    # 生成 HTML 版总结报告（APPROVED 后自动执行，非阻断——失败不影响准出）
+    if manifest["run"]["status"] == "APPROVED":
+        _generate_summary_html(root, manifest)
     # 健康体检（advisory，非阻断）：把"过了闸门但仍可能坍塌"的执行退化指纹显性化。
     # 永不影响准出与退出码——任何异常都被捕获并记录 doctor_unavailable，绝不静默。
     doctor_info = _run_doctor_advisory(root, Path(args.registry))
@@ -868,6 +881,240 @@ def cmd_finalize(args: argparse.Namespace) -> int:
                       "review_status": review_info["status"],
                       "review_verdict": review_info.get("verdict")}, ensure_ascii=False))
     return 0
+
+
+def _generate_summary_html(root: Path, manifest: dict) -> None:
+    """finalize APPROVED 后自动生成 HTML 版总结报告（非阻断，失败只打印警告）。
+
+    从 manifest.delivery.summary.path 读取已冻结的 markdown 总结，
+    转换为自包含 HTML（内联 tokens.css），写入同目录 .html 文件。
+    """
+    try:
+        delivery = manifest.get("delivery") or {}
+        summary = delivery.get("summary") or {}
+        md_rel = summary.get("path", "")
+        if not md_rel:
+            print("[html-gen] ⚠  manifest 中无 summary.path，跳过 HTML 生成", file=sys.stderr)
+            return
+        md_path = root / md_rel
+        if not md_path.is_file():
+            print(f"[html-gen] ⚠  summary 文件不存在: {md_path}", file=sys.stderr)
+            return
+        md_text = md_path.read_text(encoding="utf-8")
+        html_body = _markdown_to_html(md_text)
+        html_path = md_path.with_suffix(".html")
+
+        tokens_css = _load_tokens_css()
+        company = manifest.get("run", {}).get("company", "") or ""
+        code = manifest.get("run", {}).get("code", "") or ""
+        title = f"{company}（{code}）全量分析总结报告" if company else "全量分析总结报告"
+        date_str = summary.get("registered_at", "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        status = manifest["run"]["status"]
+
+        html = _render_html_page(title=title, date_str=date_str, status=status,
+                                 tokens_css=tokens_css, body=html_body,
+                                 skill_count=len(manifest.get("skills", [])))
+        html_path.write_text(html, encoding="utf-8")
+        print(f"[html-gen] ✓ {html_path.name} ({len(html.encode())} bytes)", file=sys.stderr)
+        append_event(root, {"type": "html_generated", "path": str(html_path.relative_to(root)),
+                             "bytes": len(html.encode())})
+    except Exception as exc:
+        print(f"[html-gen] ⚠  HTML 生成失败（不影响 APPROVED 状态）: {exc}", file=sys.stderr)
+
+
+def _load_tokens_css() -> str:
+    """加载 html-express tokens.css；不可用时返回最小回退样式。"""
+    candidates = [
+        Path(os.path.expanduser("~/.workbuddy/skills/html-express/assets/tokens.css")),
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p.read_text(encoding="utf-8")
+    return "body{font-family:serif;max-width:760px;margin:0 auto;padding:2rem;background:#F5F4ED;color:#141413}"
+
+
+def _markdown_to_html(md: str) -> str:
+    """将 markdown 文本转为 HTML 片段（无依赖，覆盖总结报告常用语法）。"""
+    lines = md.splitlines()
+    out: list[str] = []
+    in_table = False
+    in_code = False
+    in_list = False
+    i = 0
+
+    def _flush_list():
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    def _flush_table():
+        nonlocal in_table
+        if in_table:
+            out.append("</tbody></table></div>")
+            in_table = False
+
+    while i < len(lines):
+        ln = lines[i]
+        # Code fence
+        if ln.strip().startswith("```"):
+            if in_code:
+                out.append("</code></pre>")
+                in_code = False
+            else:
+                _flush_list()
+                _flush_table()
+                out.append('<pre style="background:var(--code-bg,#30302E);color:var(--code-fg,#F5F4ED);padding:var(--sp-md,16px);border-radius:var(--r-md,8px);overflow-x:auto"><code>')
+                in_code = True
+            i += 1
+            continue
+        if in_code:
+            out.append(_escape_html(ln))
+            i += 1
+            continue
+        # Empty line
+        if not ln.strip():
+            _flush_list()
+            _flush_table()
+            i += 1
+            continue
+        # Horizontal rule
+        if ln.strip() == "---":
+            _flush_list()
+            _flush_table()
+            out.append("<hr>")
+            i += 1
+            continue
+        # Heading
+        m = re.match(r"^(#{1,6})\s+(.*)$", ln)
+        if m:
+            _flush_list()
+            _flush_table()
+            level = len(m.group(1))
+            text = _inline_md(m.group(2))
+            out.append(f"<h{level}>{text}</h{level}>")
+            i += 1
+            continue
+        # Table row
+        if "|" in ln and ln.strip().startswith("|"):
+            cells = [c.strip() for c in ln.strip().split("|")[1:-1]]
+            if all(re.match(r"^:?-{3,}:?$", c) for c in cells):
+                i += 1
+                continue  # skip separator row
+            if not in_table:
+                _flush_list()
+                out.append('<div class="hx-table-wrap"><table class="hx-table"><tbody>')
+                in_table = True
+            row_html = "".join(f"<td>{_inline_md(c)}</td>" for c in cells)
+            out.append(f"<tr>{row_html}</tr>")
+            i += 1
+            continue
+        else:
+            _flush_table()
+        # Unordered list
+        if re.match(r"^\s*[-*]\s+", ln):
+            if not in_list:
+                _flush_table()
+                out.append('<ul>')
+                in_list = True
+            text = _inline_md(re.sub(r"^\s*[-*]\s+", "", ln))
+            out.append(f"<li>{text}</li>")
+            i += 1
+            continue
+        # Ordered list
+        if re.match(r"^\s*\d+[.)]\s+", ln):
+            if not in_list:
+                _flush_table()
+                out.append('<ol>')
+                in_list = True
+            text = _inline_md(re.sub(r"^\s*\d+[.)]\s+", "", ln))
+            out.append(f"<li>{text}</li>")
+            i += 1
+            continue
+        else:
+            _flush_list()
+        # Blockquote
+        if ln.strip().startswith(">"):
+            _flush_table()
+            text = _inline_md(ln.strip()[1:].strip())
+            out.append(f"<blockquote style='margin:var(--sp-md,16px) 0;padding:var(--sp-md,16px) var(--sp-lg,24px);border-left:4px solid var(--terracotta,#B85235);background:var(--surface,#FAF9F5);border-radius:0 var(--r-md,8px) var(--r-md,8px) 0'><p>{text}</p></blockquote>")
+            i += 1
+            continue
+        # Regular paragraph
+        _flush_table()
+        text = _inline_md(ln)
+        out.append(f"<p>{text}</p>")
+        i += 1
+    _flush_list()
+    _flush_table()
+    if in_code:
+        out.append("</code></pre>")
+    return "\n".join(out)
+
+
+def _inline_md(text: str) -> str:
+    """处理行内 markdown：**bold**, *italic*, `code`, [link](url)。"""
+    text = _escape_html(text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+    return text
+
+
+def _escape_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _render_html_page(*, title: str, date_str: str, status: str,
+                      tokens_css: str, body: str, skill_count: int) -> str:
+    """组装完整 HTML 页面。"""
+    status_badge = '<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#E8F0E8;color:#2F6F4E">APPROVED</span>' if status == "APPROVED" else f'<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#F5EDE0;color:#9A5A2D">{status}</span>'
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>
+{tokens_css}
+  </style>
+  <style>
+    .hx-page {{ max-width: 760px; margin: 0 auto; padding: 48px 24px; }}
+    .hx-header {{ margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--border,#E5E3D8); }}
+    .hx-header .hx-eyebrow {{ font-size: 13px; font-weight: 500; letter-spacing: 0.06em; color: var(--terracotta,#B85235); text-transform: uppercase; margin: 0 0 8px; }}
+    .hx-header h1 {{ font-size: 32px; color: var(--trust,#1B365D); margin: 0 0 8px; }}
+    .hx-header .hx-sub {{ color: var(--olive,#504E49); font-size: 18px; margin: 0; }}
+    h2 {{ margin-top: 48px; font-size: 24px; border-left: 3px solid var(--terracotta,#B85235); padding-left: 16px; }}
+    h3 {{ margin-top: 32px; font-size: 19px; }}
+    .hx-footer {{ margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border,#E5E3D8); color: var(--muted,#6B6A64); font-size: 14px; }}
+    .hx-table-wrap {{ overflow-x: auto; margin: 16px 0; }}
+    .hx-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+    .hx-table th {{ background: var(--surface-muted,#E8E6DC); color: var(--trust,#1B365D); font-weight: 500; text-align: left; padding: 8px 16px; border-bottom: 2px solid var(--border,#E5E3D8); white-space: nowrap; }}
+    .hx-table td {{ padding: 8px 16px; border-bottom: 1px solid var(--border,#E5E3D8); }}
+    .hx-table tr:hover td {{ background: var(--surface,#FAF9F5); }}
+    hr {{ border: none; border-top: 1px solid var(--border,#E5E3D8); margin: 32px 0; }}
+    p {{ margin: 0 0 16px; }}
+    ul, ol {{ padding-left: 24px; margin-bottom: 16px; }}
+    li {{ margin-bottom: 4px; }}
+    @media (max-width: 768px) {{ .hx-page {{ padding: 32px 16px; }} }}
+  </style>
+</head>
+<body>
+  <main class="hx-page">
+    <header class="hx-header">
+      <p class="hx-eyebrow">全量分析 · 已核准</p>
+      <h1>{title}</h1>
+      <p class="hx-sub">数据截止 {date_str} · {skill_count} 份正式产物 · {status_badge}</p>
+    </header>
+{body}
+    <footer class="hx-footer">
+      <p><strong>数据截止日</strong>：{date_str} · <strong>状态</strong>：{status} · 仅供学习研究，不构成投资建议</p>
+      <p style="margin-top:8px;font-size:12px">本报告由 full_analysis_gate.py 在 finalize APPROVED 时自动生成。HTML 是 markdown 总结的派生展示件，不参与 audit/review/finalize 流程。</p>
+    </footer>
+  </main>
+</body>
+</html>"""
 
 
 def _run_review_gate(root: Path, registry: Path) -> dict:

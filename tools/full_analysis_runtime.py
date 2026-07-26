@@ -61,6 +61,77 @@ AUTHORIZATION_DIRECTIVE = """
 遇到这些未授权动作时仍须停止并交回主上下文处理。
 """
 
+# 章节结构强制指令：防止 Agent 用 section_id 代替 heading、## 后紧跟 ### 导致正文为 0。
+STRUCTURE_DIRECTIVE = """
+【章节结构 · 强制】
+1. 报告中的 ## 标题必须逐字使用派发包 sections 数组中每个条目的 heading 字段值
+   （如「数据截止日」「直接来源」「核心结论」），严禁使用 section_id
+   （如 data_cutoff、sources_scope）。Gate 按 heading 精确匹配，
+   用 section_id 会导致章节匹配失败、整份报告被拒收。
+2. 每个 ## 章节下必须先有 ≥150 字的正文段落（数据、推理、结论），
+   然后再展开 ### 子节。严禁 ## 标题后紧跟 ### 子标题——
+   这会导致该章节被判定为「无正文」而不计入实质章节数，触发 Gate 拒收。
+3. 所有 required=true 的章节必须出现；缺失任一必需章节即被拒收。
+"""
+
+# 结构化证据强制指令：防止 Agent 只写报告正文、不提交 fact/source/calculation/judgment。
+EVIDENCE_DIRECTIVE = """
+【结构化证据 · 强制】
+除报告正文外，Result Bundle 必须包含以下结构化证据字段（写入 result.json）：
+- fact_updates: 关键事实数组，每条含 fact_id / field / value / source_ids（≥1 条）
+- source_records: 数据来源数组，每条含 source_id / url / retrieved_at / source_type
+- calculation_requests: 估值/测算数组，每条含 calculation_id / operation / args
+- judgments: 关键判断数组，每条含 judgment_id / rule_id / conclusion / falsification（≥1 条）
+- command_receipts: 工具调用回执数组，每条含 receipt_id / operation / status
+缺少任何一类证据，Audit 将产生 violation 并阻断准出。
+派发包中的 evidence_rules 列出了本 skill 的具体最低要求（min_facts / min_sources 等），
+必须逐条满足。calculation_requests 只提交 operation 和 args，
+重放结果由 Audit Job 调用 financial_rigor.py 生成，Agent 不得自证计算结果。
+"""
+
+# Result Bundle v1 完整模板：注入 payload 供 Agent 照填，消除旧 schema 残留。
+RESULT_BUNDLE_TEMPLATE = """
+【Result Bundle v1 · 模板】
+完成分析后，将以下 JSON 写入 <attempt_dir>/result.json（替换尖括号占位符）：
+{
+  "schema_version": "result-schema/v1",
+  "run_id": "<派发包中的 run_id>",
+  "work_unit_id": "<派发包中的 work_unit_id>",
+  "attempt_id": "<派发包中的 attempt_id>",
+  "agent_job_id": "<job-started 时使用的 agent_job_id>",
+  "lease_nonce": "<派发包中的 lease_nonce>",
+  "skill_id": "<本 skill 的 skill_id>",
+  "role_id": null,
+  "status": "PASS",
+  "artifact_records": [
+    {
+      "artifact_id": "artifact.<skill_id>",
+      "path": "<attempt_dir 内的报告路径>",
+      "bytes": <文件字节数>,
+      "sha256": "<文件 SHA-256>",
+      "formal": false,
+      "accepted": true
+    }
+  ],
+  "fact_updates": [ ... ],
+  "source_records": [ ... ],
+  "calculation_requests": [ ... ],
+  "judgments": [ ... ],
+  "command_receipts": [ ... ],
+  "limitations": [],
+  "pwl_candidates": [],
+  "started_at": "<ISO 8601 开始时间>",
+  "completed_at": "<ISO 8601 完成时间>",
+  "error": null
+}
+注意：
+- status 枚举值：PASS / PASS_WITH_LIMITATIONS / NOT_APPLICABLE / FAIL（不是 SUCCESS）
+- artifact_records 是数组（不是单个 artifact 对象）
+- path 必须指向 evidence/attempts/<skill_id>/<attempt_id>/ 下的文件
+- 写完 result.json 后立即调用 submit-result；即使 submit-result 失败，
+  磁盘上的 result.json 可被 resume 的孤儿恢复机制接管
+"""
+
 
 class RuntimeErrorState(Exception):
     pass
@@ -285,6 +356,9 @@ def _next_work_locked(run_root: Path) -> dict:
                     AUTHORIZATION_DIRECTIVE.format(run_root=Path(run_root))
                     + spec_path.read_text(encoding="utf-8")
                     + ANTI_PADDING_DIRECTIVE
+                    + STRUCTURE_DIRECTIVE
+                    + EVIDENCE_DIRECTIVE
+                    + RESULT_BUNDLE_TEMPLATE
                 )
     roles = skill.get("roles", {}) if skill else {}
     return {
@@ -305,6 +379,7 @@ def _next_work_locked(run_root: Path) -> dict:
         "min_dissent_points": skill.get("min_dissent_points") if skill else None,
         "min_substantive_sections": skill.get("min_substantive_sections") if skill else None,
         "sections": skill.get("sections", []) if skill else [],
+        "evidence_rules": skill.get("evidence_rules", []) if skill else [],
         "roles": roles,
         "fanout_required": bool(roles.get("mode") == "independent_then_integrator"),
         "authorization": authorization,

@@ -45,9 +45,15 @@ python3 scripts/full_analysis.py job-started \
 
 Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。除 facts/sources/calculation requests 外，必须按当前 skill 的 `evidence_rules` 填写结构化 `judgments`、`command_receipts` 与 `capability_records`；缺少任何已注册规则所需账本时 Audit 必须失败。多角色单元的 `role_runs` 不接受 Agent 自证，由 Gate 根据实际 `role-<role>.md` 备忘录生成并绑定路径、字节数与 SHA-256。计算请求只能提交 operation/args，重放结果由共享 Audit Job 调用 `financial_rigor.py` 生成，Agent 不得自证。`NOT_APPLICABLE` 不是自报状态：必须提交 `not_applicable` 结构、带来源的判定事实和负向验收报告；`always`/`always_applicable` 单元不得 N/A。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。
 
-**派发前必读 `next-work` 注入的规范**：每次 `next-work` 返回的 payload 内含 `methodology_text`（即 `skills/<skill_id>.md` 完整方法论）、`sections`（章节与最低字数要求）、`min_bytes`（本报告字节下限）与 `roles`/`fanout_required`。执行 Agent 必须以 `methodology_text` 为强制规范完整落地，**不得仅凭 skill 名称凭记忆发挥**；报告字节数必须 ≥ `min_bytes`，否则 Gate 拒收。
+**派发前必读 `next-work` 注入的规范**：每次 `next-work` 返回的 payload 内含 `methodology_text`（即 `skills/<skill_id>.md` 完整方法论 + 结构指令 + 证据指令 + Result Bundle 模板）、`sections`（章节与最低字数要求）、`evidence_rules`（本 skill 的结构化证据最低要求）与 `roles`/`fanout_required`。执行 Agent 必须以 `methodology_text` 为强制规范完整落地，**不得仅凭 skill 名称凭记忆发挥**。三条刚性纪律：
+
+1. **heading 逐字使用**：报告 `##` 标题必须逐字使用 `sections` 数组中每个条目的 `heading` 字段值（如「数据截止日」「核心结论」），**严禁使用 `section_id`**（如 `data_cutoff`）。Gate 按 heading 精确匹配，用 section_id 整份报告被拒收。
+2. **## 后必须有正文**：每个 `##` 章节下必须先有 ≥150 字正文段落，再展开 `###` 子节。`##` 后紧跟 `###` 会导致该章节被判为「无正文」，不计入实质章节数。
+3. **结构化证据必填**：Result Bundle 必须包含 `fact_updates` / `source_records` / `calculation_requests` / `judgments` / `command_receipts`，按 `evidence_rules` 满足最低条数。只写报告正文不写证据 → Audit 产生 violation → 阻断准出。
 
 **多角色 skill 必须真扇出**：当 `fanout_required: true` 时，必须为 `roles.required_roles` 中每个角色（除 `integrator` 外）启动一个**独立原生 Agent**（用 Task 工具 fan-out），各自在 `evidence/attempts/<skill_id>/<attempt_id>/role-<role>.md` 产出独立分析备忘录（每个 ≥300 字节，且不得相互引用以保证独立性）；最后由整合 Agent 读取全部角色备忘录产出正式整合报告。缺少任一 `role-<role>.md` 时 Gate 会拒收。单 Agent skill 则由一个原生 Agent 按 methodology 完整执行。
+
+**result.json 优先写入**：Agent 完成分析后，第一步将 result.json 写入 attempt_dir，第二步再调用 submit-result。即使 submit-result 因会话中断失败，磁盘上的 result.json 可被 `resume` 的孤儿恢复机制接管（Runtime 会检查 `evidence/attempts/<skill_id>/<attempt_id>/result.json` 是否存在且 Gate 可接受）。
 
 完成后调用：
 
@@ -89,8 +95,8 @@ python3 scripts/full_analysis.py review prepare --run-root <run_root>
 python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 
-# 步骤 D：finalize APPROVED 后，编排器派 html-express Agent（独立原生 Agent），
-# 将已冻结的 <公司名>-全量分析-总结报告.md 渲染为 HTML 展示件
+# 步骤 D：finalize APPROVED 后，Gate 自动生成 HTML 展示件，
+# 编排器无需手动操作（失败不影响 APPROVED 状态）
 ```
 
 > **为什么 register-summary 必须在 audit 之前**：`analysis_snapshot` 的投影包含 `manifest.delivery`，register-summary 写入 `delivery.summary` 会改变快照摘要。若 audit 先于 register-summary 执行，finalize 的快照一致性校验将因摘要不匹配而拒绝准出。
@@ -108,16 +114,17 @@ python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 
 总结报告是正式交付，不是 Gate 外附件。只能综合已登记正式产物，不得引入新取数或新推理。Gate 会冻结其路径、字节数和 SHA-256；Review 会使用全部归因证据检查总结，修改总结或任一底层证据都会使旧 Audit/Review 过期。
 
-### HTML 版总结报告（步骤 D，html-express Agent 派生展示件）
+### HTML 版总结报告（步骤 D，Gate 自动生成）
 
-finalize **APPROVED 之后**，编排器派独立原生 Agent，用 `/html-express` 把已冻结的 markdown 总结渲染为自包含 HTML（`<公司名>-全量分析-总结报告.html`，放在 run root），作为可读性更强的展示件。纪律：
+finalize **APPROVED 之后**，Gate 自动从已冻结的 markdown 总结生成自包含 HTML（`<公司名>-全量分析-总结报告.html`，放在 run root），**编排器无需手动执行**。纪律：
 
 - **它是 markdown 的派生展示件，不是 Gate 产物**：不参与 audit/review/finalize，不进入 manifest，不改变任何 digest。Gate 的准出真源永远是 markdown。
 - **只在 APPROVED 后生成**：markdown 已被 Gate 冻结，HTML 才有稳定真源；finalize 前生成会因后续评审返工而失效。
-- **100% 忠实于 APPROVED markdown**：不得引入新数据、新推理或新结论；每个数字必须能在 markdown 中找到对应。
-- **遵循 html-express 设计系统**：自包含单文件、内联 tokens.css（cream paper / terracotta / trust 墨蓝 / serif）、组件化（metric-card / data-table / comparison-table / timeline / badge / quote-card / details / columns）；可加 masthead、节导航、滚动显现等微交互。
-- **生成后必查**：① 无占位符残留（`填这里/Lorem/TBD/TODO/placeholder/待填`）② 关键数字全部在位（营收/归母/ROE/PE/估值区间等逐一 grep）③ 标签全闭合（`<section>/<table>/<div>` 开闭计数相等）④ 标题与锚点完整。
-- **markdown 一旦被编辑并重新 finalize，HTML 必须重新生成**：旧 HTML 立即作废，不得与新 APPROVED 版本并存误导。
+- **100% 忠实于 APPROVED markdown**：HTML 由 `_generate_summary_html()` 直接转换 markdown 原文，不得引入新数据、新推理或新结论。
+- **非阻断**：HTML 生成失败只打印警告到 stderr，不影响 APPROVED 状态。任何异常都被捕获，绝不静默。
+- **遵循 html-express 设计系统**：自包含单文件、内联 tokens.css（cream paper / terracotta / trust 墨蓝 / serif）、支持 heading/table/list/code/blockquote/bold/italic/link 等常用 markdown 语法。
+- **生成后必查**：① 无占位符残留（`填这里/Lorem/TBD/TODO/placeholder/待填`）② 关键数字全部在位（营收/归母/ROE/PE/估值区间等逐一 grep）③ 标签全闭合（`<section>/<table>/<div>` 开闭计数相等）。
+- **markdown 一旦被编辑并重新 finalize，HTML 自动重新生成**：旧 HTML 被覆盖，不会与新 APPROVED 版本并存误导。
 
 ## 语义评审纪律（P2，强制）
 
