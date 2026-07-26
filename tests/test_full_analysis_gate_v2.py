@@ -359,6 +359,43 @@ class GateV2Tests(unittest.TestCase):
         self.assertIn("delivery-summary", result["missing_scope"])
         self.assertIn("investment-research", result["missing_scope"])
 
+    def test_markdown_html_rejects_dangerous_links_and_closes_ordered_list(self):
+        html = gate_module._markdown_to_html(
+            '1. 第一\n2. 第二\n\n'
+            '[危险](https://safe.example/" onmouseover="alert(1))\n'
+            '[脚本](javascript:alert%281%29)')
+        self.assertIn("<ol>", html)
+        self.assertIn("</ol>", html)
+        self.assertNotIn("onmouseover", html)
+        self.assertNotIn("javascript:", html)
+
+    def test_html_page_escapes_metadata(self):
+        html = gate_module._render_html_page(
+            title='<img src=x onerror="alert(1)">',
+            date_str="2026-07-26",
+            status='APPROVED"><script>alert(1)</script>',
+            tokens_css="",
+            body="",
+            skill_count=13,
+        )
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;img", html)
+
+    def test_substance_diagnostic_skips_blank_lines_before_h3(self):
+        skill = {
+            "sections": [{
+                "section_id": "core",
+                "heading": "核心结论",
+                "required": True,
+                "min_content_chars": 150,
+            }],
+            "min_substantive_sections": 1,
+        }
+        errors = gate_module._substance_errors(
+            skill, "## 核心结论\n\n### 子标题\n正文")
+        self.assertTrue(any("后紧跟 ###" in item for item in errors))
+
     def test_ingest_rejects_not_applicable_without_gate_verifiable_proof(self):
         self.init()
         skill_id = "quality-screen"

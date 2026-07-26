@@ -17,7 +17,9 @@ import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from full_analysis_snapshot import analysis_snapshot
 
@@ -505,9 +507,12 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
     lines = text.splitlines()
     for i, ln in enumerate(lines):
         m_h2 = re.match(r"^##\s+(.+)$", ln)
-        if m_h2 and i + 1 < len(lines):
-            nxt = lines[i + 1].strip()
-            if re.match(r"^###\s+", nxt):
+        if m_h2:
+            next_line = i + 1
+            while next_line < len(lines) and not lines[next_line].strip():
+                next_line += 1
+            if (next_line < len(lines)
+                    and re.match(r"^###\s+", lines[next_line].strip())):
                 errors.append(
                     f"章节「{m_h2.group(1).strip()}」后紧跟 ### 子标题，"
                     "缺少正文段落（需在 ## 与 ### 之间插入 ≥150 字正文）")
@@ -1006,10 +1011,11 @@ def _generate_summary_html(root: Path, manifest: dict) -> None:
         html_path = md_path.with_suffix(".html")
 
         tokens_css = _load_tokens_css()
-        company = manifest.get("run", {}).get("company", "") or ""
-        code = manifest.get("run", {}).get("code", "") or ""
+        company_info = manifest.get("company") or {}
+        company = company_info.get("name", "")
+        code = company_info.get("code", "")
         title = f"{company}（{code}）全量分析总结报告" if company else "全量分析总结报告"
-        date_str = summary.get("registered_at", "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = (manifest.get("run") or {}).get("as_of", "")
         status = manifest["run"]["status"]
 
         html = _render_html_page(title=title, date_str=date_str, status=status,
@@ -1040,14 +1046,14 @@ def _markdown_to_html(md: str) -> str:
     out: list[str] = []
     in_table = False
     in_code = False
-    in_list = False
+    list_tag: str | None = None
     i = 0
 
     def _flush_list():
-        nonlocal in_list
-        if in_list:
-            out.append("</ul>")
-            in_list = False
+        nonlocal list_tag
+        if list_tag:
+            out.append(f"</{list_tag}>")
+            list_tag = None
 
     def _flush_table():
         nonlocal in_table
@@ -1114,20 +1120,22 @@ def _markdown_to_html(md: str) -> str:
             _flush_table()
         # Unordered list
         if re.match(r"^\s*[-*]\s+", ln):
-            if not in_list:
+            if list_tag != "ul":
+                _flush_list()
                 _flush_table()
                 out.append('<ul>')
-                in_list = True
+                list_tag = "ul"
             text = _inline_md(re.sub(r"^\s*[-*]\s+", "", ln))
             out.append(f"<li>{text}</li>")
             i += 1
             continue
         # Ordered list
         if re.match(r"^\s*\d+[.)]\s+", ln):
-            if not in_list:
+            if list_tag != "ol":
+                _flush_list()
                 _flush_table()
                 out.append('<ol>')
-                in_list = True
+                list_tag = "ol"
             text = _inline_md(re.sub(r"^\s*\d+[.)]\s+", "", ln))
             out.append(f"<li>{text}</li>")
             i += 1
@@ -1155,28 +1163,74 @@ def _markdown_to_html(md: str) -> str:
 
 def _inline_md(text: str) -> str:
     """处理行内 markdown：**bold**, *italic*, `code`, [link](url)。"""
-    text = _escape_html(text)
+    rendered: list[str] = []
+
+    def _stash(value: str) -> str:
+        token = f"\x00HTML{len(rendered)}\x00"
+        rendered.append(value)
+        return token
+
+    text = re.sub(
+        r"`([^`]+)`",
+        lambda match: _stash(
+            f"<code>{html_escape(match.group(1), quote=True)}</code>"),
+        text,
+    )
+
+    def _render_link(match: re.Match) -> str:
+        label = html_escape(match.group(1), quote=True)
+        href = _safe_link(match.group(2))
+        if href is None:
+            return _stash(label)
+        return _stash(f'<a href="{href}">{label}</a>')
+
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _render_link, text)
+    text = html_escape(text, quote=True)
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+    for index in reversed(range(len(rendered))):
+        text = text.replace(f"\x00HTML{index}\x00", rendered[index])
     return text
 
 
+def _safe_link(url: str) -> str | None:
+    """只允许不会突破 href 属性边界的常用链接协议。"""
+    if (not url or url != url.strip()
+            or any(
+                char.isspace() or ord(char) < 32 or char in {'"', "'", "<", ">"}
+                for char in url
+            )):
+        return None
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https", "mailto"}:
+        return None
+    if scheme in {"http", "https"} and not parsed.netloc:
+        return None
+    return html_escape(url, quote=True)
+
+
 def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html_escape(text, quote=False)
 
 
 def _render_html_page(*, title: str, date_str: str, status: str,
                       tokens_css: str, body: str, skill_count: int) -> str:
     """组装完整 HTML 页面。"""
-    status_badge = '<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#E8F0E8;color:#2F6F4E">APPROVED</span>' if status == "APPROVED" else f'<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#F5EDE0;color:#9A5A2D">{status}</span>'
+    safe_title = html_escape(str(title), quote=True)
+    safe_date = html_escape(str(date_str), quote=True)
+    safe_status = html_escape(str(status), quote=True)
+    safe_skill_count = html_escape(str(skill_count), quote=True)
+    status_badge = '<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#E8F0E8;color:#2F6F4E">APPROVED</span>' if status == "APPROVED" else f'<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#F5EDE0;color:#9A5A2D">{safe_status}</span>'
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
+  <title>{safe_title}</title>
   <style>
 {tokens_css}
   </style>
@@ -1205,12 +1259,12 @@ def _render_html_page(*, title: str, date_str: str, status: str,
   <main class="hx-page">
     <header class="hx-header">
       <p class="hx-eyebrow">全量分析 · 已核准</p>
-      <h1>{title}</h1>
-      <p class="hx-sub">数据截止 {date_str} · {skill_count} 份正式产物 · {status_badge}</p>
+      <h1>{safe_title}</h1>
+      <p class="hx-sub">数据截止 {safe_date} · {safe_skill_count} 份正式产物 · {status_badge}</p>
     </header>
 {body}
     <footer class="hx-footer">
-      <p><strong>数据截止日</strong>：{date_str} · <strong>状态</strong>：{status} · 仅供学习研究，不构成投资建议</p>
+      <p><strong>数据截止日</strong>：{safe_date} · <strong>状态</strong>：{safe_status} · 仅供学习研究，不构成投资建议</p>
       <p style="margin-top:8px;font-size:12px">本报告由 full_analysis_gate.py 在 finalize APPROVED 时自动生成。HTML 是 markdown 总结的派生展示件，不参与 audit/review/finalize 流程。</p>
     </footer>
   </main>
