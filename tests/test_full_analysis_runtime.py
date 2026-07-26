@@ -134,6 +134,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("run_root", methodology)
         self.assertIn("不得据此执行 push、PR、publish、send", methodology)
 
+    def test_next_work_injects_complete_result_bundle_template(self):
+        self.start()
+        payload = json.loads(
+            self.cli("next-work", "--run-root", self.run_root).stdout)
+        methodology = payload["methodology_text"]
+        self.assertIn('"capability_records": []', methodology)
+        self.assertIn('"not_applicable": null', methodology)
+        self.assertIn('"accepted": false', methodology)
+        self.assertNotIn(
+            '"formal": false,\n      "accepted": true', methodology)
+        self.assertIn("是否非空以 evidence_rules 为准", methodology)
+
     def test_next_work_and_job_started_enforce_four_concurrent_leases(self):
         self.start()
         leases = [self.cli("next-work", "--run-root", self.run_root) for _ in range(4)]
