@@ -266,6 +266,14 @@ class FullAnalysisE2ETests(unittest.TestCase):
         self.assertEqual(finalized.returncode, 0, finalized.stdout + finalized.stderr)
         final_manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
         self.assertEqual(final_manifest["run"]["status"], "APPROVED")
+        html_path = (
+            self.run_root / final_manifest["delivery"]["summary"]["path"]
+        ).with_suffix(".html")
+        self.assertTrue(html_path.is_file())
+        html = html_path.read_text(encoding="utf-8")
+        self.assertIn("格力电器", html)
+        self.assertIn("000651.SZ", html)
+        self.assertIn("2026-07-23", html)
 
 
 if __name__ == "__main__":

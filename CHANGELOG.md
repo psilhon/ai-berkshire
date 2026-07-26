@@ -5,6 +5,29 @@
 
 ---
 
+## [v3.3.2] — 2026-07-26
+
+> 全量分析可靠性热修复：递归校验、失败终态、派发模板与 HTML 展示加固
+
+### 🐛 修复 (Fixed)
+- **Result Bundle 递归校验**：Gate 现在校验嵌套对象、数组、类型、必填项、枚举、格式和未知字段，错误信息携带 JSON 路径；同时允许 Audit 已使用的命令失败 `reason` 字段。
+- **ingest 写入边界**：manifest、artifact 记录与 provenance 先在内存中完整准备；复制到目标目录临时文件后再次核对字节数和哈希，准备失败或复制期间源文件变化均不会替换正式路径。
+- **FAILED 确定性终态**：所有业务单元完成且至少一项 `FAIL` 时，run 直接收口为 `FAILED`，记录失败单元并返回非零；不再误报 `PARTIAL`，也不要求失败运行生成 summary、Audit 或 Review。
+- **派发模板完整性**：补齐 `capability_records` 与 `not_applicable`，attempt 产物固定为 `formal=false / accepted=false`；证据数组最低数量统一以当前 skill 的 `evidence_rules` 为准。
+- **HTML 展示安全与正确性**：链接协议限制为 HTTP、HTTPS 和 mailto，动态元数据统一转义；修复有序列表闭合、公司/代码/数据截止日来源及空行后的 `###` 章节诊断。
+- **方法论单一真源**：`investment-checklist` 不再复制固定字节门槛，改以当前 Contract 为唯一机器真源。
+
+### 🧪 测试 (Tests)
+- `bash scripts/check.sh` 全绿（455 单元测试 + 14 个 skill frontmatter 治理 + Codex/WorkBuddy 生成物同步 + Contract v2 的 13 项契约校验 + 报告索引检查）。
+
+### ⚠️ 升级注意
+- 保持 Contract v2、Result Bundle v1、13 项业务契约和 WorkBuddy 生产入口不变。
+- Result Bundle 嵌套字段现在严格按 schema 验证；此前被忽略的未知或类型错误字段会被明确拒收。
+- `FAIL` 运行的 finalize 现在返回非零并写入 `FAILED`，依赖旧 `PARTIAL` 行为的调用方需同步调整。
+- 不恢复旧 20 项契约 run 的兼容性；仍需按当前 13 项契约重新 init。
+
+---
+
 ## [v3.3.1] — 2026-07-26
 
 > 全量分析派发 payload 补全 + 子 Agent 产出合规性根治 + 总结 HTML 自动生成

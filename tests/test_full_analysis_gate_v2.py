@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -201,6 +203,125 @@ class GateV2Tests(unittest.TestCase):
         entry2 = next(s for s in manifest2["skills"] if s["skill_id"] == skill_id)
         self.assertEqual(entry2["artifact_records"][0]["sha256"], digest)
 
+    def test_malformed_nested_bundle_is_rejected_before_formal_copy(self):
+        """嵌套非法 Result Bundle 必须在写正式文件前拒绝。"""
+        self.init()
+        skill_id = "ashare-data"
+        bundle_path, rel, size, digest = self._write_attempt(
+            skill_id, "attempt-bad", build_compliant_report(REGISTRY, skill_id))
+        bundle = self._bundle(
+            skill_id=skill_id,
+            attempt_id="attempt-bad",
+            artifact_id="artifact.ashare-data",
+            rel=rel,
+            size=size,
+            digest=digest,
+        )
+        bundle["fact_updates"] = ["not-an-object"]
+
+        result = self._ingest(bundle_path, bundle)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("$.fact_updates[0]", result.stdout + result.stderr)
+        self.assertFalse(
+            (self.run_root / "01-数据与快筛/01-ashare-data.md").exists())
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        entry = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == skill_id
+        )
+        self.assertEqual(entry["status"], "PENDING")
+
+    def test_provenance_prepare_error_does_not_copy_formal_artifact(self):
+        self.init()
+        skill_id = "ashare-data"
+        good_path, good_rel, good_size, good_digest = self._write_attempt(
+            skill_id,
+            "attempt-good",
+            build_compliant_report(REGISTRY, skill_id),
+        )
+        accepted = self._ingest(good_path, self._bundle(
+            skill_id=skill_id,
+            attempt_id="attempt-good",
+            artifact_id="artifact.ashare-data",
+            rel=good_rel,
+            size=good_size,
+            digest=good_digest,
+        ))
+        self.assertEqual(
+            accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        formal = self.run_root / "01-数据与快筛/01-ashare-data.md"
+
+        bundle_path, rel, size, digest = self._write_attempt(
+            skill_id,
+            "attempt-provenance-error",
+            build_compliant_report(REGISTRY, skill_id) + "\n第二次尝试",
+        )
+        bundle = self._bundle(
+            skill_id=skill_id,
+            attempt_id="attempt-provenance-error",
+            artifact_id="artifact.ashare-data",
+            rel=rel,
+            size=size,
+            digest=digest,
+        )
+        bundle_path.write_text(
+            json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+
+        with mock.patch.object(
+            gate_module,
+            "_merge_provenance",
+            side_effect=RuntimeError("provenance prepare failed"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "provenance prepare failed"):
+                gate_module.cmd_ingest(SimpleNamespace(
+                    run_root=self.run_root,
+                    registry=REGISTRY,
+                    result=bundle_path,
+                ))
+
+        self.assertEqual(
+            hashlib.sha256(formal.read_bytes()).hexdigest(), good_digest)
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        entry = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == skill_id
+        )
+        self.assertEqual(entry["status"], "PASS")
+        self.assertEqual(entry["attempts"], ["attempt-good"])
+        self.assertEqual(
+            entry["artifact_records"][0]["sha256"], good_digest)
+
+    def test_atomic_copy_rejects_content_changed_after_validation(self):
+        source = self.root / "source.md"
+        target = self.root / "formal.md"
+        source.write_text("validated content", encoding="utf-8")
+        target.write_text("existing formal content", encoding="utf-8")
+        existing = target.read_bytes()
+        expected_bytes = source.stat().st_size
+        expected_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+
+        def copy_changed_content(_source_handle, target_handle):
+            target_handle.write(b"changed after validation")
+
+        with mock.patch.object(
+            gate_module.shutil,
+            "copyfileobj",
+            side_effect=copy_changed_content,
+        ):
+            with self.assertRaises(gate_module.GateError):
+                gate_module.atomic_copy(
+                    source,
+                    target,
+                    expected_bytes=expected_bytes,
+                    expected_sha256=expected_sha256,
+                )
+
+        self.assertEqual(target.read_bytes(), existing)
+
     def test_finalize_rejects_when_formal_artifact_tampered(self):
         """P0：finalize 必须复核正式文件哈希，被篡改/覆盖即拒绝准出。"""
         self.init()
@@ -225,6 +346,26 @@ class GateV2Tests(unittest.TestCase):
                           "--registry", REGISTRY)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PENDING", result.stdout + result.stderr)
+
+    def test_finalize_closes_completed_failed_run_as_failed(self):
+        self.init()
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for item in manifest["skills"]:
+            item["status"] = "NOT_APPLICABLE"
+        manifest["skills"][0]["status"] = "FAIL"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        result = run_gate(
+            self.root, "finalize", "--run-root", self.run_root,
+            "--registry", REGISTRY,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        final = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(final["run"]["status"], "FAILED")
+        self.assertIn("ashare-data", result.stdout + result.stderr)
 
     def test_register_summary_binds_human_delivery_to_manifest(self):
         self.init()
@@ -308,6 +449,43 @@ class GateV2Tests(unittest.TestCase):
         self.assertEqual(result["status"], "incomplete")
         self.assertIn("delivery-summary", result["missing_scope"])
         self.assertIn("investment-research", result["missing_scope"])
+
+    def test_markdown_html_rejects_dangerous_links_and_closes_ordered_list(self):
+        html = gate_module._markdown_to_html(
+            '1. 第一\n2. 第二\n\n'
+            '[危险](https://safe.example/" onmouseover="alert(1))\n'
+            '[脚本](javascript:alert%281%29)')
+        self.assertIn("<ol>", html)
+        self.assertIn("</ol>", html)
+        self.assertNotIn("onmouseover", html)
+        self.assertNotIn("javascript:", html)
+
+    def test_html_page_escapes_metadata(self):
+        html = gate_module._render_html_page(
+            title='<img src=x onerror="alert(1)">',
+            date_str="2026-07-26",
+            status='APPROVED"><script>alert(1)</script>',
+            tokens_css="",
+            body="",
+            skill_count=13,
+        )
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;img", html)
+
+    def test_substance_diagnostic_skips_blank_lines_before_h3(self):
+        skill = {
+            "sections": [{
+                "section_id": "core",
+                "heading": "核心结论",
+                "required": True,
+                "min_content_chars": 150,
+            }],
+            "min_substantive_sections": 1,
+        }
+        errors = gate_module._substance_errors(
+            skill, "## 核心结论\n\n### 子标题\n正文")
+        self.assertTrue(any("后紧跟 ###" in item for item in errors))
 
     def test_ingest_rejects_not_applicable_without_gate_verifiable_proof(self):
         self.init()

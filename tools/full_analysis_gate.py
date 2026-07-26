@@ -8,6 +8,7 @@ WorkBuddy Runtime 负责调度；Gate 不启动 Agent、不读取报告正文做
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -16,7 +17,9 @@ import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from full_analysis_snapshot import analysis_snapshot
 
@@ -29,7 +32,10 @@ RUNTIME_STATE_REL = Path("evidence/runtime-state.json")
 EVENTS_REL = Path("evidence/events.jsonl")
 PWL_ALLOWLIST = {"tushare_unavailable", "web_bandwidth_degraded", "ephemeral_source"}
 RESULT_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"}
-TERMINAL_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"}
+SUCCESS_TERMINAL_STATUSES = {
+    "PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE",
+}
+COMPLETED_STATUSES = SUCCESS_TERMINAL_STATUSES | {"FAIL"}
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 # ---- 实质校验常量（防凑数 / 防片面 / 防坍塌，替代纯字节门槛）----
@@ -102,7 +108,13 @@ def atomic_write_json(path: Path, value: object) -> None:
             os.unlink(name)
 
 
-def atomic_copy(source: Path, target: Path) -> None:
+def atomic_copy(
+    source: Path,
+    target: Path,
+    *,
+    expected_bytes: int | None = None,
+    expected_sha256: str | None = None,
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
@@ -110,6 +122,15 @@ def atomic_copy(source: Path, target: Path) -> None:
             shutil.copyfileobj(inp, out)
             out.flush()
             os.fsync(out.fileno())
+        copied = Path(name)
+        if (expected_bytes is not None
+                and copied.stat().st_size != expected_bytes):
+            raise GateError(
+                f"复制期间 artifact bytes 发生变化: {source}")
+        if (expected_sha256 is not None
+                and sha256_file(copied) != expected_sha256):
+            raise GateError(
+                f"复制期间 artifact sha256 发生变化: {source}")
         os.replace(name, target)
     finally:
         if os.path.exists(name):
@@ -187,8 +208,74 @@ def find_skill(registry: dict, skill_id: str) -> dict:
     raise GateError(f"未知 skill_id: {skill_id}", 2)
 
 
+def _schema_type_matches(value, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return True
+
+
+def _validate_schema_value(value, schema: dict, path: str = "$") -> None:
+    """校验 Result Bundle schema 使用的 JSON Schema 子集。"""
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected]
+    if expected and not any(
+        _schema_type_matches(value, item) for item in expected_types
+    ):
+        raise GateError(f"{path} 类型非法，期望 {expected}")
+    if "const" in schema and value != schema["const"]:
+        raise GateError(f"{path} 必须等于 {schema['const']!r}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise GateError(f"{path} 不在允许枚举中")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            raise GateError(f"{path} 长度不足")
+        if schema.get("pattern") and not re.search(schema["pattern"], value):
+            raise GateError(f"{path} 格式非法")
+    if isinstance(value, int) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            raise GateError(f"{path} 小于最小值 {schema['minimum']}")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0):
+            raise GateError(f"{path} 项目数不足")
+        if schema.get("uniqueItems"):
+            encoded = [
+                json.dumps(item, ensure_ascii=False, sort_keys=True)
+                for item in value
+            ]
+            if len(encoded) != len(set(encoded)):
+                raise GateError(f"{path} 含重复项目")
+        item_schema = schema.get("items")
+        if item_schema:
+            for index, item in enumerate(value):
+                _validate_schema_value(item, item_schema, f"{path}[{index}]")
+    if isinstance(value, dict):
+        required = set(schema.get("required", []))
+        missing = sorted(required - set(value))
+        if missing:
+            raise GateError(f"{path} 缺字段 {missing}")
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            extra = sorted(set(value) - set(properties))
+            if extra:
+                raise GateError(f"{path} 含未知字段 {extra}")
+        for key, item in value.items():
+            if key in properties:
+                _validate_schema_value(item, properties[key], f"{path}.{key}")
+
+
 def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None:
     schema = load_json(RESULT_SCHEMA_PATH, "Result Bundle schema")
+    _validate_schema_value(bundle, schema)
     required = set(schema["required"])
     allowed = set(schema.get("properties", {})) or required
     missing = sorted(required - set(bundle))
@@ -202,7 +289,8 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
         raise GateError(f"Result Bundle status 非法: {bundle.get('status')!r}")
     if bundle["status"] == "FAIL" and not isinstance(bundle.get("error"), dict):
         raise GateError("FAIL Result Bundle 必须提供 error")
-    if bundle["status"] in TERMINAL_STATUSES and bundle.get("error") is not None:
+    if (bundle["status"] in SUCCESS_TERMINAL_STATUSES
+            and bundle.get("error") is not None):
         raise GateError("成功/PWL/NA Result Bundle 的 error 必须为 null")
     if not isinstance(bundle.get("pwl_candidates"), list) or not set(bundle["pwl_candidates"]).issubset(PWL_ALLOWLIST):
         raise GateError("pwl_candidates 含未注册的 PWL 原因")
@@ -434,9 +522,12 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
     lines = text.splitlines()
     for i, ln in enumerate(lines):
         m_h2 = re.match(r"^##\s+(.+)$", ln)
-        if m_h2 and i + 1 < len(lines):
-            nxt = lines[i + 1].strip()
-            if re.match(r"^###\s+", nxt):
+        if m_h2:
+            next_line = i + 1
+            while next_line < len(lines) and not lines[next_line].strip():
+                next_line += 1
+            if (next_line < len(lines)
+                    and re.match(r"^###\s+", lines[next_line].strip())):
                 errors.append(
                     f"章节「{m_h2.group(1).strip()}」后紧跟 ### 子标题，"
                     "缺少正文段落（需在 ## 与 ### 之间插入 ≥150 字正文）")
@@ -649,27 +740,47 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             raise GateError(
                 f"负向验收报告缺必需章节: {missing_headings}")
 
-    # ===== 阶段二：事务化晋级（校验已全部通过，此处只做原子复制与状态登记）=====
+    # ===== 阶段二：内存准备（所有数据处理成功前不得写正式文件）=====
     records = []
     for source, formal, formal_rel, record in prepared:
-        atomic_copy(source, formal)
         records.append({**record, "path": str(formal_rel), "formal": True, "accepted": True})
-    verified_role_runs = []
-    for source, formal, record in verified_role_memos:
-        atomic_copy(source, formal)
-        verified_role_runs.append(record)
-    entry = next(item for item in manifest["skills"] if item["skill_id"] == bundle["skill_id"])
+    verified_role_runs = [record for _, _, record in verified_role_memos]
+    next_manifest = copy.deepcopy(manifest)
+    entry = next(
+        item for item in next_manifest["skills"]
+        if item["skill_id"] == bundle["skill_id"]
+    )
     entry.update({"status": bundle["status"], "attempts": [*entry.get("attempts", []), bundle["attempt_id"]],
                   "artifact_records": records, "limitations": bundle["limitations"],
                   "not_applicable": bundle.get("not_applicable"),
                   "updated_at": now_iso()})
-    manifest["artifacts"] = [r for item in manifest["skills"] for r in item.get("artifact_records", [])]
+    next_manifest["artifacts"] = [
+        record
+        for item in next_manifest["skills"]
+        for record in item.get("artifact_records", [])
+    ]
     _merge_provenance(
-        manifest,
+        next_manifest,
         bundle,
         verified_role_runs=verified_role_runs,
     )
-    save_manifest(root, manifest)
+
+    # ===== 阶段三：持久化提交（内存准备已完成，只做原子文件替换）=====
+    for source, formal, _, record in prepared:
+        atomic_copy(
+            source,
+            formal,
+            expected_bytes=record["bytes"],
+            expected_sha256=record["sha256"],
+        )
+    for source, formal, record in verified_role_memos:
+        atomic_copy(
+            source,
+            formal,
+            expected_bytes=record["bytes"],
+            expected_sha256=record["sha256"],
+        )
+    save_manifest(root, next_manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
     print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))
     return 0
@@ -680,7 +791,7 @@ def cmd_register_summary(args: argparse.Namespace) -> int:
     manifest = load_manifest(root)
     incomplete = [
         item["skill_id"] for item in manifest["skills"]
-        if item.get("status") not in TERMINAL_STATUSES
+        if item.get("status") not in SUCCESS_TERMINAL_STATUSES
     ]
     if incomplete:
         raise GateError(
@@ -831,13 +942,33 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: 正式文件与 manifest 哈希不一致={corrupt}")
-    states = {item["status"] for item in manifest["skills"]}
-    pending = [item["skill_id"] for item in manifest["skills"] if item["status"] not in TERMINAL_STATUSES]
+    pending = [
+        item["skill_id"] for item in manifest["skills"]
+        if item["status"] not in COMPLETED_STATUSES
+    ]
     missing = [item["skill_id"] for item in manifest["skills"] if item["status"] in {"PASS", "PASS_WITH_LIMITATIONS"} and not item.get("artifact_records")]
     if pending or missing:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: PENDING/非终态={pending}; 缺正式产物={missing}")
+    failed = [
+        item["skill_id"] for item in manifest["skills"]
+        if item["status"] == "FAIL"
+    ]
+    if failed:
+        manifest["run"]["status"] = "FAILED"
+        save_manifest(root, manifest)
+        append_event(root, {
+            "type": "run_finalized",
+            "status": "FAILED",
+            "failed_skills": failed,
+        })
+        print(json.dumps({
+            "run_root": str(root),
+            "status": "FAILED",
+            "failed_skills": failed,
+        }, ensure_ascii=False))
+        return 1
     if not (manifest.get("delivery") or {}).get("summary"):
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
@@ -866,7 +997,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         raise GateError(
             "finalize 未准出: 语义评审未完整通过 "
             f"status={review_info.get('status')!r} verdict={review_info.get('verdict')!r}")
-    manifest["run"]["status"] = "APPROVED" if "FAIL" not in states else "FAILED"
+    manifest["run"]["status"] = "APPROVED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})
     # 生成 HTML 版总结报告（APPROVED 后自动执行，非阻断——失败不影响准出）
@@ -905,10 +1036,11 @@ def _generate_summary_html(root: Path, manifest: dict) -> None:
         html_path = md_path.with_suffix(".html")
 
         tokens_css = _load_tokens_css()
-        company = manifest.get("run", {}).get("company", "") or ""
-        code = manifest.get("run", {}).get("code", "") or ""
+        company_info = manifest.get("company") or {}
+        company = company_info.get("name", "")
+        code = company_info.get("code", "")
         title = f"{company}（{code}）全量分析总结报告" if company else "全量分析总结报告"
-        date_str = summary.get("registered_at", "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = (manifest.get("run") or {}).get("as_of", "")
         status = manifest["run"]["status"]
 
         html = _render_html_page(title=title, date_str=date_str, status=status,
@@ -939,14 +1071,14 @@ def _markdown_to_html(md: str) -> str:
     out: list[str] = []
     in_table = False
     in_code = False
-    in_list = False
+    list_tag: str | None = None
     i = 0
 
     def _flush_list():
-        nonlocal in_list
-        if in_list:
-            out.append("</ul>")
-            in_list = False
+        nonlocal list_tag
+        if list_tag:
+            out.append(f"</{list_tag}>")
+            list_tag = None
 
     def _flush_table():
         nonlocal in_table
@@ -1013,20 +1145,22 @@ def _markdown_to_html(md: str) -> str:
             _flush_table()
         # Unordered list
         if re.match(r"^\s*[-*]\s+", ln):
-            if not in_list:
+            if list_tag != "ul":
+                _flush_list()
                 _flush_table()
                 out.append('<ul>')
-                in_list = True
+                list_tag = "ul"
             text = _inline_md(re.sub(r"^\s*[-*]\s+", "", ln))
             out.append(f"<li>{text}</li>")
             i += 1
             continue
         # Ordered list
         if re.match(r"^\s*\d+[.)]\s+", ln):
-            if not in_list:
+            if list_tag != "ol":
+                _flush_list()
                 _flush_table()
                 out.append('<ol>')
-                in_list = True
+                list_tag = "ol"
             text = _inline_md(re.sub(r"^\s*\d+[.)]\s+", "", ln))
             out.append(f"<li>{text}</li>")
             i += 1
@@ -1054,28 +1188,74 @@ def _markdown_to_html(md: str) -> str:
 
 def _inline_md(text: str) -> str:
     """处理行内 markdown：**bold**, *italic*, `code`, [link](url)。"""
-    text = _escape_html(text)
+    rendered: list[str] = []
+
+    def _stash(value: str) -> str:
+        token = f"\x00HTML{len(rendered)}\x00"
+        rendered.append(value)
+        return token
+
+    text = re.sub(
+        r"`([^`]+)`",
+        lambda match: _stash(
+            f"<code>{html_escape(match.group(1), quote=True)}</code>"),
+        text,
+    )
+
+    def _render_link(match: re.Match) -> str:
+        label = html_escape(match.group(1), quote=True)
+        href = _safe_link(match.group(2))
+        if href is None:
+            return _stash(label)
+        return _stash(f'<a href="{href}">{label}</a>')
+
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _render_link, text)
+    text = html_escape(text, quote=True)
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+    for index in reversed(range(len(rendered))):
+        text = text.replace(f"\x00HTML{index}\x00", rendered[index])
     return text
 
 
+def _safe_link(url: str) -> str | None:
+    """只允许不会突破 href 属性边界的常用链接协议。"""
+    if (not url or url != url.strip()
+            or any(
+                char.isspace() or ord(char) < 32 or char in {'"', "'", "<", ">"}
+                for char in url
+            )):
+        return None
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https", "mailto"}:
+        return None
+    if scheme in {"http", "https"} and not parsed.netloc:
+        return None
+    return html_escape(url, quote=True)
+
+
 def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return html_escape(text, quote=False)
 
 
 def _render_html_page(*, title: str, date_str: str, status: str,
                       tokens_css: str, body: str, skill_count: int) -> str:
     """组装完整 HTML 页面。"""
-    status_badge = '<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#E8F0E8;color:#2F6F4E">APPROVED</span>' if status == "APPROVED" else f'<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#F5EDE0;color:#9A5A2D">{status}</span>'
+    safe_title = html_escape(str(title), quote=True)
+    safe_date = html_escape(str(date_str), quote=True)
+    safe_status = html_escape(str(status), quote=True)
+    safe_skill_count = html_escape(str(skill_count), quote=True)
+    status_badge = '<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#E8F0E8;color:#2F6F4E">APPROVED</span>' if status == "APPROVED" else f'<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#F5EDE0;color:#9A5A2D">{safe_status}</span>'
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
+  <title>{safe_title}</title>
   <style>
 {tokens_css}
   </style>
@@ -1104,12 +1284,12 @@ def _render_html_page(*, title: str, date_str: str, status: str,
   <main class="hx-page">
     <header class="hx-header">
       <p class="hx-eyebrow">全量分析 · 已核准</p>
-      <h1>{title}</h1>
-      <p class="hx-sub">数据截止 {date_str} · {skill_count} 份正式产物 · {status_badge}</p>
+      <h1>{safe_title}</h1>
+      <p class="hx-sub">数据截止 {safe_date} · {safe_skill_count} 份正式产物 · {status_badge}</p>
     </header>
 {body}
     <footer class="hx-footer">
-      <p><strong>数据截止日</strong>：{date_str} · <strong>状态</strong>：{status} · 仅供学习研究，不构成投资建议</p>
+      <p><strong>数据截止日</strong>：{safe_date} · <strong>状态</strong>：{safe_status} · 仅供学习研究，不构成投资建议</p>
       <p style="margin-top:8px;font-size:12px">本报告由 full_analysis_gate.py 在 finalize APPROVED 时自动生成。HTML 是 markdown 总结的派生展示件，不参与 audit/review/finalize 流程。</p>
     </footer>
   </main>

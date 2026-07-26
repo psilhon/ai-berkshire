@@ -78,12 +78,13 @@ STRUCTURE_DIRECTIVE = """
 EVIDENCE_DIRECTIVE = """
 【结构化证据 · 强制】
 除报告正文外，Result Bundle 必须包含以下结构化证据字段（写入 result.json）：
-- fact_updates: 关键事实数组，每条含 fact_id / field / value / source_ids（≥1 条）
+- fact_updates: 关键事实数组，每条含 fact_id / field / value / source_ids
 - source_records: 数据来源数组，每条含 source_id / url / retrieved_at / source_type
 - calculation_requests: 估值/测算数组，每条含 calculation_id / operation / args
-- judgments: 关键判断数组，每条含 judgment_id / rule_id / conclusion / falsification（≥1 条）
+- judgments: 关键判断数组，每条含 judgment_id / rule_id / conclusion / falsification
 - command_receipts: 工具调用回执数组，每条含 receipt_id / operation / status
-缺少任何一类证据，Audit 将产生 violation 并阻断准出。
+- capability_records: 能力可用性声明数组，每条含 capability / available
+上述字段必须存在；数组是否非空以 evidence_rules 为准。
 派发包中的 evidence_rules 列出了本 skill 的具体最低要求（min_facts / min_sources 等），
 必须逐条满足。calculation_requests 只提交 operation 和 args，
 重放结果由 Audit Job 调用 financial_rigor.py 生成，Agent 不得自证计算结果。
@@ -110,7 +111,7 @@ RESULT_BUNDLE_TEMPLATE = """
       "bytes": <文件字节数>,
       "sha256": "<文件 SHA-256>",
       "formal": false,
-      "accepted": true
+      "accepted": false
     }
   ],
   "fact_updates": [ ... ],
@@ -118,8 +119,10 @@ RESULT_BUNDLE_TEMPLATE = """
   "calculation_requests": [ ... ],
   "judgments": [ ... ],
   "command_receipts": [ ... ],
+  "capability_records": [],
   "limitations": [],
   "pwl_candidates": [],
+  "not_applicable": null,
   "started_at": "<ISO 8601 开始时间>",
   "completed_at": "<ISO 8601 完成时间>",
   "error": null
@@ -128,6 +131,11 @@ RESULT_BUNDLE_TEMPLATE = """
 - status 枚举值：PASS / PASS_WITH_LIMITATIONS / NOT_APPLICABLE / FAIL（不是 SUCCESS）
 - artifact_records 是数组（不是单个 artifact 对象）
 - path 必须指向 evidence/attempts/<skill_id>/<attempt_id>/ 下的文件
+- attempt 产物尚未被 Gate 晋级，formal / accepted 必须保持 false
+- NOT_APPLICABLE 时，not_applicable 改为：
+  {"predicate": "<contract applicability.predicate>",
+   "fact_id": "<证明谓词为假的 fact_id>",
+   "alternative": "<contract applicability.alternative 或 null>"}
 - 写完 result.json 后立即调用 submit-result；即使 submit-result 失败，
   磁盘上的 result.json 可被 resume 的孤儿恢复机制接管
 """

@@ -106,6 +106,10 @@ class ResultSchemaTests(unittest.TestCase):
         self.assertEqual(set(calculation["required"]), {"calculation_id", "operation", "args"})
         self.assertNotIn("expected", calculation["properties"])
 
+    def test_command_receipt_allows_failure_reason_used_by_audit(self):
+        receipt = self.schema["properties"]["command_receipts"]["items"]
+        self.assertIn("reason", receipt["properties"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,6 +70,12 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
         self.assertNotIn("COMPLETE", output)
         self.assertNotIn("PASS_WITH_LIMITATIONS", output)
 
+    def test_investment_checklist_does_not_duplicate_contract_byte_floor(self):
+        text = (REPO / "skills/investment-checklist.md").read_text(
+            encoding="utf-8")
+        self.assertNotIn("不少于 3000 字节", text)
+        self.assertIn("Contract", text)
+
 
 if __name__ == "__main__":
     unittest.main()
