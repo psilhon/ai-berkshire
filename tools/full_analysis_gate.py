@@ -30,7 +30,10 @@ RUNTIME_STATE_REL = Path("evidence/runtime-state.json")
 EVENTS_REL = Path("evidence/events.jsonl")
 PWL_ALLOWLIST = {"tushare_unavailable", "web_bandwidth_degraded", "ephemeral_source"}
 RESULT_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"}
-TERMINAL_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"}
+SUCCESS_TERMINAL_STATUSES = {
+    "PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE",
+}
+COMPLETED_STATUSES = SUCCESS_TERMINAL_STATUSES | {"FAIL"}
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 # ---- 实质校验常量（防凑数 / 防片面 / 防坍塌，替代纯字节门槛）----
@@ -269,7 +272,8 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
         raise GateError(f"Result Bundle status 非法: {bundle.get('status')!r}")
     if bundle["status"] == "FAIL" and not isinstance(bundle.get("error"), dict):
         raise GateError("FAIL Result Bundle 必须提供 error")
-    if bundle["status"] in TERMINAL_STATUSES and bundle.get("error") is not None:
+    if (bundle["status"] in SUCCESS_TERMINAL_STATUSES
+            and bundle.get("error") is not None):
         raise GateError("成功/PWL/NA Result Bundle 的 error 必须为 null")
     if not isinstance(bundle.get("pwl_candidates"), list) or not set(bundle["pwl_candidates"]).issubset(PWL_ALLOWLIST):
         raise GateError("pwl_candidates 含未注册的 PWL 原因")
@@ -757,7 +761,7 @@ def cmd_register_summary(args: argparse.Namespace) -> int:
     manifest = load_manifest(root)
     incomplete = [
         item["skill_id"] for item in manifest["skills"]
-        if item.get("status") not in TERMINAL_STATUSES
+        if item.get("status") not in SUCCESS_TERMINAL_STATUSES
     ]
     if incomplete:
         raise GateError(
@@ -908,13 +912,33 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: 正式文件与 manifest 哈希不一致={corrupt}")
-    states = {item["status"] for item in manifest["skills"]}
-    pending = [item["skill_id"] for item in manifest["skills"] if item["status"] not in TERMINAL_STATUSES]
+    pending = [
+        item["skill_id"] for item in manifest["skills"]
+        if item["status"] not in COMPLETED_STATUSES
+    ]
     missing = [item["skill_id"] for item in manifest["skills"] if item["status"] in {"PASS", "PASS_WITH_LIMITATIONS"} and not item.get("artifact_records")]
     if pending or missing:
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
         raise GateError(f"finalize 未准出: PENDING/非终态={pending}; 缺正式产物={missing}")
+    failed = [
+        item["skill_id"] for item in manifest["skills"]
+        if item["status"] == "FAIL"
+    ]
+    if failed:
+        manifest["run"]["status"] = "FAILED"
+        save_manifest(root, manifest)
+        append_event(root, {
+            "type": "run_finalized",
+            "status": "FAILED",
+            "failed_skills": failed,
+        })
+        print(json.dumps({
+            "run_root": str(root),
+            "status": "FAILED",
+            "failed_skills": failed,
+        }, ensure_ascii=False))
+        return 1
     if not (manifest.get("delivery") or {}).get("summary"):
         manifest["run"]["status"] = "PARTIAL"
         save_manifest(root, manifest)
@@ -943,7 +967,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         raise GateError(
             "finalize 未准出: 语义评审未完整通过 "
             f"status={review_info.get('status')!r} verdict={review_info.get('verdict')!r}")
-    manifest["run"]["status"] = "APPROVED" if "FAIL" not in states else "FAILED"
+    manifest["run"]["status"] = "APPROVED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})
     # 生成 HTML 版总结报告（APPROVED 后自动执行，非阻断——失败不影响准出）

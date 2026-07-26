@@ -256,6 +256,26 @@ class GateV2Tests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PENDING", result.stdout + result.stderr)
 
+    def test_finalize_closes_completed_failed_run_as_failed(self):
+        self.init()
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for item in manifest["skills"]:
+            item["status"] = "NOT_APPLICABLE"
+        manifest["skills"][0]["status"] = "FAIL"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        result = run_gate(
+            self.root, "finalize", "--run-root", self.run_root,
+            "--registry", REGISTRY,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        final = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(final["run"]["status"], "FAILED")
+        self.assertIn("ashare-data", result.stdout + result.stderr)
+
     def test_register_summary_binds_human_delivery_to_manifest(self):
         self.init()
         manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
