@@ -108,7 +108,13 @@ def atomic_write_json(path: Path, value: object) -> None:
             os.unlink(name)
 
 
-def atomic_copy(source: Path, target: Path) -> None:
+def atomic_copy(
+    source: Path,
+    target: Path,
+    *,
+    expected_bytes: int | None = None,
+    expected_sha256: str | None = None,
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
@@ -116,6 +122,15 @@ def atomic_copy(source: Path, target: Path) -> None:
             shutil.copyfileobj(inp, out)
             out.flush()
             os.fsync(out.fileno())
+        copied = Path(name)
+        if (expected_bytes is not None
+                and copied.stat().st_size != expected_bytes):
+            raise GateError(
+                f"复制期间 artifact bytes 发生变化: {source}")
+        if (expected_sha256 is not None
+                and sha256_file(copied) != expected_sha256):
+            raise GateError(
+                f"复制期间 artifact sha256 发生变化: {source}")
         os.replace(name, target)
     finally:
         if os.path.exists(name):
@@ -751,10 +766,20 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     )
 
     # ===== 阶段三：持久化提交（内存准备已完成，只做原子文件替换）=====
-    for source, formal, _, _ in prepared:
-        atomic_copy(source, formal)
-    for source, formal, _ in verified_role_memos:
-        atomic_copy(source, formal)
+    for source, formal, _, record in prepared:
+        atomic_copy(
+            source,
+            formal,
+            expected_bytes=record["bytes"],
+            expected_sha256=record["sha256"],
+        )
+    for source, formal, record in verified_role_memos:
+        atomic_copy(
+            source,
+            formal,
+            expected_bytes=record["bytes"],
+            expected_sha256=record["sha256"],
+        )
     save_manifest(root, next_manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
     print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))

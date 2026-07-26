@@ -11,6 +11,7 @@ from tests.test_full_analysis_e2e import build_compliant_evidence, build_complia
 
 REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "scripts" / "full_analysis.py"
+GATE = REPO / "tools" / "full_analysis_gate.py"
 REGISTRY = REPO / "tools" / "full_analysis_contract.json"
 
 
@@ -289,6 +290,70 @@ class RuntimeTests(unittest.TestCase):
         item = next(x for x in manifest["skills"] if x["skill_id"] == leased["skill_id"])
         self.assertEqual(item["status"], "PENDING")
         self.assertFalse((self.run_root / "01-数据与快筛/01-ashare-data.md").exists())
+
+    def test_fail_result_closes_runtime_unit_and_run_as_failed(self):
+        self.start()
+        leased = self.lease_and_start()
+        result_path = self.write_result(leased)
+        bundle = json.loads(result_path.read_text(encoding="utf-8"))
+        bundle.update({
+            "status": "FAIL",
+            "artifact_records": [],
+            "error": {
+                "code": "research_failed",
+                "detail": "无法完成研究",
+                "retryable": False,
+            },
+        })
+        result_path.write_text(
+            json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+
+        submitted = self.cli(
+            "submit-result",
+            "--run-root", self.run_root,
+            "--registry", REGISTRY,
+            "--result", result_path,
+        )
+
+        self.assertEqual(
+            submitted.returncode, 0, submitted.stdout + submitted.stderr)
+        self.assertEqual(json.loads(submitted.stdout)["status"], "FAILED")
+        unit = next(
+            item for item in self.state()["work_units"]
+            if item["work_unit_id"] == leased["work_unit_id"]
+        )
+        self.assertEqual(unit["status"], "FAILED")
+
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        failed_skill = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == leased["skill_id"]
+        )
+        self.assertEqual(failed_skill["status"], "FAIL")
+        for item in manifest["skills"]:
+            if item["skill_id"] != leased["skill_id"]:
+                item["status"] = "NOT_APPLICABLE"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        finalized = subprocess.run(
+            [
+                sys.executable,
+                str(GATE),
+                "finalize",
+                "--run-root", str(self.run_root),
+                "--registry", str(REGISTRY),
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(finalized.returncode, 0)
+        final_manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(final_manifest["run"]["status"], "FAILED")
 
     def test_expired_orphan_result_is_validated_instead_of_marked_done_from_status_only(self):
         self.start()

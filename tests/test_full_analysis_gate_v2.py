@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -230,6 +232,95 @@ class GateV2Tests(unittest.TestCase):
             if item["skill_id"] == skill_id
         )
         self.assertEqual(entry["status"], "PENDING")
+
+    def test_provenance_prepare_error_does_not_copy_formal_artifact(self):
+        self.init()
+        skill_id = "ashare-data"
+        good_path, good_rel, good_size, good_digest = self._write_attempt(
+            skill_id,
+            "attempt-good",
+            build_compliant_report(REGISTRY, skill_id),
+        )
+        accepted = self._ingest(good_path, self._bundle(
+            skill_id=skill_id,
+            attempt_id="attempt-good",
+            artifact_id="artifact.ashare-data",
+            rel=good_rel,
+            size=good_size,
+            digest=good_digest,
+        ))
+        self.assertEqual(
+            accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        formal = self.run_root / "01-数据与快筛/01-ashare-data.md"
+
+        bundle_path, rel, size, digest = self._write_attempt(
+            skill_id,
+            "attempt-provenance-error",
+            build_compliant_report(REGISTRY, skill_id) + "\n第二次尝试",
+        )
+        bundle = self._bundle(
+            skill_id=skill_id,
+            attempt_id="attempt-provenance-error",
+            artifact_id="artifact.ashare-data",
+            rel=rel,
+            size=size,
+            digest=digest,
+        )
+        bundle_path.write_text(
+            json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+
+        with mock.patch.object(
+            gate_module,
+            "_merge_provenance",
+            side_effect=RuntimeError("provenance prepare failed"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "provenance prepare failed"):
+                gate_module.cmd_ingest(SimpleNamespace(
+                    run_root=self.run_root,
+                    registry=REGISTRY,
+                    result=bundle_path,
+                ))
+
+        self.assertEqual(
+            hashlib.sha256(formal.read_bytes()).hexdigest(), good_digest)
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        entry = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == skill_id
+        )
+        self.assertEqual(entry["status"], "PASS")
+        self.assertEqual(entry["attempts"], ["attempt-good"])
+        self.assertEqual(
+            entry["artifact_records"][0]["sha256"], good_digest)
+
+    def test_atomic_copy_rejects_content_changed_after_validation(self):
+        source = self.root / "source.md"
+        target = self.root / "formal.md"
+        source.write_text("validated content", encoding="utf-8")
+        target.write_text("existing formal content", encoding="utf-8")
+        existing = target.read_bytes()
+        expected_bytes = source.stat().st_size
+        expected_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+
+        def copy_changed_content(_source_handle, target_handle):
+            target_handle.write(b"changed after validation")
+
+        with mock.patch.object(
+            gate_module.shutil,
+            "copyfileobj",
+            side_effect=copy_changed_content,
+        ):
+            with self.assertRaises(gate_module.GateError):
+                gate_module.atomic_copy(
+                    source,
+                    target,
+                    expected_bytes=expected_bytes,
+                    expected_sha256=expected_sha256,
+                )
+
+        self.assertEqual(target.read_bytes(), existing)
 
     def test_finalize_rejects_when_formal_artifact_tampered(self):
         """P0：finalize 必须复核正式文件哈希，被篡改/覆盖即拒绝准出。"""
