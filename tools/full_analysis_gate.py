@@ -8,6 +8,7 @@ WorkBuddy Runtime 负责调度；Gate 不启动 Agent、不读取报告正文做
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -187,8 +188,74 @@ def find_skill(registry: dict, skill_id: str) -> dict:
     raise GateError(f"未知 skill_id: {skill_id}", 2)
 
 
+def _schema_type_matches(value, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return True
+
+
+def _validate_schema_value(value, schema: dict, path: str = "$") -> None:
+    """校验 Result Bundle schema 使用的 JSON Schema 子集。"""
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected]
+    if expected and not any(
+        _schema_type_matches(value, item) for item in expected_types
+    ):
+        raise GateError(f"{path} 类型非法，期望 {expected}")
+    if "const" in schema and value != schema["const"]:
+        raise GateError(f"{path} 必须等于 {schema['const']!r}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise GateError(f"{path} 不在允许枚举中")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            raise GateError(f"{path} 长度不足")
+        if schema.get("pattern") and not re.search(schema["pattern"], value):
+            raise GateError(f"{path} 格式非法")
+    if isinstance(value, int) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            raise GateError(f"{path} 小于最小值 {schema['minimum']}")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0):
+            raise GateError(f"{path} 项目数不足")
+        if schema.get("uniqueItems"):
+            encoded = [
+                json.dumps(item, ensure_ascii=False, sort_keys=True)
+                for item in value
+            ]
+            if len(encoded) != len(set(encoded)):
+                raise GateError(f"{path} 含重复项目")
+        item_schema = schema.get("items")
+        if item_schema:
+            for index, item in enumerate(value):
+                _validate_schema_value(item, item_schema, f"{path}[{index}]")
+    if isinstance(value, dict):
+        required = set(schema.get("required", []))
+        missing = sorted(required - set(value))
+        if missing:
+            raise GateError(f"{path} 缺字段 {missing}")
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            extra = sorted(set(value) - set(properties))
+            if extra:
+                raise GateError(f"{path} 含未知字段 {extra}")
+        for key, item in value.items():
+            if key in properties:
+                _validate_schema_value(item, properties[key], f"{path}.{key}")
+
+
 def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None:
     schema = load_json(RESULT_SCHEMA_PATH, "Result Bundle schema")
+    _validate_schema_value(bundle, schema)
     required = set(schema["required"])
     allowed = set(schema.get("properties", {})) or required
     missing = sorted(required - set(bundle))
@@ -649,27 +716,37 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             raise GateError(
                 f"负向验收报告缺必需章节: {missing_headings}")
 
-    # ===== 阶段二：事务化晋级（校验已全部通过，此处只做原子复制与状态登记）=====
+    # ===== 阶段二：内存准备（所有数据处理成功前不得写正式文件）=====
     records = []
     for source, formal, formal_rel, record in prepared:
-        atomic_copy(source, formal)
         records.append({**record, "path": str(formal_rel), "formal": True, "accepted": True})
-    verified_role_runs = []
-    for source, formal, record in verified_role_memos:
-        atomic_copy(source, formal)
-        verified_role_runs.append(record)
-    entry = next(item for item in manifest["skills"] if item["skill_id"] == bundle["skill_id"])
+    verified_role_runs = [record for _, _, record in verified_role_memos]
+    next_manifest = copy.deepcopy(manifest)
+    entry = next(
+        item for item in next_manifest["skills"]
+        if item["skill_id"] == bundle["skill_id"]
+    )
     entry.update({"status": bundle["status"], "attempts": [*entry.get("attempts", []), bundle["attempt_id"]],
                   "artifact_records": records, "limitations": bundle["limitations"],
                   "not_applicable": bundle.get("not_applicable"),
                   "updated_at": now_iso()})
-    manifest["artifacts"] = [r for item in manifest["skills"] for r in item.get("artifact_records", [])]
+    next_manifest["artifacts"] = [
+        record
+        for item in next_manifest["skills"]
+        for record in item.get("artifact_records", [])
+    ]
     _merge_provenance(
-        manifest,
+        next_manifest,
         bundle,
         verified_role_runs=verified_role_runs,
     )
-    save_manifest(root, manifest)
+
+    # ===== 阶段三：持久化提交（内存准备已完成，只做原子文件替换）=====
+    for source, formal, _, _ in prepared:
+        atomic_copy(source, formal)
+    for source, formal, _ in verified_role_memos:
+        atomic_copy(source, formal)
+    save_manifest(root, next_manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
     print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))
     return 0

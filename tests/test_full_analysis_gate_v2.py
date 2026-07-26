@@ -201,6 +201,36 @@ class GateV2Tests(unittest.TestCase):
         entry2 = next(s for s in manifest2["skills"] if s["skill_id"] == skill_id)
         self.assertEqual(entry2["artifact_records"][0]["sha256"], digest)
 
+    def test_malformed_nested_bundle_is_rejected_before_formal_copy(self):
+        """嵌套非法 Result Bundle 必须在写正式文件前拒绝。"""
+        self.init()
+        skill_id = "ashare-data"
+        bundle_path, rel, size, digest = self._write_attempt(
+            skill_id, "attempt-bad", build_compliant_report(REGISTRY, skill_id))
+        bundle = self._bundle(
+            skill_id=skill_id,
+            attempt_id="attempt-bad",
+            artifact_id="artifact.ashare-data",
+            rel=rel,
+            size=size,
+            digest=digest,
+        )
+        bundle["fact_updates"] = ["not-an-object"]
+
+        result = self._ingest(bundle_path, bundle)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("$.fact_updates[0]", result.stdout + result.stderr)
+        self.assertFalse(
+            (self.run_root / "01-数据与快筛/01-ashare-data.md").exists())
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        entry = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == skill_id
+        )
+        self.assertEqual(entry["status"], "PENDING")
+
     def test_finalize_rejects_when_formal_artifact_tampered(self):
         """P0：finalize 必须复核正式文件哈希，被篡改/覆盖即拒绝准出。"""
         self.init()
