@@ -165,7 +165,11 @@ def verdict_of(one: str) -> str:
     return "中性"
 
 
-def collect(base: Path) -> list[dict]:
+def collect(
+    base: Path,
+    *,
+    warnings: list[str] | None = None,
+) -> list[dict]:
     rows: list[dict] = []
     for cd in sorted(base.iterdir()):
         if not cd.is_dir():
@@ -192,8 +196,16 @@ def collect(base: Path) -> list[dict]:
         if mf.exists():
             try:
                 status = json.loads(mf.read_text(encoding="utf-8")).get("run", {}).get("status") or ""
-            except Exception:  # noqa: BLE001 — 索引页不因单个 manifest 损坏而失败
-                status = ""
+            except (
+                OSError,
+                UnicodeError,
+                json.JSONDecodeError,
+                AttributeError,
+                TypeError,
+            ) as exc:
+                status = "MANIFEST_ERROR"
+                if warnings is not None:
+                    warnings.append(f"{mf}: {exc}")
         one_full = extract_one(txt)
         asof = extract_asof(txt)
         rows.append({
@@ -498,6 +510,7 @@ def build_index_html(rows: list[dict], *, base_label: str = "local/Company") -> 
     # 生成时间取自源报告最大修改时间（输入派生 → 可复跑逐字节一致）
     gen_ts = max((r["mtime"] for r in rows), default=0.0)
     gen_str = _dt.datetime.fromtimestamp(gen_ts).strftime("%Y-%m-%d %H:%M") if gen_ts else "—"
+    safe_base_label = _esc(base_label)
 
     boards: list[tuple[str, int]] = []
     for r in rows:
@@ -533,7 +546,7 @@ def build_index_html(rows: list[dict], *, base_label: str = "local/Company") -> 
       <span class="seal-mark">研</span>
       <span><b>AI·BERKSHIRE 研究台账</b><small>FULL-COMPANY ANALYSIS LEDGER</small></span>
     </div>
-    <div class="gen">索引生成于 {gen_str}<br>数据源：{base_label}/*/（自动扫描）</div>
+    <div class="gen">索引生成于 {gen_str}<br>数据源：{safe_base_label}/*/（自动扫描）</div>
   </div>
 
   <div class="masthead">
@@ -585,7 +598,8 @@ def rebuild_index(base: Path, output: Path | None = None) -> dict:
     base = Path(base)
     out = Path(output) if output else base / "index.html"
     with index_lock(base):
-        rows = collect(base)
+        warnings: list[str] = []
+        rows = collect(base, warnings=warnings)
         if not rows:
             raise ValueError(f"{base} 下未找到任何总结报告")
         html = build_index_html(rows, base_label=_display_base_label(base))
@@ -594,6 +608,7 @@ def rebuild_index(base: Path, output: Path | None = None) -> dict:
         "index": str(out),
         "companies": len(rows),
         "bytes": len(html.encode("utf-8")),
+        "warnings": warnings,
     }
 
 
@@ -612,7 +627,10 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.output) if args.output else base / "index.html"
 
     if args.check:
-        rows = collect(base)
+        warnings: list[str] = []
+        rows = collect(base, warnings=warnings)
+        for warning in warnings:
+            print(f"⚠️  manifest 读取失败: {warning}", file=sys.stderr)
         if not rows:
             print(f"⚠️  {base} 下未找到任何总结报告，索引页未生成。", file=sys.stderr)
             return 1
@@ -626,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"⚠️  {exc}，索引页未生成。", file=sys.stderr)
         return 1
+    for warning in result["warnings"]:
+        print(f"⚠️  manifest 读取失败: {warning}", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

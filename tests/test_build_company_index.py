@@ -111,14 +111,14 @@ class BuildCompanyIndexTest(unittest.TestCase):
         counter_lock = threading.Lock()
         original_collect = idx.collect
 
-        def measured_collect(base):
+        def measured_collect(base, **kwargs):
             nonlocal active, max_active
             with counter_lock:
                 active += 1
                 max_active = max(max_active, active)
             try:
                 time.sleep(0.02)
-                return original_collect(base)
+                return original_collect(base, **kwargs)
             finally:
                 with counter_lock:
                     active -= 1
@@ -224,6 +224,29 @@ class BuildCompanyIndexTest(unittest.TestCase):
         html = idx.build_index_html([evil_row], base_label="x")
         self.assertNotIn("<script>alert(1)</script>", html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
+
+    def test_corrupt_manifest_is_loud(self) -> None:
+        run = self.base / "600001.SH-测试甲/20260725-000000-aaaaaa"
+        manifest = run / "evidence/00-analysis-manifest.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("{broken", encoding="utf-8")
+        warnings: list[str] = []
+
+        rows = idx.collect(self.base, warnings=warnings)
+        row = next(item for item in rows if item["company"] == "测试甲")
+
+        self.assertEqual(row["status"], "MANIFEST_ERROR")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn(str(manifest), warnings[0])
+
+    def test_base_label_is_html_escaped(self) -> None:
+        html = idx.build_index_html(
+            idx.collect(self.base),
+            base_label='<img src=x onerror="alert(1)">',
+        )
+
+        self.assertNotIn('<img src=x onerror="alert(1)">', html)
+        self.assertIn("&lt;img", html)
 
     # ---- 结构完整性：标签配平 + 链接相对路径 ----
     def test_links_are_relative_and_balanced(self) -> None:

@@ -1125,6 +1125,8 @@ def _rebuild_company_index(root: Path) -> bool:
         spec.loader.exec_module(module)  # type: ignore[union-attr]
 
         result = module.rebuild_index(company_base)
+        for warning in result["warnings"]:
+            print(f"[index-gen] ⚠  manifest 读取失败: {warning}", file=sys.stderr)
         print(
             f"[index-gen] ✓ index.html 已更新：{result['companies']} 家公司",
             file=sys.stderr,
