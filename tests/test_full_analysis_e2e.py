@@ -274,6 +274,12 @@ class FullAnalysisE2ETests(unittest.TestCase):
         self.assertIn("格力电器", html)
         self.assertIn("000651.SZ", html)
         self.assertIn("2026-07-23", html)
+        company_base = self.run_root.parent.parent
+        index_path = company_base / "index.html"
+        self.assertTrue(index_path.is_file())
+        index_html = index_path.read_text(encoding="utf-8")
+        self.assertIn("格力电器", index_html)
+        self.assertIn("000651.SZ", index_html)
 
 
 if __name__ == "__main__":
