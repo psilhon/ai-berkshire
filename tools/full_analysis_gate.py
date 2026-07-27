@@ -106,6 +106,21 @@ def atomic_write_json(path: Path, value: object) -> None:
             os.unlink(name)
 
 
+def atomic_write_text(path: Path, content: str) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
 def atomic_copy(
     source: Path,
     target: Path,
@@ -1071,7 +1086,7 @@ def _generate_summary_html(root: Path, manifest: dict) -> bool:
             status=run_info.get("status", ""),
         )
         html_path = md_path.with_suffix(".html")
-        html_path.write_text(html, encoding="utf-8")
+        atomic_write_text(html_path, html)
         print(f"[html-gen] ✓ {html_path.name} ({len(html.encode())} bytes)", file=sys.stderr)
         append_event(root, {"type": "html_generated", "path": str(html_path.relative_to(root)),
                              "bytes": len(html.encode())})
@@ -1109,19 +1124,14 @@ def _rebuild_company_index(root: Path) -> bool:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)  # type: ignore[union-attr]
 
-        rows = module.collect(company_base)
-        if not rows:
-            print("[index-gen] ⚠  未找到任何总结报告，跳过索引重建", file=sys.stderr)
-            return False
-        html = module.build_index_html(
-            rows,
-            base_label=str(company_base),
+        result = module.rebuild_index(company_base)
+        print(
+            f"[index-gen] ✓ index.html 已更新：{result['companies']} 家公司",
+            file=sys.stderr,
         )
-        index_path = company_base / "index.html"
-        index_path.write_text(html, encoding="utf-8")
-        print(f"[index-gen] ✓ index.html 已更新：{len(rows)} 家公司", file=sys.stderr)
         append_event(root, {"type": "company_index_rebuilt",
-                             "companies": len(rows), "bytes": len(html.encode())})
+                             "companies": result["companies"],
+                             "bytes": result["bytes"]})
         return True
     except Exception as exc:  # noqa: BLE001 — 索引是派生展示件，绝不影响 APPROVED 状态
         print(f"[index-gen] ⚠  索引重建失败（不影响 APPROVED 状态）: {exc}", file=sys.stderr)

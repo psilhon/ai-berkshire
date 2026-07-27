@@ -84,6 +84,18 @@ class GateV2Tests(unittest.TestCase):
             self.root, "600001.SH", "测试公司")
         self.assertEqual(root.parts[-4:-2], ("local", "Company"))
 
+    def test_atomic_write_text_failure_preserves_previous_file(self):
+        target = self.root / "summary.html"
+        target.write_text("previous", encoding="utf-8")
+
+        with mock.patch.object(
+            gate_module.os, "replace", side_effect=OSError("replace failed")
+        ):
+            with self.assertRaises(OSError):
+                gate_module.atomic_write_text(target, "new")
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "previous")
+
     def test_rebuild_company_index_writes_to_run_owned_base(self):
         source_repo = self.root / "source"
         source_tools = source_repo / "tools"

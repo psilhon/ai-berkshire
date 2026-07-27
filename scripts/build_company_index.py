@@ -22,10 +22,19 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import os
 import re
 import sys
+import tempfile
+from contextlib import contextmanager
 from html import escape as _html_escape
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows compatibility
+    fcntl = None
+    import msvcrt
 
 # ---------------------------------------------------------------------------
 # 元数据提取
@@ -44,6 +53,46 @@ _ASOF_RE = re.compile(r"(?:数据|分析)?截止日?\s*[*：:]*\s*(20\d{2})[-/�
 _NEG_KW = ("回避", "否决", "看空", "排除", "不建议买入", "不构成", "PASS", "不参与")
 _POS_KW = ("买入", "持有", "建仓", "可买", "通过")
 _WAIT_KW = ("等", "观望", "跟踪", "观察", "灰色", "不买", "卫星仓位", "警惕", "跌出折扣")
+
+
+@contextmanager
+def index_lock(base: Path):
+    """Serialize index collection and replacement across processes."""
+    path = Path(base) / ".index.lock"
+    with path.open("a+b") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        else:  # pragma: no cover - Windows compatibility
+            handle.seek(0)
+            if handle.read(1) == b"":
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            else:  # pragma: no cover - Windows compatibility
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """Replace a UTF-8 text file without exposing a partial destination."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
 
 
 def _clean(s: str) -> str:
@@ -505,6 +554,29 @@ def build_index_html(rows: list[dict], *, base_label: str = "local/Company") -> 
 """
 
 
+def _display_base_label(base: Path) -> str:
+    if base.parent.name == "local":
+        return f"local/{base.name}"
+    return str(base)
+
+
+def rebuild_index(base: Path, output: Path | None = None) -> dict:
+    """Collect, render and atomically replace one company index."""
+    base = Path(base)
+    out = Path(output) if output else base / "index.html"
+    with index_lock(base):
+        rows = collect(base)
+        if not rows:
+            raise ValueError(f"{base} 下未找到任何总结报告")
+        html = build_index_html(rows, base_label=_display_base_label(base))
+        atomic_write_text(out, html)
+    return {
+        "index": str(out),
+        "companies": len(rows),
+        "bytes": len(html.encode("utf-8")),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成公司研究索引页 index.html")
     parser.add_argument("--base", default=None, help="公司目录（默认 <repo>/local/Company）")
@@ -519,20 +591,22 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out = Path(args.output) if args.output else base / "index.html"
 
-    rows = collect(base)
-    if not rows:
-        print(f"⚠️  {base} 下未找到任何总结报告，索引页未生成。", file=sys.stderr)
-        return 1
-
-    html = build_index_html(rows, base_label=str(base.relative_to(repo)) if str(base).startswith(str(repo)) else str(base))
-
     if args.check:
+        rows = collect(base)
+        if not rows:
+            print(f"⚠️  {base} 下未找到任何总结报告，索引页未生成。", file=sys.stderr)
+            return 1
+        html = build_index_html(rows, base_label=_display_base_label(base))
         need = (not out.exists()) or (out.read_text(encoding="utf-8") != html)
         print(json.dumps({"index": str(out), "companies": len(rows), "needs_rebuild": need}, ensure_ascii=False))
         return 0
 
-    out.write_text(html, encoding="utf-8")
-    print(json.dumps({"index": str(out), "companies": len(rows), "bytes": len(html.encode("utf-8"))}, ensure_ascii=False))
+    try:
+        result = rebuild_index(base, out)
+    except ValueError as exc:
+        print(f"⚠️  {exc}，索引页未生成。", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 

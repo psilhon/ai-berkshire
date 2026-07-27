@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -76,6 +77,62 @@ class BuildCompanyIndexTest(unittest.TestCase):
         html1 = idx.build_index_html(rows, base_label="local/Company")
         html2 = idx.build_index_html(rows, base_label="local/Company")
         self.assertEqual(html1, html2, "同一组输入必须渲染出逐字节一致的索引页")
+
+    def test_rebuild_index_writes_complete_index(self) -> None:
+        out = self.base / "index.html"
+
+        result = idx.rebuild_index(self.base, out)
+
+        self.assertEqual(result["index"], str(out))
+        self.assertEqual(result["companies"], 2)
+        html = out.read_text(encoding="utf-8")
+        self.assertEqual(html.count("<article"), 2)
+        self.assertEqual(html.count("<article"), html.count("</article>"))
+
+    def test_atomic_write_failure_preserves_previous_index(self) -> None:
+        out = self.base / "index.html"
+        out.write_text("previous", encoding="utf-8")
+
+        with mock.patch.object(
+            idx.os, "replace", side_effect=OSError("replace failed")
+        ):
+            with self.assertRaises(OSError):
+                idx.atomic_write_text(out, "new")
+
+        self.assertEqual(out.read_text(encoding="utf-8"), "previous")
+
+    def test_concurrent_rebuilds_serialize_collection_and_write(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        import time
+
+        active = 0
+        max_active = 0
+        counter_lock = threading.Lock()
+        original_collect = idx.collect
+
+        def measured_collect(base):
+            nonlocal active, max_active
+            with counter_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.02)
+                return original_collect(base)
+            finally:
+                with counter_lock:
+                    active -= 1
+
+        with mock.patch.object(idx, "collect", side_effect=measured_collect):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(
+                    lambda _: idx.rebuild_index(self.base), range(8)))
+
+        html = (self.base / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(max_active, 1)
+        self.assertEqual(html.count("<article"), 2)
+        self.assertEqual(html.count("<article"), html.count("</article>"))
+        self.assertTrue(all(item["companies"] == 2 for item in results))
 
     # ---- 底线二：元数据提取 ----
     def test_collect_extracts_marker_line(self) -> None:
