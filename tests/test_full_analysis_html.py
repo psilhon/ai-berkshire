@@ -184,8 +184,8 @@ class HtmlRendererTest(unittest.TestCase):
         self.assertNotIn("<img", html)
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;img", html)
-        # 页面内唯一 <script> 应是我们自己的微交互脚本
-        self.assertEqual(len(re.findall(r"<script", html)), 1)
+        # head 中启用渐进增强，body 中保留微交互脚本。
+        self.assertEqual(len(re.findall(r"<script", html)), 2)
 
     def test_no_stash_token_leaks(self):
         """行内渲染的 \x00 占位符必须全部还原，不得泄漏到产物。"""
@@ -198,6 +198,18 @@ class HtmlRendererTest(unittest.TestCase):
         self.assertIn("--terra:#B85235", html)
         self.assertIn("--paper:#F5F4ED", html)
         self.assertIn("IntersectionObserver", html)
+
+    def test_report_content_is_visible_without_javascript(self):
+        html = self._render()
+
+        self.assertIsNone(
+            re.search(r"(?<!\.js )\.reveal\{[^}]*opacity:0", html)
+        )
+        self.assertRegex(html, r"\.js \.reveal\{[^}]*opacity:0")
+        self.assertIn(
+            "document.documentElement.classList.add('js')",
+            html,
+        )
 
 
 # 真实 run 冒烟（local/ 为 gitignore，CI 无此目录则跳过；本地有则校验体量与无泄漏）

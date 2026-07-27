@@ -8,6 +8,7 @@
 3. 自动更新：新增公司目录后重跑 collect+build，新公司自动进入索引（"后续新增自动更新"的回归保障）。
 4. 安全性：公司名/结论中的 HTML 注入被转义。
 """
+import re
 import sys
 import tempfile
 import unittest
@@ -247,6 +248,18 @@ class BuildCompanyIndexTest(unittest.TestCase):
 
         self.assertNotIn('<img src=x onerror="alert(1)">', html)
         self.assertIn("&lt;img", html)
+
+    def test_cards_are_visible_without_javascript(self) -> None:
+        html = idx.build_index_html(idx.collect(self.base), base_label="x")
+
+        self.assertIsNone(
+            re.search(r"(?<!\.js )\.card\{[^}]*opacity:0", html)
+        )
+        self.assertRegex(html, r"\.js \.card\{[^}]*opacity:0")
+        self.assertIn(
+            "document.documentElement.classList.add('js')",
+            html,
+        )
 
     # ---- 结构完整性：标签配平 + 链接相对路径 ----
     def test_links_are_relative_and_balanced(self) -> None:

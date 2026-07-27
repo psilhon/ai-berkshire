@@ -338,8 +338,9 @@ a{color:var(--navy);text-decoration:none}
   padding:20px 20px 16px 24px;box-shadow:var(--shadow);overflow:hidden;
   display:flex;flex-direction:column;gap:10px;
   transition:transform .22s ease,box-shadow .22s ease,border-color .22s ease;
-  opacity:0;transform:translateY(16px)}
-.card.in{opacity:1;transform:none}
+  opacity:1;transform:none}
+.js .card{opacity:0;transform:translateY(16px)}
+.js .card.in{opacity:1;transform:none}
 .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--blue);
   transition:width .2s ease}
 .card.v-关注::before{background:var(--seal)}
@@ -397,7 +398,7 @@ footer b{color:var(--ink-soft)}
 }
 @media (prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important}
-  .card{opacity:1;transform:none}
+  .js .card{opacity:1;transform:none}
 }
 """
 
@@ -537,6 +538,7 @@ def build_index_html(rows: list[dict], *, base_label: str = "local/Company") -> 
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>公司研究索引 · AI Berkshire</title>
+<script>document.documentElement.classList.add('js')</script>
 <style>{_CSS}</style>
 </head>
 <body>

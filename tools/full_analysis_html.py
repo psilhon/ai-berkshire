@@ -226,10 +226,11 @@ footer p{max-width:none;margin:0 0 6px}
 #backTop:hover{background:var(--terra)}
 
 /* ============ 滚动显现 / 响应式 / 打印 ============ */
-.reveal{opacity:0;transform:translateY(16px);transition:opacity .65s ease,transform .65s ease}
-.reveal.in{opacity:1;transform:none}
+.reveal{opacity:1;transform:none;transition:opacity .65s ease,transform .65s ease}
+.js .reveal{opacity:0;transform:translateY(16px)}
+.js .reveal.in{opacity:1;transform:none}
 @media(prefers-reduced-motion:reduce){
-  .reveal{opacity:1;transform:none;transition:none}
+  .js .reveal{opacity:1;transform:none;transition:none}
   html{scroll-behavior:auto}
 }
 @media(max-width:640px){
@@ -241,7 +242,7 @@ footer p{max-width:none;margin:0 0 6px}
 @media print{
   .nav,#backTop{display:none}
   body{background:#fff}
-  .reveal{opacity:1;transform:none}
+  .js .reveal{opacity:1;transform:none}
 }
 """
 
@@ -598,6 +599,7 @@ def build_summary_page(markdown: str, *, company: str, code: str, as_of: str,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{safe_title}</title>
+<script>document.documentElement.classList.add('js')</script>
 <style>
 {_CSS}
 </style>
