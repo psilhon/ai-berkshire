@@ -369,7 +369,16 @@ def _validate_not_applicable(bundle: dict, skill: dict, manifest: dict) -> None:
 def build_run_root(repo_root: Path, code: str, company: str) -> Path:
     stamp = datetime.now(TZ_SHANGHAI).strftime("%Y%m%d-%H%M%S")
     short = hashlib.sha256(f"{code}:{company}:{stamp}".encode()).hexdigest()[:6]
-    return repo_root / "local" / "company" / f"{code}-{company}" / f"{stamp}-{short}"
+    return repo_root / "local" / "Company" / f"{code}-{company}" / f"{stamp}-{short}"
+
+
+def _company_base_from_run_root(root: Path) -> Path:
+    root = Path(root)
+    company_dir = root.parent
+    company_base = company_dir.parent
+    if not root.is_dir() or not company_dir.is_dir() or not company_base.is_dir():
+        raise GateError(f"无法从 run_root 推导公司目录: {root}")
+    return company_base
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -1095,10 +1104,7 @@ def _rebuild_company_index(root: Path) -> bool:
         if not builder_path.is_file():
             print(f"[index-gen] ⚠  索引生成器不存在: {builder_path}，跳过索引重建", file=sys.stderr)
             return False
-        company_base = TOOLS_DIR.parent / "local" / "Company"
-        if not company_base.is_dir():
-            print(f"[index-gen] ⚠  公司目录不存在: {company_base}，跳过索引重建", file=sys.stderr)
-            return False
+        company_base = _company_base_from_run_root(root)
         spec = importlib.util.spec_from_file_location("build_company_index", builder_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)  # type: ignore[union-attr]
@@ -1109,7 +1115,7 @@ def _rebuild_company_index(root: Path) -> bool:
             return False
         html = module.build_index_html(
             rows,
-            base_label=str(company_base.relative_to(TOOLS_DIR.parent)),
+            base_label=str(company_base),
         )
         index_path = company_base / "index.html"
         index_path.write_text(html, encoding="utf-8")

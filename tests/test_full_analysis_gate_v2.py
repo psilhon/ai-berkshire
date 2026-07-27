@@ -79,6 +79,39 @@ class GateV2Tests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_build_run_root_uses_canonical_company_directory(self):
+        root = gate_module.build_run_root(
+            self.root, "600001.SH", "测试公司")
+        self.assertEqual(root.parts[-4:-2], ("local", "Company"))
+
+    def test_rebuild_company_index_writes_to_run_owned_base(self):
+        source_repo = self.root / "source"
+        source_tools = source_repo / "tools"
+        source_scripts = source_repo / "scripts"
+        source_tools.mkdir(parents=True)
+        source_scripts.mkdir(parents=True)
+        (source_scripts / "build_company_index.py").write_bytes(
+            (REPO / "scripts/build_company_index.py").read_bytes())
+
+        company_base = self.root / "target/local/Company"
+        run_root = (
+            company_base
+            / "600001.SH-测试公司"
+            / "20260727-120000-aaaaaa"
+        )
+        run_root.mkdir(parents=True)
+        (run_root / "测试公司-全量分析-总结报告.md").write_text(
+            "# 测试公司\n\n一句话总结：建议持有。\n\n"
+            "数据截止日：2026-07-27。\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(gate_module, "TOOLS_DIR", source_tools):
+            rebuilt = gate_module._rebuild_company_index(run_root)
+
+        self.assertTrue(rebuilt)
+        self.assertTrue((company_base / "index.html").is_file())
+
     def test_init_creates_canonical_manifest_and_uniform_intermediate_dirs(self):
         self.init()
         manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
