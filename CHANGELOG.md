@@ -20,7 +20,7 @@
 
 ### 🧪 测试 (Tests)
 - 新增路径隔离、原子替换、并发序列化、最新运行去重、北交所、结论词表、manifest 告警、`base_label` 转义和无 JavaScript 降级回归。
-- `bash scripts/check.sh` 全绿（488 单元测试 + 14 个 skill frontmatter 治理 + Codex/WorkBuddy 生成物同步 + Contract v2 的 13 项契约校验 + 报告索引检查）。
+- `bash scripts/check.sh` 全绿（489 单元测试 + 14 个 skill frontmatter 治理 + Codex/WorkBuddy 生成物同步 + Contract v2 的 13 项契约校验 + 报告索引检查）。
 
 ### ⚠️ 升级注意
 - 保持 Contract v2、Result Bundle v1、13 项业务契约、WorkBuddy 生产入口和 APPROVED 语义不变。

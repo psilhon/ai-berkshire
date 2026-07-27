@@ -170,7 +170,7 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 ### 单公司全量分析（WorkBuddy）
 
-无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis/SKILL.md`](workbuddy-skills/full-company-analysis/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 13 项业务契约。Runtime 负责租约、重试、恢复与 33 次硬预算；Gate 负责 Result Bundle v1、N/A 负向验收、正式产物与总结报告原子晋级、共享 Audit、语义 Review 和最终准出。每次运行的中间产物统一位于 `local/company/<code>-<name>/<run-id>/evidence/`。
+无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis/SKILL.md`](workbuddy-skills/full-company-analysis/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 13 项业务契约。Runtime 负责租约、重试、恢复与 33 次硬预算；Gate 负责 Result Bundle v1、N/A 负向验收、正式产物与总结报告原子晋级、共享 Audit、语义 Review 和最终准出。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
 
 ```bash
 python3 scripts/full_analysis.py start \

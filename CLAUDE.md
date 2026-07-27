@@ -34,7 +34,7 @@ skills/*.md（Claude Code slash command 源文件，权威）
 - `skills/full-company-analysis.md` — WorkBuddy 总控编排层，只负责调度、登记总结和触发质量闭环，不直接代写业务单元
 - `tools/full_analysis_gate.py` — 确定性验收器（v2），生命周期：`init` → Runtime 租约与 `ingest-result` → `register-summary` →共享 Audit →语义 Review → `finalize`；N/A 必须通过谓词事实和负向验收报告证明
 
-运行产物落盘到 `local/company/<code>-<公司>/<run_id>/`，其中 `evidence/` 保存租约、账本、Audit、Review 和过程事件。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
+运行产物落盘到 `local/Company/<code>-<公司>/<run_id>/`，其中 `evidence/` 保存租约、账本、Audit、Review 和过程事件。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
 
 ## 常用命令
 
@@ -111,7 +111,7 @@ docs/            — ROADMAP 与专题文档
 | /industry-research | `{行业名}-industry-{YYYYMMDD}.md` | 根目录 |
 | /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
 | /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `local/reports/bottleneck-map/` |
-| /full-company-analysis | `<run_id>/` 运行目录（路径由 Gate 生成） | `local/company/<code>-<公司>/` |
+| /full-company-analysis | `<run_id>/` 运行目录（路径由 Gate 生成） | `local/Company/<code>-<公司>/` |
 
 ## 投研分析核心原则（最高优先级）
 

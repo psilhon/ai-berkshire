@@ -38,6 +38,12 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
         for rel in re.findall(r"\]\((skills/[^)#]+\.md)\)", text):
             self.assertTrue((REPO / rel).is_file(), rel)
 
+    def test_active_docs_use_canonical_company_run_path(self):
+        for path in (REPO / "README.md", REPO / "CLAUDE.md"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("local/company/", text, path.name)
+            self.assertIn("local/Company/", text, path.name)
+
     def test_full_analysis_workflow_registers_summary_before_audit(self):
         text = (
             REPO / "skills/full-company-analysis.md"
