@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import errno
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -54,8 +56,9 @@ _NEG_KW = ("回避", "否决", "看空", "排除", "不建议买入", "不参与
 _POS_KW = ("买入", "持有", "建仓", "可买", "通过", "建议关注")
 _WAIT_KW = (
     "等待", "等回调", "等估值", "等价格", "观望",
-    "跟踪", "观察", "不买", "卫星仓位", "警惕", "跌出折扣",
+    "跟踪", "观察", "不买", "跌出折扣",
 )
+TZ_SHANGHAI = _dt.timezone(_dt.timedelta(hours=8))
 
 
 @contextmanager
@@ -71,7 +74,20 @@ def index_lock(base: Path):
                 handle.write(b"\0")
                 handle.flush()
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {
+                        errno.EACCES,
+                        errno.EAGAIN,
+                        errno.EDEADLK,
+                    }:
+                        raise
+                    # LK_LOCK 内建等待有上限；继续重试直至与 POSIX
+                    # LOCK_EX 一样取得排他锁，避免竞争时遗漏索引更新。
+                    handle.seek(0)
         try:
             yield
         finally:
@@ -86,12 +102,14 @@ def atomic_write_text(path: Path, content: str) -> None:
     """Replace a UTF-8 text file without exposing a partial destination."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(tmp_name, mode)
         os.replace(tmp_name, path)
     finally:
         if os.path.exists(tmp_name):
@@ -153,7 +171,7 @@ def board_of(code: str) -> str:
 def verdict_of(one: str) -> str:
     """基于一句话结论做粗粒度结论归类（仅用于索引页配色，不改变报告本身）。
 
-    顺序关键：先判负（回避/否决），再判等待（"等"/"不买只观察"等），最后判正。
+    顺序关键：先判负（回避/否决），再判明确等待短语，最后判正。
     若先判正，"等回调再买""不买只观察"会因"买"的子串命中被误归为正向。
     """
     if any(k in one for k in _NEG_KW):
@@ -339,8 +357,8 @@ a{color:var(--navy);text-decoration:none}
   display:flex;flex-direction:column;gap:10px;
   transition:transform .22s ease,box-shadow .22s ease,border-color .22s ease;
   opacity:1;transform:none}
-.js .card{opacity:0;transform:translateY(16px)}
-.js .card.in{opacity:1;transform:none}
+.js.enhanced .card{opacity:0;transform:translateY(16px)}
+.js.enhanced .card.in{opacity:1;transform:none}
 .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--blue);
   transition:width .2s ease}
 .card.v-关注::before{background:var(--seal)}
@@ -398,7 +416,7 @@ footer b{color:var(--ink-soft)}
 }
 @media (prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important}
-  .js .card{opacity:1;transform:none}
+  .js.enhanced .card{opacity:1;transform:none}
 }
 """
 
@@ -470,6 +488,7 @@ _JS = """\
   });
 
   apply();
+  document.documentElement.classList.add("enhanced");
 })();
 """
 
@@ -510,7 +529,12 @@ def build_index_html(rows: list[dict], *, base_label: str = "local/Company") -> 
     latest = max((r["asof"] for r in rows if r["asof"]), default="—")
     # 生成时间取自源报告最大修改时间（输入派生 → 可复跑逐字节一致）
     gen_ts = max((r["mtime"] for r in rows), default=0.0)
-    gen_str = _dt.datetime.fromtimestamp(gen_ts).strftime("%Y-%m-%d %H:%M") if gen_ts else "—"
+    gen_str = (
+        _dt.datetime.fromtimestamp(gen_ts, tz=TZ_SHANGHAI).strftime(
+            "%Y-%m-%d %H:%M"
+        )
+        if gen_ts else "—"
+    )
     safe_base_label = _esc(base_label)
 
     boards: list[tuple[str, int]] = []
@@ -560,10 +584,10 @@ def build_index_html(rows: list[dict], *, base_label: str = "local/Company") -> 
   </div>
 
   <div class="statbar">
-    <div class="stat"><div class="num" data-target="{total}">0</div><div class="lab">覆盖公司</div></div>
-    <div class="stat hot"><div class="num" data-target="{approved}">0</div><div class="lab">通过准出 APPROVED</div></div>
-    <div class="stat"><div class="num" data-target="{len(boards)}">0</div><div class="lab">上市板块</div></div>
-    <div class="stat"><div class="num" data-target="{int(total_kb)}" data-suffix="">0</div><div class="lab">总结体量（KB）</div></div>
+    <div class="stat"><div class="num" data-target="{total}">{total}</div><div class="lab">覆盖公司</div></div>
+    <div class="stat hot"><div class="num" data-target="{approved}">{approved}</div><div class="lab">通过准出 APPROVED</div></div>
+    <div class="stat"><div class="num" data-target="{len(boards)}">{len(boards)}</div><div class="lab">上市板块</div></div>
+    <div class="stat"><div class="num" data-target="{int(total_kb)}" data-suffix="">{int(total_kb)}</div><div class="lab">总结体量（KB）</div></div>
   </div>
 
   <div class="toolbar"><div class="inner">

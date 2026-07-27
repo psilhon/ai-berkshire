@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -93,6 +94,7 @@ def now_iso() -> str:
 def atomic_write_json(path: Path, value: object) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -100,6 +102,7 @@ def atomic_write_json(path: Path, value: object) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(name, mode)
         os.replace(name, path)
     finally:
         if os.path.exists(name):
@@ -109,12 +112,14 @@ def atomic_write_json(path: Path, value: object) -> None:
 def atomic_write_text(path: Path, content: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(name, mode)
         os.replace(name, path)
     finally:
         if os.path.exists(name):
@@ -129,6 +134,7 @@ def atomic_copy(
     expected_sha256: str | None = None,
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o644
     fd, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as out, source.open("rb") as inp:
@@ -144,6 +150,7 @@ def atomic_copy(
                 and sha256_file(copied) != expected_sha256):
             raise GateError(
                 f"复制期间 artifact sha256 发生变化: {source}")
+        os.chmod(name, mode)
         os.replace(name, target)
     finally:
         if os.path.exists(name):

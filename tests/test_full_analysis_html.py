@@ -203,12 +203,20 @@ class HtmlRendererTest(unittest.TestCase):
         html = self._render()
 
         self.assertIsNone(
-            re.search(r"(?<!\.js )\.reveal\{[^}]*opacity:0", html)
+            re.search(r"(?<!\.js\.enhanced )\.reveal\{[^}]*opacity:0", html)
         )
-        self.assertRegex(html, r"\.js \.reveal\{[^}]*opacity:0")
+        self.assertRegex(html, r"\.js\.enhanced \.reveal\{[^}]*opacity:0")
         self.assertIn(
             "document.documentElement.classList.add('js')",
             html,
+        )
+        self.assertIn(
+            'document.documentElement.classList.add("enhanced")',
+            html,
+        )
+        self.assertGreater(
+            html.index('document.documentElement.classList.add("enhanced")'),
+            html.index("IntersectionObserver"),
         )
 
 

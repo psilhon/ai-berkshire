@@ -227,10 +227,10 @@ footer p{max-width:none;margin:0 0 6px}
 
 /* ============ 滚动显现 / 响应式 / 打印 ============ */
 .reveal{opacity:1;transform:none;transition:opacity .65s ease,transform .65s ease}
-.js .reveal{opacity:0;transform:translateY(16px)}
-.js .reveal.in{opacity:1;transform:none}
+.js.enhanced .reveal{opacity:0;transform:translateY(16px)}
+.js.enhanced .reveal.in{opacity:1;transform:none}
 @media(prefers-reduced-motion:reduce){
-  .js .reveal{opacity:1;transform:none;transition:none}
+  .js.enhanced .reveal{opacity:1;transform:none;transition:none}
   html{scroll-behavior:auto}
 }
 @media(max-width:640px){
@@ -242,7 +242,7 @@ footer p{max-width:none;margin:0 0 6px}
 @media print{
   .nav,#backTop{display:none}
   body{background:#fff}
-  .js .reveal{opacity:1;transform:none}
+  .js.enhanced .reveal{opacity:1;transform:none}
 }
 """
 
@@ -287,6 +287,7 @@ _JS = """\
       window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
     });
   }
+  document.documentElement.classList.add("enhanced");
 })();
 """
 

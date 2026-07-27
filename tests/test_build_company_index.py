@@ -8,7 +8,11 @@
 3. 自动更新：新增公司目录后重跑 collect+build，新公司自动进入索引（"后续新增自动更新"的回归保障）。
 4. 安全性：公司名/结论中的 HTML 注入被转义。
 """
+import errno
+import os
 import re
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -102,6 +106,49 @@ class BuildCompanyIndexTest(unittest.TestCase):
 
         self.assertEqual(out.read_text(encoding="utf-8"), "previous")
 
+    @unittest.skipIf(os.name == "nt", "POSIX 文件权限断言")
+    def test_atomic_write_preserves_existing_mode_and_uses_readable_default(self) -> None:
+        existing = self.base / "existing.html"
+        existing.write_text("previous", encoding="utf-8")
+        existing.chmod(0o640)
+
+        idx.atomic_write_text(existing, "new")
+        created = self.base / "created.html"
+        idx.atomic_write_text(created, "new")
+
+        self.assertEqual(stat.S_IMODE(existing.stat().st_mode), 0o640)
+        self.assertEqual(stat.S_IMODE(created.stat().st_mode), 0o644)
+
+    def test_windows_lock_retries_until_acquired(self) -> None:
+        fake_msvcrt = mock.Mock()
+        fake_msvcrt.LK_LOCK = 1
+        fake_msvcrt.LK_UNLCK = 2
+        fake_msvcrt.locking.side_effect = [
+            OSError(errno.EACCES, "busy"),
+            OSError(errno.EAGAIN, "busy"),
+            None,
+            None,
+        ]
+
+        with (
+            mock.patch.object(idx, "fcntl", None),
+            mock.patch.object(idx, "msvcrt", fake_msvcrt, create=True),
+        ):
+            with idx.index_lock(self.base):
+                pass
+
+        self.assertEqual(fake_msvcrt.locking.call_count, 4)
+
+        fake_msvcrt.reset_mock()
+        fake_msvcrt.locking.side_effect = OSError(errno.EBADF, "bad handle")
+        with (
+            mock.patch.object(idx, "fcntl", None),
+            mock.patch.object(idx, "msvcrt", fake_msvcrt, create=True),
+            self.assertRaises(OSError),
+        ):
+            with idx.index_lock(self.base):
+                pass
+
     def test_concurrent_rebuilds_serialize_collection_and_write(self) -> None:
         from concurrent.futures import ThreadPoolExecutor
         import threading
@@ -134,6 +181,32 @@ class BuildCompanyIndexTest(unittest.TestCase):
         self.assertEqual(html.count("<article"), 2)
         self.assertEqual(html.count("<article"), html.count("</article>"))
         self.assertTrue(all(item["companies"] == 2 for item in results))
+
+    @unittest.skipIf(os.name == "nt", "Windows 分支由锁重试单测覆盖")
+    def test_concurrent_cli_processes_leave_complete_index(self) -> None:
+        processes = [
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "build_company_index.py"),
+                    "--base",
+                    str(self.base),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(4)
+        ]
+        results = [process.communicate(timeout=20) for process in processes]
+
+        self.assertTrue(
+            all(process.returncode == 0 for process in processes),
+            results,
+        )
+        html = (self.base / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(html.count("<article"), 2)
+        self.assertEqual(html.count("<article"), html.count("</article>"))
 
     # ---- 底线二：元数据提取 ----
     def test_collect_extracts_marker_line(self) -> None:
@@ -170,6 +243,8 @@ class BuildCompanyIndexTest(unittest.TestCase):
         self.assertEqual(idx.verdict_of("本报告不构成投资建议"), "中性")
         self.assertEqual(idx.verdict_of("公司等待治理改善后再评估"), "等待")
         self.assertEqual(idx.verdict_of("业绩同比增长，建议关注"), "关注")
+        self.assertEqual(idx.verdict_of("建议用卫星仓位买入"), "关注")
+        self.assertEqual(idx.verdict_of("风险需警惕但建议持有"), "关注")
 
     def test_collect_keeps_only_latest_run_per_company(self) -> None:
         _write_company(
@@ -253,13 +328,53 @@ class BuildCompanyIndexTest(unittest.TestCase):
         html = idx.build_index_html(idx.collect(self.base), base_label="x")
 
         self.assertIsNone(
-            re.search(r"(?<!\.js )\.card\{[^}]*opacity:0", html)
+            re.search(r"(?<!\.js\.enhanced )\.card\{[^}]*opacity:0", html)
         )
-        self.assertRegex(html, r"\.js \.card\{[^}]*opacity:0")
+        self.assertRegex(html, r"\.js\.enhanced \.card\{[^}]*opacity:0")
         self.assertIn(
             "document.documentElement.classList.add('js')",
             html,
         )
+        self.assertIn(
+            'document.documentElement.classList.add("enhanced")',
+            html,
+        )
+        self.assertGreater(
+            html.index('document.documentElement.classList.add("enhanced")'),
+            html.index("apply();"),
+        )
+
+    def test_summary_stats_are_readable_without_javascript(self) -> None:
+        html = idx.build_index_html(idx.collect(self.base), base_label="x")
+
+        self.assertIn('data-target="2">2</div><div class="lab">覆盖公司', html)
+        self.assertIn('data-target="2">2</div><div class="lab">上市板块', html)
+
+    @unittest.skipIf(os.name == "nt", "Windows 不支持 POSIX TZ 环境语义")
+    def test_generation_time_is_independent_of_process_timezone(self) -> None:
+        code = f"""\
+import sys
+sys.path.insert(0, {str(REPO / "scripts")!r})
+import build_company_index as idx
+row = {{
+    "code": "600001.SH", "company": "测试", "board": "沪主板",
+    "run": "r", "md": "a.md", "md_rel": "a.md",
+    "html": "", "html_rel": "", "one": "建议关注测试公司",
+    "verdict": "关注", "asof": "2026-07-27", "status": "APPROVED",
+    "bytes": 1024, "mtime": 1704067200.0,
+}}
+print(idx.build_index_html([row], base_label="x"))
+"""
+        outputs = [
+            subprocess.check_output(
+                [sys.executable, "-c", code],
+                env={"TZ": zone, "PYTHONIOENCODING": "utf-8"},
+                text=True,
+            )
+            for zone in ("UTC", "Asia/Shanghai")
+        ]
+
+        self.assertEqual(outputs[0], outputs[1])
 
     # ---- 结构完整性：标签配平 + 链接相对路径 ----
     def test_links_are_relative_and_balanced(self) -> None:

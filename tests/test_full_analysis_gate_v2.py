@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -95,6 +97,25 @@ class GateV2Tests(unittest.TestCase):
                 gate_module.atomic_write_text(target, "new")
 
         self.assertEqual(target.read_text(encoding="utf-8"), "previous")
+
+    @unittest.skipIf(os.name == "nt", "POSIX 文件权限断言")
+    def test_atomic_replacements_preserve_mode_and_use_readable_default(self):
+        existing = self.root / "summary.html"
+        existing.write_text("previous", encoding="utf-8")
+        existing.chmod(0o640)
+        gate_module.atomic_write_text(existing, "new")
+
+        created = self.root / "state.json"
+        gate_module.atomic_write_json(created, {"ok": True})
+
+        source = self.root / "source.md"
+        source.write_text("source", encoding="utf-8")
+        copied = self.root / "copied.md"
+        gate_module.atomic_copy(source, copied)
+
+        self.assertEqual(stat.S_IMODE(existing.stat().st_mode), 0o640)
+        self.assertEqual(stat.S_IMODE(created.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o644)
 
     def test_rebuild_company_index_writes_to_run_owned_base(self):
         source_repo = self.root / "source"
