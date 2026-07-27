@@ -17,9 +17,7 @@ import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
-from html import escape as html_escape
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from full_analysis_snapshot import analysis_snapshot
 
@@ -859,6 +857,8 @@ def cmd_register_summary(args: argparse.Namespace) -> int:
         "path": record["path"],
         "sha256": record["sha256"],
     })
+    # 注：索引刷新不在此处——由 _generate_summary_html 成功后统一触发，
+    # 确保索引页链接到已落盘的 HTML 展示件。
     print(json.dumps(record, ensure_ascii=False))
     return 0
 
@@ -1014,287 +1014,129 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     return 0
 
 
-def _generate_summary_html(root: Path, manifest: dict) -> None:
-    """finalize APPROVED 后自动生成 HTML 版总结报告（非阻断，失败只打印警告）。
+def _generate_summary_html(root: Path, manifest: dict) -> bool:
+    """用确定性渲染器生成 HTML 版总结报告（非阻断，失败只打印警告）。
 
-    从 manifest.delivery.summary.path 读取已冻结的 markdown 总结，
-    转换为自包含 HTML（内联 tokens.css），写入同目录 .html 文件。
+    从 manifest.delivery.summary.path 读取已登记的 markdown 总结，调用确定性渲染器
+    full_analysis_html.build_summary_page 转为自包含 HTML（内联设计系统与微交互脚本，
+    零外部依赖），写入同目录 .html 文件。
+
+    设计系统（cream paper / terracotta / trust 墨蓝 / serif + 报头 + sticky 导航 +
+    编号章节 + 样式化表格 + 滚动显现）已固化为代码：同一份 markdown 永远渲染出同一份
+    HTML，无 LLM 参与、无 token 消耗、无输出方差，保证每个 run 展示件品质一致。
+
+    调用方：① 步骤 B2 的独立命令 render-html（register-summary 后立即生成，解耦于
+    audit/finalize）；② finalize APPROVED 后的幂等兜底。二者共用本函数，因渲染确定性
+    保证两次输出逐字节一致、互不冲突。返回 True 表示已写出 HTML。
     """
     try:
+        import importlib.util
+
         delivery = manifest.get("delivery") or {}
         summary = delivery.get("summary") or {}
         md_rel = summary.get("path", "")
         if not md_rel:
             print("[html-gen] ⚠  manifest 中无 summary.path，跳过 HTML 生成", file=sys.stderr)
-            return
+            return False
         md_path = root / md_rel
         if not md_path.is_file():
             print(f"[html-gen] ⚠  summary 文件不存在: {md_path}", file=sys.stderr)
-            return
-        md_text = md_path.read_text(encoding="utf-8")
-        html_body = _markdown_to_html(md_text)
-        html_path = md_path.with_suffix(".html")
+            return False
+        renderer_path = TOOLS_DIR / "full_analysis_html.py"
+        if not renderer_path.is_file():
+            print(f"[html-gen] ⚠  渲染器不存在: {renderer_path}，跳过 HTML 生成", file=sys.stderr)
+            return False
+        spec = importlib.util.spec_from_file_location("full_analysis_html", renderer_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
 
-        tokens_css = _load_tokens_css()
         company_info = manifest.get("company") or {}
-        company = company_info.get("name", "")
-        code = company_info.get("code", "")
-        title = f"{company}（{code}）全量分析总结报告" if company else "全量分析总结报告"
-        date_str = (manifest.get("run") or {}).get("as_of", "")
-        status = manifest["run"]["status"]
-
-        html = _render_html_page(title=title, date_str=date_str, status=status,
-                                 tokens_css=tokens_css, body=html_body,
-                                 skill_count=len(manifest.get("skills", [])))
+        run_info = manifest.get("run") or {}
+        md_text = md_path.read_text(encoding="utf-8")
+        html = module.build_summary_page(
+            md_text,
+            company=company_info.get("name", ""),
+            code=company_info.get("code", ""),
+            as_of=run_info.get("as_of", ""),
+            skill_count=len(manifest.get("skills", [])),
+            status=run_info.get("status", ""),
+        )
+        html_path = md_path.with_suffix(".html")
         html_path.write_text(html, encoding="utf-8")
         print(f"[html-gen] ✓ {html_path.name} ({len(html.encode())} bytes)", file=sys.stderr)
         append_event(root, {"type": "html_generated", "path": str(html_path.relative_to(root)),
                              "bytes": len(html.encode())})
-    except Exception as exc:
+        # HTML 展示件落盘后立即刷新公司索引页（非阻断）。
+        # 覆盖两个调用方：cmd_render_html（步骤 B2）和 cmd_finalize（APPROVED 兜底），
+        # 确保"HTML 生成 → 索引自动更新"在所有路径上成立。
+        _rebuild_company_index(root)
+        return True
+    except Exception as exc:  # noqa: BLE001 — HTML 是派生展示件，绝不影响 APPROVED 状态
         print(f"[html-gen] ⚠  HTML 生成失败（不影响 APPROVED 状态）: {exc}", file=sys.stderr)
+        return False
 
 
-def _load_tokens_css() -> str:
-    """加载 html-express tokens.css；不可用时返回最小回退样式。"""
-    candidates = [
-        Path(os.path.expanduser("~/.workbuddy/skills/html-express/assets/tokens.css")),
-    ]
-    for p in candidates:
-        if p.is_file():
-            return p.read_text(encoding="utf-8")
-    return "body{font-family:serif;max-width:760px;margin:0 auto;padding:2rem;background:#F5F4ED;color:#141413}"
+def _rebuild_company_index(root: Path) -> bool:
+    """重建公司研究索引页 local/Company/index.html（非阻断，失败只打印警告）。
 
+    触发点：_generate_summary_html 成功写出 HTML 展示件后立即调用。
+    这覆盖两条路径：① cmd_render_html（步骤 B2 独立命令）；② cmd_finalize
+    （APPROVED 后兜底生成）。无论哪条路径产出 HTML，索引都会同步刷新。
 
-def _markdown_to_html(md: str) -> str:
-    """将 markdown 文本转为 HTML 片段（无依赖，覆盖总结报告常用语法）。"""
-    lines = md.splitlines()
-    out: list[str] = []
-    in_table = False
-    in_code = False
-    list_tag: str | None = None
-    i = 0
-
-    def _flush_list():
-        nonlocal list_tag
-        if list_tag:
-            out.append(f"</{list_tag}>")
-            list_tag = None
-
-    def _flush_table():
-        nonlocal in_table
-        if in_table:
-            out.append("</tbody></table></div>")
-            in_table = False
-
-    while i < len(lines):
-        ln = lines[i]
-        # Code fence
-        if ln.strip().startswith("```"):
-            if in_code:
-                out.append("</code></pre>")
-                in_code = False
-            else:
-                _flush_list()
-                _flush_table()
-                out.append('<pre style="background:var(--code-bg,#30302E);color:var(--code-fg,#F5F4ED);padding:var(--sp-md,16px);border-radius:var(--r-md,8px);overflow-x:auto"><code>')
-                in_code = True
-            i += 1
-            continue
-        if in_code:
-            out.append(_escape_html(ln))
-            i += 1
-            continue
-        # Empty line
-        if not ln.strip():
-            _flush_list()
-            _flush_table()
-            i += 1
-            continue
-        # Horizontal rule
-        if ln.strip() == "---":
-            _flush_list()
-            _flush_table()
-            out.append("<hr>")
-            i += 1
-            continue
-        # Heading
-        m = re.match(r"^(#{1,6})\s+(.*)$", ln)
-        if m:
-            _flush_list()
-            _flush_table()
-            level = len(m.group(1))
-            text = _inline_md(m.group(2))
-            out.append(f"<h{level}>{text}</h{level}>")
-            i += 1
-            continue
-        # Table row
-        if "|" in ln and ln.strip().startswith("|"):
-            cells = [c.strip() for c in ln.strip().split("|")[1:-1]]
-            if all(re.match(r"^:?-{3,}:?$", c) for c in cells):
-                i += 1
-                continue  # skip separator row
-            if not in_table:
-                _flush_list()
-                out.append('<div class="hx-table-wrap"><table class="hx-table"><tbody>')
-                in_table = True
-            row_html = "".join(f"<td>{_inline_md(c)}</td>" for c in cells)
-            out.append(f"<tr>{row_html}</tr>")
-            i += 1
-            continue
-        else:
-            _flush_table()
-        # Unordered list
-        if re.match(r"^\s*[-*]\s+", ln):
-            if list_tag != "ul":
-                _flush_list()
-                _flush_table()
-                out.append('<ul>')
-                list_tag = "ul"
-            text = _inline_md(re.sub(r"^\s*[-*]\s+", "", ln))
-            out.append(f"<li>{text}</li>")
-            i += 1
-            continue
-        # Ordered list
-        if re.match(r"^\s*\d+[.)]\s+", ln):
-            if list_tag != "ol":
-                _flush_list()
-                _flush_table()
-                out.append('<ol>')
-                list_tag = "ol"
-            text = _inline_md(re.sub(r"^\s*\d+[.)]\s+", "", ln))
-            out.append(f"<li>{text}</li>")
-            i += 1
-            continue
-        else:
-            _flush_list()
-        # Blockquote
-        if ln.strip().startswith(">"):
-            _flush_table()
-            text = _inline_md(ln.strip()[1:].strip())
-            out.append(f"<blockquote style='margin:var(--sp-md,16px) 0;padding:var(--sp-md,16px) var(--sp-lg,24px);border-left:4px solid var(--terracotta,#B85235);background:var(--surface,#FAF9F5);border-radius:0 var(--r-md,8px) var(--r-md,8px) 0'><p>{text}</p></blockquote>")
-            i += 1
-            continue
-        # Regular paragraph
-        _flush_table()
-        text = _inline_md(ln)
-        out.append(f"<p>{text}</p>")
-        i += 1
-    _flush_list()
-    _flush_table()
-    if in_code:
-        out.append("</code></pre>")
-    return "\n".join(out)
-
-
-def _inline_md(text: str) -> str:
-    """处理行内 markdown：**bold**, *italic*, `code`, [link](url)。"""
-    rendered: list[str] = []
-
-    def _stash(value: str) -> str:
-        token = f"\x00HTML{len(rendered)}\x00"
-        rendered.append(value)
-        return token
-
-    text = re.sub(
-        r"`([^`]+)`",
-        lambda match: _stash(
-            f"<code>{html_escape(match.group(1), quote=True)}</code>"),
-        text,
-    )
-
-    def _render_link(match: re.Match) -> str:
-        label = html_escape(match.group(1), quote=True)
-        href = _safe_link(match.group(2))
-        if href is None:
-            return _stash(label)
-        return _stash(f'<a href="{href}">{label}</a>')
-
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _render_link, text)
-    text = html_escape(text, quote=True)
-    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-    for index in reversed(range(len(rendered))):
-        text = text.replace(f"\x00HTML{index}\x00", rendered[index])
-    return text
-
-
-def _safe_link(url: str) -> str | None:
-    """只允许不会突破 href 属性边界的常用链接协议。"""
-    if (not url or url != url.strip()
-            or any(
-                char.isspace() or ord(char) < 32 or char in {'"', "'", "<", ">"}
-                for char in url
-            )):
-        return None
+    扫描整个公司目录，把新增/更新的公司纳入索引。索引由
+    scripts/build_company_index.py 确定性渲染——同一组报告永远产出同一份
+    index.html，可安全反复重建。索引是派生展示件，绝不影响 APPROVED 状态。
+    """
     try:
-        parsed = urlsplit(url)
-    except ValueError:
-        return None
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https", "mailto"}:
-        return None
-    if scheme in {"http", "https"} and not parsed.netloc:
-        return None
-    return html_escape(url, quote=True)
+        import importlib.util
+
+        scripts_dir = TOOLS_DIR.parent / "scripts"
+        builder_path = scripts_dir / "build_company_index.py"
+        if not builder_path.is_file():
+            print(f"[index-gen] ⚠  索引生成器不存在: {builder_path}，跳过索引重建", file=sys.stderr)
+            return False
+        company_base = TOOLS_DIR.parent / "local" / "Company"
+        if not company_base.is_dir():
+            print(f"[index-gen] ⚠  公司目录不存在: {company_base}，跳过索引重建", file=sys.stderr)
+            return False
+        spec = importlib.util.spec_from_file_location("build_company_index", builder_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+        rows = module.collect(company_base)
+        if not rows:
+            print("[index-gen] ⚠  未找到任何总结报告，跳过索引重建", file=sys.stderr)
+            return False
+        html = module.build_index_html(
+            rows,
+            base_label=str(company_base.relative_to(TOOLS_DIR.parent)),
+        )
+        index_path = company_base / "index.html"
+        index_path.write_text(html, encoding="utf-8")
+        print(f"[index-gen] ✓ index.html 已更新：{len(rows)} 家公司", file=sys.stderr)
+        append_event(root, {"type": "company_index_rebuilt",
+                             "companies": len(rows), "bytes": len(html.encode())})
+        return True
+    except Exception as exc:  # noqa: BLE001 — 索引是派生展示件，绝不影响 APPROVED 状态
+        print(f"[index-gen] ⚠  索引重建失败（不影响 APPROVED 状态）: {exc}", file=sys.stderr)
+        return False
 
 
-def _escape_html(text: str) -> str:
-    return html_escape(text, quote=False)
+def cmd_render_html(args: argparse.Namespace) -> int:
+    """步骤 B2 独立命令：register-summary 后立即用确定性渲染器生成 HTML 展示件。
 
-
-def _render_html_page(*, title: str, date_str: str, status: str,
-                      tokens_css: str, body: str, skill_count: int) -> str:
-    """组装完整 HTML 页面。"""
-    safe_title = html_escape(str(title), quote=True)
-    safe_date = html_escape(str(date_str), quote=True)
-    safe_status = html_escape(str(status), quote=True)
-    safe_skill_count = html_escape(str(skill_count), quote=True)
-    status_badge = '<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#E8F0E8;color:#2F6F4E">APPROVED</span>' if status == "APPROVED" else f'<span style="display:inline-block;font-size:13px;font-weight:500;padding:2px 8px;border-radius:9999px;background:#F5EDE0;color:#9A5A2D">{safe_status}</span>'
-    return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{safe_title}</title>
-  <style>
-{tokens_css}
-  </style>
-  <style>
-    .hx-page {{ max-width: 760px; margin: 0 auto; padding: 48px 24px; }}
-    .hx-header {{ margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--border,#E5E3D8); }}
-    .hx-header .hx-eyebrow {{ font-size: 13px; font-weight: 500; letter-spacing: 0.06em; color: var(--terracotta,#B85235); text-transform: uppercase; margin: 0 0 8px; }}
-    .hx-header h1 {{ font-size: 32px; color: var(--trust,#1B365D); margin: 0 0 8px; }}
-    .hx-header .hx-sub {{ color: var(--olive,#504E49); font-size: 18px; margin: 0; }}
-    h2 {{ margin-top: 48px; font-size: 24px; border-left: 3px solid var(--terracotta,#B85235); padding-left: 16px; }}
-    h3 {{ margin-top: 32px; font-size: 19px; }}
-    .hx-footer {{ margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border,#E5E3D8); color: var(--muted,#6B6A64); font-size: 14px; }}
-    .hx-table-wrap {{ overflow-x: auto; margin: 16px 0; }}
-    .hx-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-    .hx-table th {{ background: var(--surface-muted,#E8E6DC); color: var(--trust,#1B365D); font-weight: 500; text-align: left; padding: 8px 16px; border-bottom: 2px solid var(--border,#E5E3D8); white-space: nowrap; }}
-    .hx-table td {{ padding: 8px 16px; border-bottom: 1px solid var(--border,#E5E3D8); }}
-    .hx-table tr:hover td {{ background: var(--surface,#FAF9F5); }}
-    hr {{ border: none; border-top: 1px solid var(--border,#E5E3D8); margin: 32px 0; }}
-    p {{ margin: 0 0 16px; }}
-    ul, ol {{ padding-left: 24px; margin-bottom: 16px; }}
-    li {{ margin-bottom: 4px; }}
-    @media (max-width: 768px) {{ .hx-page {{ padding: 32px 16px; }} }}
-  </style>
-</head>
-<body>
-  <main class="hx-page">
-    <header class="hx-header">
-      <p class="hx-eyebrow">全量分析 · 已核准</p>
-      <h1>{safe_title}</h1>
-      <p class="hx-sub">数据截止 {safe_date} · {safe_skill_count} 份正式产物 · {status_badge}</p>
-    </header>
-{body}
-    <footer class="hx-footer">
-      <p><strong>数据截止日</strong>：{safe_date} · <strong>状态</strong>：{safe_status} · 仅供学习研究，不构成投资建议</p>
-      <p style="margin-top:8px;font-size:12px">本报告由 full_analysis_gate.py 在 finalize APPROVED 时自动生成。HTML 是 markdown 总结的派生展示件，不参与 audit/review/finalize 流程。</p>
-    </footer>
-  </main>
-</body>
-</html>"""
+    解耦关键：不依赖 audit/review/finalize，只要 summary 已登记即可渲染。
+    渲染是纯函数（同一 markdown → 同一 HTML），finalize APPROVED 后的兜底生成
+    与本命令产出逐字节一致，幂等无冲突。本命令永不阻断（非 Gate 产物），
+    失败仅打印警告并返回 0。
+    """
+    root = Path(args.run_root).resolve()
+    if not manifest_path(root).is_file():
+        print(f"[html-gen] ⚠  未找到 manifest，请确认 run-root 正确: {root}", file=sys.stderr)
+        return 0
+    manifest = load_manifest(root)
+    _generate_summary_html(root, manifest)
+    return 0
 
 
 def _run_review_gate(root: Path, registry: Path) -> dict:
@@ -1405,6 +1247,9 @@ def build_parser() -> argparse.ArgumentParser:
     finalize = sub.add_parser("finalize")
     finalize.add_argument("--run-root", required=True)
     finalize.add_argument("--registry", default=DEFAULT_REGISTRY)
+    render_html = sub.add_parser("render-html")
+    render_html.add_argument("--run-root", required=True)
+    render_html.add_argument("--registry", default=DEFAULT_REGISTRY)
     return parser
 
 
@@ -1416,6 +1261,7 @@ def main(argv=None) -> int:
             "ingest-result": cmd_ingest,
             "register-summary": cmd_register_summary,
             "finalize": cmd_finalize,
+            "render-html": cmd_render_html,
         }[args.command](args)
     except GateError as exc:
         print(f"❌ {exc}")

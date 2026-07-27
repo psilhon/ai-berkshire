@@ -5,6 +5,33 @@
 
 ---
 
+## [v3.3.3] — 2026-07-26
+
+> 全量分析 HTML 展示层确定性重构 + 公司研究索引自动汇总
+
+### ✨ 新增 (Added)
+- **确定性 HTML 渲染器**（`tools/full_analysis_html.py`）：`build_summary_page(markdown, *, company, code, as_of, skill_count, status) -> str` 纯函数，内嵌设计系统（cream paper / terracotta / trust 墨蓝 / serif + masthead 报头 + sticky 导航 + 编号章节 + 样式化表格 + 滚动显现微交互）。同一份 markdown 永远逐字节渲染出同一份 HTML——零 LLM 参与、零 token 消耗、零输出方差、零失败模式，把"用户认可的输出品质"钉死在流程里。
+- **公司研究索引生成器**（`scripts/build_company_index.py`）：扫描 `local/Company/<code>-<name>/<run>/` 提取一句话结论 / 数据截止日 / 准出状态 / 板块（按代码前缀分类），确定性渲染 `local/Company/index.html`（账本式报头 + 统计条 + 搜索/板块筛选 + 结论配色卡片网格 + 免责声明）。生成时间取自源报告 mtime（非系统时钟），保证可复跑逐字节一致。CLI 支持 `--base` / `--output` / `--check`。
+- **HTML 产出后自动刷新公司索引**（`_rebuild_company_index()`）：`_generate_summary_html` 成功落盘 HTML 后立即触发，覆盖 `render-html`（步骤 B2）与 `finalize`（APPROVED 兜底）两条路径；非阻断，失败只打印警告并写 `company_index_rebuilt` 事件。索引是派生展示件，绝不影响 APPROVED 状态。
+- **`render-html` 编排命令**：`python3 scripts/full_analysis.py render-html --run-root <root>`，在 `register-summary` 后立即生成 HTML 展示件，解耦于 audit/review/finalize；markdown 因评审返工被编辑后重跑即可原地覆盖。
+- **回归测试 `tests/test_full_analysis_html.py`**：守确定性 / 安全性（链接协议、属性转义）/ 结构完整性（8 章节锚点、报头、导航、印章、免责声明）/ 忠实性（无 stash 占位符泄漏）四条底线。
+- **回归测试 `tests/test_build_company_index.py`**：守确定性（同输入逐字节一致）/ 元数据提取（标记行兜底、板块分类、verdict 归类）/ 自动更新（新增公司重跑即纳入）/ 安全性（HTML 转义防注入）四条底线。
+
+### 🔁 变更 (Changed)
+- **Gate HTML 管线重构**：删除约 360 行手写 markdown→HTML 内联管线（`_markdown_to_html` / `_render_html_page` / `_load_tokens_css` / `_safe_link` / `_escape_html` 等），统一改为调用确定性渲染器；`_generate_summary_html()` 现返回 `bool` 表示是否写出 HTML。
+- **索引刷新触发点后移**：由 `register-summary`（HTML 尚未生成、过早）改到 `_generate_summary_html` 成功之后，确保索引链接指向已落盘的 HTML 展示件。
+- **编排 skill 三份源同步更新**（`skills/full-company-analysis.md` / `workbuddy-skills/.../SKILL.md` / `codex-skills/.../SKILL.md`）：新增「步骤 B2」`render-html` 命令；HTML 章节重写为「确定性渲染 = 固化品质」，并标注由回归测试守护四条底线。
+
+### 🧪 测试 (Tests)
+- `bash scripts/check.sh` 全绿（472 单元测试 + 14 个 skill frontmatter 治理 + Codex/WorkBuddy 生成物同步 + Contract v2 的 13 项契约校验 + 报告索引检查）。
+
+### ⚠️ 升级注意
+- HTML 渲染行为现完全由 `tools/full_analysis_html.py` 决定；依赖 Gate 内已删除函数（`_markdown_to_html` 等）的下游需改调渲染器。
+- `local/Company/index.html` 为派生展示件，不进 manifest、不参与 audit/review/finalize；每次 HTML 生成自动刷新，也可手动 `python3 scripts/build_company_index.py` 重建。
+- 保持 Contract v2、Result Bundle v1、13 项业务契约与 WorkBuddy 生产入口不变。
+
+---
+
 ## [v3.3.2] — 2026-07-26
 
 > 全量分析可靠性热修复：递归校验、失败终态、派发模板与 HTML 展示加固

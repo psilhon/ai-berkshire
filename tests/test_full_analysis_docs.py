@@ -47,12 +47,14 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
         finalize_at = text.index("finalize", audit_at)
         self.assertLess(register_at, audit_at)
         self.assertLess(audit_at, finalize_at)
-        # HTML 总结报告是 Gate 之外的派生展示件（2026-07-25 决策：固化进流程）。
-        # 允许并鼓励在 skill 中记录 html-express 生成步骤，但必须明确围栏：
-        # 它是 markdown 的派生件、不参与 Gate 管线、只在 APPROVED 后生成，
-        # 且不得声称"不进入 Gate"（该措辞会把 Gate 产物与展示件混为一谈）。
+        # HTML 总结报告是 Gate 之外的派生展示件（2026-07-26 升级：固化为确定性渲染）。
+        # 不再派 html-express Agent，改由 Gate 内置确定性渲染器（render-html 命令 +
+        # tools/full_analysis_html.py）生成，保证品质零方差。必须明确围栏：它是 markdown
+        # 的派生件、不参与 Gate 管线，且不得声称"不进入 Gate"（该措辞会把 Gate 产物与
+        # 展示件混为一谈）。
         self.assertIn("HTML 版总结报告", text)
-        self.assertIn("html-express", text)
+        self.assertIn("render-html", text)
+        self.assertIn("确定性渲染", text)
         self.assertIn("不参与 audit/review/finalize", text)
         self.assertIn("派生展示件", text)
         self.assertNotIn("不进入 Gate", text)

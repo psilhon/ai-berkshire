@@ -79,6 +79,9 @@ def parser() -> argparse.ArgumentParser:
     summary.add_argument("--run-root", required=True)
     summary.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     summary.add_argument("--summary", required=True)
+    rh = sub.add_parser("render-html", help="确定性渲染 HTML 展示件（register-summary 后立即执行，非阻断）")
+    rh.add_argument("--run-root", required=True)
+    rh.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     # P2 语义评审层
     rev = sub.add_parser("review", help="语义评审（prepare/ingest/summarize）")
     rev_sub = rev.add_subparsers(dest="review_command", required=True)
@@ -136,6 +139,7 @@ def main(argv=None) -> int:
         if args.command == "record-failure": emit(runtime.record_failure(root, args.work_unit_id, args.attempt_id, args.reason)); return 0
         if args.command == "submit-result": emit(runtime.submit_result(root, Path(args.registry), Path(args.result))); return 0
         if args.command == "register-summary": return gate.cmd_register_summary(args)
+        if args.command == "render-html": return gate.cmd_render_html(args)
         if args.command == "review":
             if args.review_command == "prepare":
                 return review.cmd_prepare(args)

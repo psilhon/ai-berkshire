@@ -36,6 +36,9 @@ logs/command-log.jsonl
 # 本地运行/派发辅助（头部自标"未提交"，仅供端到端验证）
 tools/_dispatch_helper.py
 tools/_submit_helper.py
+# 单公司一次性提交辅助（硬编码 local/ 私有 run 路径，仅供本地端到端验证）
+tools/_tfwd_gen_specs.py
+tools/_tfwd_submit.py
 scripts/lease_keeper.py
 scripts/mk_result_bundle.py
 # 一次性修复脚本（fix_*.py）与备份文件（*.bak-*）

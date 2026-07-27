@@ -98,6 +98,12 @@ WorkBuddy 重启后调用 `resume`。Runtime 会先检查活动租约目录中�
 python3 scripts/full_analysis.py register-summary \
   --run-root <run_root> --summary <run_root>/evidence/attempts/summary/summary.md
 
+# 步骤 B2：生成 HTML 展示件（register-summary 后立即执行，不等 audit/finalize）
+# 用 Gate 内置确定性渲染器，读取已登记的 summary.md 生成自包含 HTML（不派 Agent）
+python3 scripts/full_analysis.py render-html --run-root <run_root>
+# HTML 只是 markdown 的展示件，不参与 Gate 校验，不依赖 audit 结果
+# 渲染是纯函数：同一 markdown → 同一 HTML；若 markdown 因评审返工被编辑，重跑本命令即可
+
 # 步骤 C：审计 + 语义评审 + 准出
 python3 scripts/full_analysis.py audit --run-root <run_root>
 python3 scripts/full_analysis.py review prepare --run-root <run_root>
@@ -105,8 +111,7 @@ python3 scripts/full_analysis.py review prepare --run-root <run_root>
 python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 
-# 步骤 D：finalize APPROVED 后，Gate 自动生成 HTML 展示件，
-# 编排器无需手动操作（失败不影响 APPROVED 状态）
+# 步骤 D：finalize APPROVED 后跑 doctor 体检；HTML 已在步骤 B2 生成
 ```
 
 > **为什么 register-summary 必须在 audit 之前**：`analysis_snapshot` 的投影包含 `manifest.delivery`，register-summary 写入 `delivery.summary` 会改变快照摘要。若 audit 先于 register-summary 执行，finalize 的快照一致性校验将因摘要不匹配而拒绝准出。
@@ -124,17 +129,18 @@ python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 
 总结报告是正式交付，不是 Gate 外附件。只能综合已登记正式产物，不得引入新取数或新推理。Gate 会冻结其路径、字节数和 SHA-256；Review 会使用全部归因证据检查总结，修改总结或任一底层证据都会使旧 Audit/Review 过期。
 
-### HTML 版总结报告（步骤 D，Gate 自动生成）
+### HTML 版总结报告（步骤 B2，确定性渲染）
 
-finalize **APPROVED 之后**，Gate 自动从已冻结的 markdown 总结生成自包含 HTML（`<公司名>-全量分析-总结报告.html`，放在 run root），**编排器无需手动执行**。纪律：
+register-summary 完成后，编排器**立即**执行 `python3 scripts/full_analysis.py render-html --run-root <run_root>`，由 Gate 内置**确定性渲染器**（`tools/full_analysis_html.py`）把已登记的 summary.md 渲染为自包含 HTML，**不派 Agent、不等待 audit/review/finalize**。HTML 只是 markdown 的派生展示件，不参与 Gate 校验。纪律：
 
+- **确定性渲染 = 固化品质**：设计系统（cream paper / terracotta / trust 墨蓝 / serif + masthead 报头 + sticky 导航 + 编号章节 + 样式化表格 + 滚动显现微交互）已逐字固化为代码。同一份 markdown 永远渲染出逐字节一致的 HTML，**零 LLM 参与、零 token、零方差、零失败模式**——展示件品质不随 run 漂移，这是把"用户认可的输出质量"钉死在流程里的机制。
 - **它是 markdown 的派生展示件，不是 Gate 产物**：不参与 audit/review/finalize，不进入 manifest，不改变任何 digest。Gate 的准出真源永远是 markdown。
-- **只在 APPROVED 后生成**：markdown 已被 Gate 冻结，HTML 才有稳定真源；finalize 前生成会因后续评审返工而失效。
-- **100% 忠实于 APPROVED markdown**：HTML 由 `_generate_summary_html()` 直接转换 markdown 原文，不得引入新数据、新推理或新结论。
-- **非阻断**：HTML 生成失败只打印警告到 stderr，不影响 APPROVED 状态。任何异常都被捕获，绝不静默。
-- **遵循 html-express 设计系统**：自包含单文件、内联 tokens.css（cream paper / terracotta / trust 墨蓝 / serif）、支持 heading/table/list/code/blockquote/bold/italic/link 等常用 markdown 语法。
-- **生成后必查**：① 无占位符残留（`填这里/Lorem/TBD/TODO/placeholder/待填`）② 关键数字全部在位（营收/归母/ROE/PE/估值区间等逐一 grep）③ 标签全闭合（`<section>/<table>/<div>` 开闭计数相等）。
-- **markdown 一旦被编辑并重新 finalize，HTML 自动重新生成**：旧 HTML 被覆盖，不会与新 APPROVED 版本并存误导。
+- **它不依赖 finalize**：register-summary 后 summary.md 已被 Gate 校验（章节/字节/产物索引），HTML 即可生成——这是解耦关键。过去绑在 finalize 上导致 audit 阻塞→HTML 永久不可得。（2026-07-26 落地）
+- **双入口、幂等一致**：步骤 B2 的 `render-html` 命令负责即时生成；finalize APPROVED 之后 Gate 再跑一次 `_generate_summary_html()` 作兜底。二者共用同一渲染器，因渲染确定性，两次产出逐字节一致，不存在"谁覆盖谁"。
+- **100% 忠实于 markdown**：渲染器（`build_summary_page`）只转换 markdown 原文（标题/表格/列表/代码/引用/加粗/斜体/安全链接），不引入新数据、新推理或新结论；javascript: 与属性逃逸类链接被剔除，元数据一律转义。
+- **非阻断**：HTML 生成失败只打印警告到 stderr，不影响后续 audit/review/finalize 流程。任何异常都被捕获，绝不静默。
+- **品质由回归测试守护**：`tests/test_full_analysis_html.py` 守住确定性 / 安全性 / 结构完整性（8 章节锚点、报头、导航、印章、免责声明）/ 忠实性（无 stash 占位符泄漏）四条底线，逐 run 无需人工逐项核查。
+- **markdown 一旦被编辑并重新 register-summary，重跑 render-html 即可**：确定性渲染保证重跑即得与新版本一致的 HTML，旧 HTML 被原地覆盖，不会并存误导。
 
 ## 语义评审纪律（P2，强制）
 
