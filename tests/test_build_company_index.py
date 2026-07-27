@@ -159,6 +159,35 @@ class BuildCompanyIndexTest(unittest.TestCase):
         self.assertEqual(idx.board_of("300308.SZ"), "创业板")
         self.assertEqual(idx.board_of("688012.SH"), "科创板")
 
+    def test_board_classification_includes_beijing_exchange(self) -> None:
+        self.assertEqual(idx.board_of("920001.BJ"), "北交所")
+        self.assertEqual(idx.board_of("430001.BJ"), "北交所")
+        self.assertEqual(idx.board_of("830001.BJ"), "北交所")
+
+    def test_verdict_ignores_disclaimer_and_ambiguous_pass(self) -> None:
+        self.assertEqual(idx.verdict_of("四大师一致 PASS，建议持有"), "关注")
+        self.assertEqual(idx.verdict_of("本报告不构成投资建议"), "中性")
+        self.assertEqual(idx.verdict_of("公司等待治理改善后再评估"), "等待")
+        self.assertEqual(idx.verdict_of("业绩同比增长，建议关注"), "关注")
+
+    def test_collect_keeps_only_latest_run_per_company(self) -> None:
+        _write_company(
+            self.base,
+            "600001.SH-测试甲",
+            "20260727-120000-zzzzzz",
+            "测试甲-全量分析-总结报告.md",
+            "# 测试甲\n\n一句话总结：最新报告建议持有。\n",
+        )
+
+        rows = [
+            row for row in idx.collect(self.base)
+            if row["company"] == "测试甲"
+        ]
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["run"], "20260727-120000-zzzzzz")
+        self.assertIn("最新报告", rows[0]["one"])
+
     # ---- 底线三：自动更新（新增公司后重跑即纳入） ----
     def test_new_company_picked_up_on_rebuild(self) -> None:
         html_before = idx.build_index_html(idx.collect(self.base), base_label="x")

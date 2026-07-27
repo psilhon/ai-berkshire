@@ -50,9 +50,12 @@ _ONE_MARKERS = [
 _OVERVIEW_RE = re.compile(r"#{1,3}[^\n]*核心结论速览[^\n]*\n+(.{20,500}?)(?:\n\n|\n#|\n\||\n-|\n>)", re.S)
 _ASOF_RE = re.compile(r"(?:数据|分析)?截止日?\s*[*：:]*\s*(20\d{2})[-/年.]\s*(\d{1,2})[-/月.]\s*(\d{1,2})")
 
-_NEG_KW = ("回避", "否决", "看空", "排除", "不建议买入", "不构成", "PASS", "不参与")
-_POS_KW = ("买入", "持有", "建仓", "可买", "通过")
-_WAIT_KW = ("等", "观望", "跟踪", "观察", "灰色", "不买", "卫星仓位", "警惕", "跌出折扣")
+_NEG_KW = ("回避", "否决", "看空", "排除", "不建议买入", "不参与")
+_POS_KW = ("买入", "持有", "建仓", "可买", "通过", "建议关注")
+_WAIT_KW = (
+    "等待", "等回调", "等估值", "等价格", "观望",
+    "跟踪", "观察", "不买", "卫星仓位", "警惕", "跌出折扣",
+)
 
 
 @contextmanager
@@ -134,7 +137,10 @@ def extract_asof(txt: str) -> str:
 
 def board_of(code: str) -> str:
     """按股票代码前缀判断上市板块。"""
-    p = code.split(".")[0]
+    raw = code.upper()
+    p = raw.split(".")[0]
+    if raw.endswith(".BJ") or p.startswith(("4", "8", "920")):
+        return "北交所"
     if p.startswith(("300", "301")):
         return "创业板"
     if p.startswith(("688", "689")):
@@ -166,42 +172,56 @@ def collect(base: Path) -> list[dict]:
             continue
         m = _DIR_RE.match(cd.name)
         code, company = (m.group(1), m.group(2)) if m else ("", cd.name)
-        for r in sorted(p for p in cd.iterdir() if p.is_dir()):
+        selected = None
+        for r in sorted(
+            (p for p in cd.iterdir() if p.is_dir()),
+            reverse=True,
+        ):
             sums = sorted(r.glob("*总结报告.md"))
             if not sums:
                 continue
-            md = sums[-1]
-            html = md.with_suffix(".html")
-            txt = md.read_text(encoding="utf-8")
-            status = ""
-            mf = r / "evidence/00-analysis-manifest.json"
-            if mf.exists():
-                try:
-                    status = json.loads(mf.read_text(encoding="utf-8")).get("run", {}).get("status") or ""
-                except Exception:  # noqa: BLE001 — 索引页不因单个 manifest 损坏而失败
-                    status = ""
-            one_full = extract_one(txt)
-            asof = extract_asof(txt)
-            rows.append({
-                "code": code,
-                "company": company,
-                "board": board_of(code),
-                "run": r.name,
-                "md": md.name,
-                "md_rel": f"{cd.name}/{r.name}/{md.name}",
-                "html": html.name if html.exists() else "",
-                "html_rel": f"{cd.name}/{r.name}/{html.name}" if html.exists() else "",
-                # verdict 基于完整结论判断（避免截断后关键词丢失导致误归类）；
-                # 展示用 one 才截断。
-                "one": _trunc(one_full),
-                "verdict": verdict_of(one_full),
-                "asof": asof,
-                "status": status or "深度总结",
-                "bytes": md.stat().st_size,
-                "mtime": md.stat().st_mtime,
-            })
+            selected = (r, sums[-1])
+            break
+        if selected is None:
+            continue
+        r, md = selected
+        html = md.with_suffix(".html")
+        txt = md.read_text(encoding="utf-8")
+        status = ""
+        mf = r / "evidence/00-analysis-manifest.json"
+        if mf.exists():
+            try:
+                status = json.loads(mf.read_text(encoding="utf-8")).get("run", {}).get("status") or ""
+            except Exception:  # noqa: BLE001 — 索引页不因单个 manifest 损坏而失败
+                status = ""
+        one_full = extract_one(txt)
+        asof = extract_asof(txt)
+        rows.append({
+            "code": code,
+            "company": company,
+            "board": board_of(code),
+            "run": r.name,
+            "md": md.name,
+            "md_rel": f"{cd.name}/{r.name}/{md.name}",
+            "html": html.name if html.exists() else "",
+            "html_rel": f"{cd.name}/{r.name}/{html.name}" if html.exists() else "",
+            # verdict 基于完整结论判断（避免截断后关键词丢失导致误归类）；
+            # 展示用 one 才截断。
+            "one": _trunc(one_full),
+            "verdict": verdict_of(one_full),
+            "asof": asof,
+            "status": status or "深度总结",
+            "bytes": md.stat().st_size,
+            "mtime": md.stat().st_mtime,
+        })
     # 排序：板块 → 代码，保证输出稳定
-    order = {"沪主板": 0, "深主板": 1, "创业板": 2, "科创板": 3}
+    order = {
+        "沪主板": 0,
+        "深主板": 1,
+        "创业板": 2,
+        "科创板": 3,
+        "北交所": 4,
+    }
     rows.sort(key=lambda x: (order.get(x["board"], 9), x["code"], x["run"]))
     return rows
 
