@@ -32,6 +32,10 @@ DEFAULT_REGISTRY = str(Path(__file__).resolve().parent / "full_analysis_contract
 REPORTABLE_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS"}
 PIPELINE_SKILL = "ashare-data"  # 无 skill_id 归因的管线事实默认归属
 FINANCIAL_RIGOR = Path(__file__).resolve().parent / "financial_rigor.py"
+REPLAYABLE_OPERATIONS = {
+    "verify-market-cap", "verify-valuation", "cross-validate",
+    "benford", "calc", "three-scenario",
+}
 SUPPORTED_RULE_KINDS = {
     "min_facts", "min_dual_source_facts", "min_calculations",
     "min_judgments_with_falsification", "min_role_runs", "min_command_receipts",
@@ -132,11 +136,10 @@ def _replay_calculation_requests(calculations: list[dict]) -> bool:
     """由共享 Audit Job 调用确定性工具重放，Agent 不得自证 expected。"""
     changed = False
     for calc in calculations:
-        if isinstance(calc.get("expected"), dict):
-            continue
         operation = calc.get("operation")
         args = calc.get("args")
-        if not isinstance(operation, str) or not isinstance(args, dict):
+        if (operation not in REPLAYABLE_OPERATIONS
+                or not isinstance(args, dict)):
             continue
         command = [sys.executable, str(FINANCIAL_RIGOR), operation]
         for key, value in args.items():
@@ -144,8 +147,13 @@ def _replay_calculation_requests(calculations: list[dict]) -> bool:
             if isinstance(value, bool):
                 if value:
                     command.append(flag)
+            elif isinstance(value, list):
+                # financial_rigor 的 three-scenario 等命令使用 nargs=3；
+                # 不能把列表 JSON 编码成单个 argv，否则 argparse 会以 rc=2 拒绝。
+                command.append(flag)
+                command.extend(str(item) for item in value)
             else:
-                encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
                 command.extend([flag, encoded])
         completed = subprocess.run(command, capture_output=True, text=True)
         calc["expected"] = {
@@ -246,7 +254,7 @@ def _eval_conditional_command_operations(skill_id, rule, ev, context):
     for receipt in ev["command_receipts"]:
         op = receipt.get("operation")
         reason = str(receipt.get("reason") or "")
-        if receipt.get("status") == "FAIL" and reason:
+        if receipt.get("status") in {"FAIL", "UNAVAILABLE"} and reason:
             if ("market_level_cmd_na" in reason
                     and rule.get("tolerate_missing_with_limitation")):
                 exempt_ops.add(op)

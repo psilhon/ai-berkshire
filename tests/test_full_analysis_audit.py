@@ -5,9 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 REPO = Path(__file__).resolve().parents[1]
 AUDIT = REPO / "tools" / "full_analysis_audit.py"
+sys.path.insert(0, str(REPO / "tools"))
+import full_analysis_audit as audit_module  # noqa: E402
 
 
 class AuditTests(unittest.TestCase):
@@ -63,6 +64,79 @@ class AuditTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
         self.assertTrue(any(item["code"] == "calculation_not_replayed" for item in report["errors"]))
+
+    def test_replay_expands_multi_value_financial_rigor_arguments(self):
+        calculations = [{
+            "calculation_id": "calculation.three-scenario",
+            "operation": "three-scenario",
+            "args": {
+                "price": "39.20",
+                "eps": "5.70",
+                "shares": "252.20",
+                "growth": ["0.08", "0.04", "-0.03"],
+                "pe": ["8", "6.5", "5"],
+                "years": 3,
+                "currency": "CNY",
+            },
+        }]
+
+        changed = audit_module._replay_calculation_requests(calculations)
+
+        self.assertTrue(changed)
+        self.assertEqual(calculations[0]["expected"]["replayed"], True)
+        self.assertEqual(calculations[0]["expected"]["outcome"], "PASS")
+
+    def test_replay_does_not_trust_stale_expected_result(self):
+        calculations = [{
+            "calculation_id": "calculation.three-scenario",
+            "operation": "three-scenario",
+            "args": {
+                "price": "39.20",
+                "eps": "5.70",
+                "shares": "252.20",
+                "growth": ["0.08", "0.04", "-0.03"],
+                "pe": ["8", "6.5", "5"],
+                "years": 3,
+                "currency": "CNY",
+            },
+            "expected": {"replayed": False, "outcome": "FAIL"},
+        }]
+
+        audit_module._replay_calculation_requests(calculations)
+
+        self.assertEqual(calculations[0]["expected"]["replayed"], True)
+        self.assertEqual(calculations[0]["expected"]["outcome"], "PASS")
+
+
+class ConditionalReceiptTests(unittest.TestCase):
+    def test_unavailable_receipt_with_limitations_is_exempt(self):
+        rule = {
+            "capability": "tushare_configured",
+            "values": [{"op": "valuation"}, {"op": "weekly"}],
+            "min_satisfied_ratio": 1.0,
+            "tolerate_missing_with_limitation": True,
+            "tolerate_failed_with_limitation": True,
+        }
+        ev = {
+            "command_receipts": [
+                {"operation": "valuation", "status": "PASS"},
+                {
+                    "operation": "weekly",
+                    "status": "UNAVAILABLE",
+                    "reason": "empty_data: upstream returned no rows",
+                },
+            ]
+        }
+        context = {
+            "capabilities": {"tushare_configured": True},
+            "limitations": [],
+        }
+
+        violations = audit_module._eval_conditional_command_operations(
+            "synthetic", rule, ev, context,
+        )
+
+        self.assertEqual(violations, [])
 
 
 class EvidenceSufficiencyTests(unittest.TestCase):
