@@ -56,6 +56,7 @@
       "category": "01-data-screen",
       "stage_dir": "01-data-screen",
       "spec_source": "skills/ashare-data.md",
+      "default_level": "core",
       "artifact": {
         "artifact_id": "artifact.ashare-data",
         "formal_path": "01-数据与快筛/01-ashare-data.md",

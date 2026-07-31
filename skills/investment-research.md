@@ -285,6 +285,7 @@ python3 tools/report_audit.py verdict \
 | `cash-flow` | 现金流量表 | FCF 逐项精算（OCF - capex），验证利润质量 | 必须 |
 | `pe-band` | PE/PB 历史分位（daily_basic） | 判断当前估值在 5+ 年历史中的分位 | 必须 |
 | `analyst-reports` | 券商研报（目标价/评级/EPS/PE） | 卖方一致预期交叉验证 | 推荐 |
+| `report-list` | 研报列表（东财 reportapi，零依赖） | 个股/行业研报 + 评级/EPS——免费源补 `analyst-reports` | 推荐 |
 | `insider-trades` | 高管增减持记录 | 管理层行为信号（增持 0 笔 vs 减持 20 笔等） | 推荐 |
 | `shareholders` | 十大股东结构 | 股权集中度、机构持仓趋势 | 推荐 |
 | `margin` | 融资融券余额 | 杠杆情绪指标 | 可选 |
@@ -302,6 +303,7 @@ python3 tools/report_audit.py verdict \
 
 > **数据源优先级**：Tushare（可审计可冻结） > 东财/腾讯（基础层） > WebSearch（补充层）。Tushare 与任何源冲突时以 Tushare 为准。
 > **执行方式**：在 `full-company-analysis` 流程中，本 skill 的数据通过 `run-ashare-command` 或 `tushare-enrich` 冻结收据后使用。
+> **研报免费源**：`report-list <代码>`（东财 reportapi，零鉴权）可独立于 Tushare 拉取个股/行业研报（评级/目标价/EPS），作 `analyst-reports` 的免费源补充；`reportapi` 只认纯 6 位代码，北交所老号段需先迁 920 码。
 
 ## 依赖与资源清单
 

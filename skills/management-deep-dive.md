@@ -325,6 +325,13 @@ AI无法和管理层面对面交流，但可以通过公开渠道的侧面信息
 
 > **数据源优先级**：Tushare > WebSearch。管理层的薪酬和持股数据以 Tushare stk_rewards 为准，不要依赖 WebSearch 搜索结果。
 
+**一手定性材料（L3 零依赖，巨潮互动易）**：除 Tushare/WebSearch 外，可用 `ird-interact <代码>` 拉取**巨潮互动易**的投资者提问 + 公司官方回复，作为"公司如何回应某传闻/利好"的一手定性证据（别处拿不到）。该命令为零鉴权免费源，两步 POST（先定 orgId 再拉问答），最新提问常未回复（`attachedContent=None` 属正常）。只作一手定性旁证，不与 Tushare 硬指标冲突时以 Tushare 为准。
+
+```bash
+# 看公司如何回应投资者关切（一手定性）
+python3 tools/ashare_data.py ird-interact 002475 --limit 20
+```
+
 ---
 
 ## 依赖与资源清单

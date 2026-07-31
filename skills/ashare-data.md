@@ -50,8 +50,43 @@ review-cadence: per-release
 | `peers <代码>` | 行业可比公司池：申万一/二/三级成员股（industry-funnel 候选池） | `--level l1/l2/l3`（默认l3） | Tushare `index_member_all`（**候选池自动化**，需 TUSHARE_TOKEN） |
 | `north-hold <代码>` | 北向持股趋势（占比/外资情绪） | — | Tushare `hk_hold`（沪深股通，需 TUSHARE_TOKEN） |
 | `index-val [指数]` | 大盘估值分位：PE/PB 历史分位（市场择时锚） | 指数别名 hs300/zz500/sse/cyb…（默认hs300） | Tushare `index_dailybasic`（需 TUSHARE_TOKEN） |
+| `limit-pool` | 涨停生态池：涨停/炸板/跌停/昨涨停（市场情绪） | `--date YYYYMMDD` | 东方财富 push2ex（零鉴权） |
+| `monitor-pool` | 重点监控池：风险警示/重点监控名单+生效窗口 | `--date YYYYMMDD` | 东方财富 mobappconfig（零鉴权） |
+| `anomaly-pool` | 日内异动池：严重异常波动明细+规则码 | `--date YYYYMMDD` | 东方财富 dycalchis（须 team=h5） |
+| `ths-hot` | 市场热度榜：人气值/概念标签/排名变化（L2 热度层） | `--period hour/day`（默认hour）`--top N`（默认50）`--date YYYYMMDD`（仅Tushare回退） | 同花顺热榜（GET，零鉴权）→ 东财人气榜（POST，零鉴权）→ Tushare `ths_hot`（备用，需 TOKEN） |
+| `ird-interact` | 互动易问答：投资者提问+公司官方回复（L3 一手定性） | `<代码>` `--limit N`（默认20） | 巨潮互动易（零鉴权，两步 POST） |
+| `cls-telegraph` | 财联社实时电报：全市场快讯（L3 快讯） | `--top N`（默认50） | 财联社 v1（本地签名零 key） |
+| `report-list` | 研报列表：个股/行业研报+评级/EPS（L3 研报） | `<代码>` / `--industry <东财行业码>` `--limit N`（默认30） | 东方财富 reportapi（零鉴权） |
 
 > 上表为常用命令；CLI 另有一批 Tushare 增强命令（`pe-band`/`dividend`/`shareholders`/`management`/`consensus`/`research-visits`/`insider-trades`/`industry-pe`/`hk-quote`/`ah-cross-check`/`disclosure-calendar`/`news`），均需 `TUSHARE_TOKEN`，`python3 tools/ashare_data.py --help` 可列全。
+
+---
+
+## 取数级别声明（L0–L3）
+
+> **本节是分级定义的唯一权威源。** 级别是**声明式契约（名词）**——描述"这一档包含哪些数据层"；级别**不是执行式封装（动词）**，不代表"一个命令打包跑完一档"。完整决策记录见 `docs/ashare-data-tiered-upgrade-plan.md`。
+
+| 级别 | 含义 | 命令集 | 定义方式 | 触发方 |
+|------|------|--------|---------|--------|
+| **L0 QUICK** | 快查 | `quote` `valuation` `financials`（概览三件套） | **静态清单** | 对话内快查 / standalone 默认行为 |
+| **L1 CORE** | 默认级别 | 由编排器 feeds 映射**动态**决定（实测 12–27 条，稳定含概览三件套 + `history` `equity-history` `signals` `announcements` `ratios` `mainbz` `managers` `peers`） | **动态，非固定清单** | `full-company-analysis` / `investment-research` 管线 |
+| **L2 ENHANCED** | 增强信号 | L1 + 涨停生态(`limit-pool`)/监管监控(`monitor-pool`)/异动(`anomaly-pool`) + 热度层(`ths-hot`) | **已就位**（三件套 + 热度层 ths-hot 已建，curl 优先 + Tushare 备用） | 人工 standalone 情绪与治理扫描 |
+| **L3 FULL** | 全量侦察 | L2 + 一手定性(`ird-interact`)/快讯(`cls-telegraph`)/研报(`report-list`)层 | **部分就位**（三件套已建，零鉴权免费源，由消费方 skill 调用） | 人工 standalone 深度调研 |
+
+级别是**包含关系**（L3 ⊇ L2 ⊇ L1 ⊇ L0 的数据层），非互斥。
+
+**两条硬约束（勿回退）**：
+
+1. **L1 绝不是一份固定命令清单。** 全量分析语境下取数范围由编排器 feeds 映射按公司动态决定。曾有版本把 L1 钉成 7 条固定命令，实测会漏掉 `ratios`/`mainbz`/`managers`/`peers`，导致 full-company-analysis **静默降级**。
+2. **`run-level` 只服务 standalone 快查，不进主管线。** CLI 层不提供 `--level core`。主管线维持 gate 逐条 `run-ashare-command` 执行并冻结收据，命令级血缘一条不丢；聚合执行会使血缘塌缩、`signals` 部分成功语义丢失。
+
+**跨级步骤 `search`**：输入为公司名时自动前置定码，输入为六位代码时不触发。它是**输入归一化**，不属于任何级别。
+
+```bash
+# standalone 快查（仅人工触发，不用于 full-company-analysis）
+python3 tools/ashare_data.py run-level 600519 --level quick
+python3 tools/ashare_data.py run-level 贵州茅台 --level quick   # 公司名自动前置 search 定码
+```
 
 ---
 
@@ -61,7 +96,7 @@ review-cadence: per-release
 
 1. 跑 `date` 确认今天日期（项目投研核心原则（数据基准日约定）），作为"最新数据"基线。
 2. 输入是公司名 → 先 `python3 tools/ashare_data.py search {关键词}` 定码；多个匹配列出候选让用户确认。
-3. 用户没指定数据类型 → 默认取概览三件套（quote + valuation + financials），**不要默默把八个命令全跑一遍**。
+3. 用户没指定数据类型 → 默认取概览三件套（quote + valuation + financials，即 **L0 QUICK**），**不要默默把八个命令全跑一遍**。
 
 🔴 STOP / 检查点：在按用户未明确指定的范围自动扩展取数（如默默把八个命令全跑一遍、或在 full-company-analysis 中自动触发 Tushare 增强集）前，必须先向用户确认（给出明确选项：如"仅取概览三件套""按研究需要取指定命令""触发 Tushare 交叉验证"），获得明确同意后再继续；未经确认不得自主扩大取数范围。
 
@@ -123,6 +158,9 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 8. **沪市/北交所龙虎榜备用源均未实现**（仅深市有深交所备用），解禁无备用源：这些块主源失败即"数据不足"，无降级。
 9. **北交所存量代码已迁 920 号段**：老号段代码（43/83/87 开头，如诺思兰德 430047→920047）在东财已查不到，`financials`/`history`/`equity-history` 用老码恒"数据不足"退 1（腾讯行情对老码仍留别名）——先 `search` 公司名拿现行 920 代码再取数。
 10. **输出是中文文本，无 `--json`**：需要程序化处理时 import `tools.ashare_plugin` 库层（DataResult 契约含 ok/source/fallback_used/as_of/warnings）。
+11. **打板三件套为全市场级、零 token 免费源**：`limit-pool`/`monitor-pool`/`anomaly-pool` 走东财 `push2ex`/`mobappconfig`/`dycalchis`，按 `--date` 全市场扫描，**不接个股代码**；`anomaly-pool` 必须带 `team=h5` 固定参数否则返回 `unknow team`；北交所与深市同为 `m=0`，市场判定须按代码号段（920/43/83/87→BJ）而非 `m` 字段；三件套只作情绪/治理旁证，**不参与 quality-screen 7 条硬指标判决**。
+12. **热度层 `ths-hot` 为全市场级、零 token 优先**：同花顺热榜(GET `dq.10jqka.com.cn`，带 `Referer`) 为首选，东财人气榜(POST `emappdata.eastmoney.com/stockrank/getAllCurrentList`) 为同优先级备用（仅返回带前缀代码，须再走 `push2 ulist.np` 补名称/价格）；两者均失败且无 `TUSHARE_TOKEN` 时回退 Tushare `ths_hot`（plan §3.1 备用）。热度是 intraday/rolling（`--period hour/day`），**非日期驱动**，`--date` 仅 Tushare 回退用；`rise_and_fall` 已是百分点单位（如 2.08 即 +2.08%），**勿再 ×100**。热度层只作 L2 热度旁证，不参与 quality-screen 7 条硬指标判决。
+13. **L3 三件套为零鉴权免费源、各带独立坑**：① `ird-interact`（巨潮互动易）为两步 POST——先 `queryKeyboardInfo` 定 orgId(secid)，再 `company/question` 拉问答，第二步参数须放 **query string 非 body**（否则 HTTP 400），`pubDate` 为毫秒时间戳，最新提问常未回复（`attachedContent=None`）；② `cls-telegraph`（财联社）须带**本地签名** `sign=md5(sha1(按 key 字典序拼接 query 串))`（零 key，纯本地算），否则返回 errno≠0；③ `report-list`（东财 reportapi）只认纯 6 位代码，`code` 传带前缀会返回 hits=0 误判"无研报"，北交所老号段(43/83/87)需先迁 920 码；`reportapi` 与东财其他接口共享风控，`em_get` 已内置限流。三者只作 L3 一手定性/快讯/研报旁证，不参与 7 条硬指标判决。
 
 ---
 
@@ -139,7 +177,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 | 层级 | 数据源 | 性质 | 命令数 | 使用规则 |
 |:--:|------|------|:--:|------|
 | **Tier 0** | Tushare Pro（付费） | 独立结构化，可审计可冻结 | 47 | **最高优先级**。与任何其他源冲突时以 Tushare 为准。用于三大报表、PE分位、资金面、龙虎榜、券商研报、高管增持、质押等 |
-| **Tier 1** | 腾讯行情 + 东方财富（免费） | 基础层，零 token 依赖 | 7 | 实时行情、核心财务摘要、估值指标。价格双源验证（腾讯+新浪） |
+| **Tier 1** | 腾讯行情 + 东方财富（免费） | 基础层，零 token 依赖 | 10 | 实时行情、核心财务摘要、估值指标、公告、市场信号。涨停生态/监管监控/异动池（打板三件套，L2 情绪与治理旁证）。价格双源验证（腾讯+新浪） |
 | **Tier 2** | WebSearch / WebFetch（免费） | 非结构化，不可冻结，有知识截止 | ∞ | 仅在 Tushare 和 Tier 1 无法覆盖时使用。行业定性信息、管理层公开信息、竞对动态 |
 | **Tier 3** | financial_rigor.py / report_audit.py（内部） | 确定性计算/审计 | 8+3 | Decimal 精确验算、三情景建模、报告质量门 |
 
@@ -163,7 +201,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 **财务深度**：`income-stmt` `balance-sheet` `cash-flow` `ratios` `mainbz` `audit` `express` `consensus`
 **估值**：`pe-band` `kline` `weekly` `monthly` `stk-factor` `factors`
 **治理**：`shareholders` `insider-trades` `management` `managers` `repurchase` `pledge`
-**资金面**：`money-flow` `top-list` `limit-list` `limit-price` `ths-hot` `block-trade`
+**资金面**：`money-flow` `top-list` `limit-list` `limit-price` `ths-hot`(零依赖 curl 优先，见子命令总览) `block-trade`
 **北向**：`north-hold` `hsgt-flow` `hsgt-top10`
 **行业**：`peers` `industry-pe` `sector-peers` `sector-flow` `index-val`
 **宏观/其他**：`macro` `research-visits` `broker-recommend` `analyst-reports` `disclosure-calendar` `news` `divident` `name-history` `suspend` `unblock` `cyq-chips` `margin` `holder-num`

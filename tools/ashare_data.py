@@ -14,15 +14,16 @@
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 try:
-    from tools.ashare_plugin.transport import TransportClient
+    from tools.ashare_plugin.transport import TransportClient, TransportError
     from tools.ashare_plugin.disclosures import fetch_announcements
     from tools.ashare_plugin.market_signals import fetch_signals
     from tools.ashare_plugin.identifiers import normalize_code
@@ -34,7 +35,7 @@ try:
     )
     from tools.ashare_plugin.quote import parse_sina_quote, price_cross_check
 except ModuleNotFoundError:  # direct execution: tools/ is the script directory
-    from ashare_plugin.transport import TransportClient
+    from ashare_plugin.transport import TransportClient, TransportError
     from ashare_plugin.disclosures import fetch_announcements
     from ashare_plugin.market_signals import fetch_signals
     from ashare_plugin.identifiers import normalize_code
@@ -49,6 +50,64 @@ except ModuleNotFoundError:  # direct execution: tools/ is the script directory
 _DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
 _TRANSPORT = TransportClient()
 
+# 打板三件套（L2，东财免费源，零鉴权）——需求拉动自 quality-screen（涨停生态/治理旁证）。
+# 端点实测 2026-07-31 返回真实数据；源参照 a-stock-data V3.6.0 §8.1/§8.4/§8.5。
+# ⚠️ 北交所与深市同为 m=0 / 监控池 MARKET="B" 三值，市场判定按代码号段而非 m 字段。
+_ZT_UT = "7eea3edcaed734bea9cbfc24409ed989"
+_ZT_BASE = "https://push2ex.eastmoney.com"
+_MONITOR_URL = "https://mobappconfig.securities.eastmoney.com/emcfg/stock_monitor.json"
+_ANOMALY_BASE = "https://dycalchis.eastmoney.com/price-anomaly"
+_ANOMALY_HQ_PARAMS = {
+    "team": "h5", "product": "EastMoney", "client": "WAP",
+    "version": "9001", "name": "WAP", "user": "123",
+}
+_MONITOR_MARKET = {"1": "SH", "0": "SZ", "B": "BJ"}
+_ANOMALY_RULES = {
+    1: "主板连续10个交易日内4次同向异常波动",
+    2: "创业板连续10个交易日内3次同向异常波动",
+    3: "科创板连续10个交易日内3次同向异常波动",
+    4: "连续十个交易日内日收盘价涨跌幅偏离值累计+100%",
+    5: "连续十个交易日内日收盘价涨跌幅偏离值累计-50%",
+    6: "连续三十个交易日内日收盘价涨跌幅偏离值累计+200%",
+    7: "连续三十个交易日内日收盘价涨跌幅偏离值累计-70%",
+    8: "北交所连续10个交易日内3次同向异常波动",
+    40: "连续十个交易日内日收盘价涨跌幅偏离值累计+150%",
+    50: "连续十个交易日内日收盘价涨跌幅偏离值累计-60%",
+    60: "连续30个交易日内日收盘价涨跌幅偏离值累计+300%",
+    70: "连续30个交易日内日收盘价涨跌幅偏离值累计-75%",
+}
+_CN_TZ = timezone(timedelta(hours=8))
+
+# 热度层（L2）：同花顺热榜(GET) + 东财人气榜(POST)，零依赖；Tushare ths_hot 备用。
+# 端点实测 2026-07-31 返回真实数据；源参照 a-stock-data V3.6.0 §10.2。
+# ⚠️ 同花顺有反爬风险，故东财人气榜作同优先级备用，Tushare 仅最后回退。
+# 热度是 intraday/rolling（period=hour/day），非日期驱动；--date 仅供 Tushare 回退。
+_THS_HOT_URL = "https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock"
+_EM_HOT_URL = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
+_EM_HOT_BODY = {
+    "appId": "appId01",
+    "globalId": "786e4c21-70dc-435a-93bb-38",
+    "marketType": "",
+    "pageNo": 1,
+    "pageSize": 50,
+}
+_EM_ULIST_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+_EM_ULIST_UT = "f057cbcbce2a86e2866ab8877db1d059"
+
+# L3 一手定性 / 快讯 / 研报层（需求拉动：ird-interact / cls-telegraph / report-list）。
+# 互动易（巨潮）投资者提问+公司官方回复=一手定性；财联社 v1 本地签名零 key=全市场快讯；
+# 东财 reportapi=研报列表（免费源，补 Tushare analyst-reports）。三者均为零鉴权免费源。
+_IRM_QUERY_URL = "https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo"
+_IRM_QA_URL = "https://irm.cninfo.com.cn/newircs/company/question"
+_CLS_TELEGRAPH_URL = "https://www.cls.cn/v1/roll/get_roll_list"
+_REPORT_API = "https://reportapi.eastmoney.com/report/list"
+_CLS_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+
+
+def _cn_today() -> str:
+    """北京时间的今天（YYYYMMDD），避免海外时区跨日错位。"""
+    return datetime.now(_CN_TZ).strftime("%Y%m%d")
+
 
 def _curl(url):
     """兼容旧调用者的文本请求入口，底层统一使用插件 transport。"""
@@ -57,11 +116,32 @@ def _curl(url):
     })
 
 
-def _curl_json(url, params=None):
-    """兼容旧调用者的 JSON 请求入口，底层统一使用插件 transport。"""
-    return _TRANSPORT.get_json(url, params=params, headers={
+def _curl_json(url, params=None, headers=None):
+    """兼容旧调用者的 JSON 请求入口，底层统一使用插件 transport。
+
+    headers 可追加自定义请求头（如东财 push2ex 的 Referer）；缺省仅带 UA。
+    """
+    base_headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-    })
+    }
+    if headers:
+        base_headers.update(headers)
+    return _TRANSPORT.get_json(url, params=params, headers=base_headers)
+
+
+def _curl_json_post(url, data=None, headers=None, json_body: bool = True):
+    """POST 请求入口，底层统一使用插件 transport。
+
+    json_body=True（默认）：data 以 JSON 体发送，用于东财 appdata 等人气榜接口；
+    json_body=False：data 以 form 编码（urlencode）发送，用于互动易等接口。
+    headers 可追加自定义请求头。
+    """
+    base_headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    }
+    if headers:
+        base_headers.update(headers)
+    return _TRANSPORT.post_json(url, data=data, headers=base_headers, json_body=json_body)
 
 
 def _em_secu_code(code: str) -> str:
@@ -618,21 +698,12 @@ def cmd_equity_history(code: str):
 
 def cmd_search(keyword: str):
     """搜索股票代码。"""
-    url = "https://searchadapter.eastmoney.com/api/suggest/get"
-    token = os.environ.get("EASTMONEY_SEARCH_TOKEN", "")
-    params = {
-        "input": keyword,
-        "type": "14",
-        "token": token,
-        "count": "10",
-    }
     try:
-        data = _curl_json(url, params)
+        results = _search_candidates(keyword)
     except (ConnectionError, json.JSONDecodeError,
             subprocess.TimeoutExpired) as exc:
         print(f"❌ 搜索股票失败: {exc}", file=sys.stderr)
         return False
-    results = (data.get("QuotationCodeTable") or {}).get("Data") or []
 
     if not results:
         print(f"❌ 未找到匹配 '{keyword}' 的股票", file=sys.stderr)
@@ -1191,8 +1262,88 @@ def cmd_block_trade(code: str, trade_date: str = None):
     return True
 
 
-def cmd_ths_hot(trade_date: str = None):
-    """同花顺热榜 — Tushare ths_hot"""
+def _ths_hot_list(period: str = "hour") -> list:
+    """同花顺热榜（GET，零依赖）：名称+人气值+概念标签+排名变化。
+
+    失败或空返回 []（非抛异常），交由调用方回退东财 / Tushare。
+    """
+    try:
+        obj = _curl_json(
+            _THS_HOT_URL,
+            params={"stock_type": "a", "type": period, "list_type": "normal"},
+            headers={"Referer": "https://q.10jqka.com.cn/"},
+        )
+    except TransportError:
+        return []
+    if not isinstance(obj, dict):
+        return []
+    lst = ((obj.get("data") or {}).get("stock_list")) or []
+    out = []
+    for it in lst:
+        tag = it.get("tag") or {}
+        out.append({
+            "rank": it.get("order"),
+            "code": it.get("code"),
+            "name": it.get("name"),
+            "heat": it.get("rate"),
+            "pct": it.get("rise_and_fall"),
+            "rank_chg": it.get("hot_rank_chg"),
+            "concepts": (tag.get("concept_tag") or [])[:5],
+            "tag": tag.get("popularity_tag", ""),
+        })
+    return out
+
+
+def _em_hot_rank(top: int = 50) -> list:
+    """东财人气榜（POST，零依赖）：排名+排名变化+名称/价格。
+
+    仅返回带前缀代码，需再走 push2 ulist.np 补名称/价格。
+    失败或空返回 []（非抛异常）。
+    """
+    try:
+        obj = _curl_json_post(_EM_HOT_URL, data={**_EM_HOT_BODY, "pageSize": top})
+    except TransportError:
+        return []
+    if not isinstance(obj, dict):
+        return []
+    data = obj.get("data") or []
+    if not data:
+        return []
+    secids = [
+        ("0." if it["sc"].startswith("SZ") else "1.") + it["sc"][2:]
+        for it in data
+    ]
+    try:
+        u = _curl_json(
+            _EM_ULIST_URL,
+            params={
+                "ut": _EM_ULIST_UT, "fltt": 2, "invt": 2,
+                "fields": "f14,f3,f12,f2", "secids": ",".join(secids),
+            },
+            headers={"Referer": "https://quote.eastmoney.com/"},
+        )
+    except TransportError:
+        u = None
+    diff = (((u or {}).get("data") or {}).get("diff")) or [] if isinstance(u, dict) else []
+    if isinstance(diff, dict):
+        diff = list(diff.values())
+    nm = {
+        x["f12"]: (x.get("f14"), x.get("f2"), x.get("f3"))
+        for x in diff if isinstance(x, dict) and "f12" in x
+    }
+    out = []
+    for it in data:
+        code = it["sc"][2:]
+        name, price, pct = nm.get(code, ("", None, None))
+        out.append({
+            "rank": it.get("rk"), "code": code, "name": name,
+            "pct": pct, "rank_chg": it.get("hisRc"),
+        })
+    return out
+
+
+def _ths_hot_tushare(trade_date: str = None) -> bool:
+    """Tushare ths_hot 回退（plan §3.1 备用）：需 TUSHARE_TOKEN。"""
     client = _get_tushare_client()
     if not client:
         return False
@@ -1203,14 +1354,232 @@ def cmd_ths_hot(trade_date: str = None):
         print(f"❌ ths_hot 查询失败: {r.get('message', '未知')}")
         return False
     print(f"{'='*60}")
-    print(f"同花顺热榜: {trade_date}")
+    print(f"市场热度榜（回退 Tushare ths_hot）: {trade_date}")
     print(f"数据来源: Tushare ths_hot，共 {len(r['data'])} 条")
     print(f"{'='*60}\n")
-    for d in r["data"][:20]:
+    for d in r["data"][:50]:
         print(f"  {d.get('ts_code','?')}  {d.get('name','?')}  排名={d.get('rank','?')}  "
               f"涨{d.get('pct_change','?')}%  热度={d.get('hot_value','')}")
-    if len(r["data"]) > 20:
+    if len(r["data"]) > 50:
         print(f"  ... 共 {len(r['data'])} 条")
+    return True
+
+
+def cmd_ths_hot(period: str = "hour", trade_date: str = None, top: int = 50):
+    """市场热度榜（L2 热度层）。
+
+    零依赖优先：同花顺热榜(GET) → 东财人气榜(POST)；
+    两者均失败且无 Tushare token 时回退 Tushare ths_hot（plan §3.1 备用）。
+    period: hour/day（仅零依赖路径使用）；trade_date 仅供 Tushare 回退；top 返回条数。
+    """
+    rows = _ths_hot_list(period)
+    source = "同花顺热榜"
+    if not rows:
+        rows = _em_hot_rank(top)
+        source = "东财人气榜"
+
+    if rows:
+        print(f"{'='*60}")
+        print(f"市场热度榜（来源：{source}，period={period}）")
+        print(f"数据来源: {source}（零依赖 curl），共 {len(rows)} 条")
+        print(f"{'='*60}\n")
+        for r in rows[:top]:
+            pct = r.get("pct")
+            pct_s = f"{pct:.2f}%" if isinstance(pct, (int, float)) else "?"
+            extra = ""
+            if r.get("heat") is not None:
+                extra += f" 热度={r['heat']}"
+            if r.get("concepts"):
+                extra += f" 概念={','.join(r['concepts'][:3])}"
+            if r.get("tag"):
+                extra += f" [{r['tag']}]"
+            print(f"  #{r.get('rank','?')} {r.get('name','?')}({r.get('code','?')}) "
+                  f"涨{pct_s} 排名变={r.get('rank_chg','?')}{extra}")
+        if len(rows) > top:
+            print(f"  ... 共 {len(rows)} 条")
+        return True
+
+    print("[ths-hot] 零依赖源（同花顺/东财）均未返回数据，尝试 Tushare ths_hot 回退…")
+    return _ths_hot_tushare(trade_date)
+
+
+# === L3 一手定性 / 快讯 / 研报层（需求拉动：ird-interact / cls-telegraph / report-list）===
+# 三者均为零鉴权免费源，作为独立子命令交付、由消费方 skill 调用；不进 run-level 逐股链（ADR-003）。
+
+def _cls_sign(params: dict) -> str:
+    """财联社本地签名：md5(sha1(按 key 字典序拼接的 query 串))，纯本地计算、无需任何 key。"""
+    qs = "&".join(f"{k}={params[k]}" for k in sorted(params))
+    return hashlib.md5(hashlib.sha1(qs.encode()).hexdigest().encode()).hexdigest()
+
+
+def cmd_ird_interact(code: str, limit: int = 20):
+    """互动易问答（L3 一手定性层）— 巨潮：投资者提问 + 公司官方回复。
+
+    两步：① queryKeyboardInfo 按代码定 orgId(secid)；② company/question 拉问答（参数放 query string）。
+    坑：第二步参数须放 query string（非 body）否则 HTTP 400；orgId 取自第一步 secid；
+    最新提问常未回复（attachedContent=None）；pubDate 为毫秒时间戳。
+    management-deep-dive 消费方：看公司如何回应传闻/利好的一手定性材料。
+    """
+    try:
+        code = normalize_code(code).code
+    except ValueError as exc:
+        print(f"❌ 代码无效: {exc}")
+        return False
+    try:
+        d1 = _curl_json_post(_IRM_QUERY_URL, data={"keyWord": code}, json_body=False)
+    except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
+        print(f"❌ 互动易定码失败: {exc}")
+        return False
+    d1_list = (d1.get("data") or []) if isinstance(d1, dict) else []
+    if not d1_list:
+        print(f"⚠️ 互动易未检索到 {code} 的 IR 主体")
+        return False
+    org_id = d1_list[0].get("secid")
+    params = {
+        "_t": "1", "stockcode": code, "orgId": org_id, "pageSize": str(limit),
+        "pageNum": "1", "keyWord": "", "startDay": "", "endDay": "",
+    }
+    qs = "&".join(f"{k}={v}" for k, v in params.items())
+    try:
+        d2 = _curl_json_post(f"{_IRM_QA_URL}?{qs}", data=None, json_body=False)
+    except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
+        print(f"❌ 互动易问答请求失败: {exc}")
+        return False
+    rows = (d2.get("rows") or []) if isinstance(d2, dict) else []
+    if not rows:
+        print(f"⚠️ {code} 互动易当前无问答记录（部分公司回复率极低）")
+        return False
+    print(f"{'='*60}")
+    print(f"互动易问答: {code}（共 {d2.get('total', len(rows))} 条，显示前 {len(rows)}）")
+    print(f"数据来源: 巨潮互动易（一手定性：投资者提问 + 公司官方回复）")
+    print(f"{'='*60}\n")
+    shown = 0
+    for it in rows:
+        q = it.get("mainContent") or ""
+        a = it.get("attachedContent")
+        pd = it.get("pubDate")
+        t = datetime.fromtimestamp(pd / 1000).strftime("%Y-%m-%d %H:%M") if pd else ""
+        answerer = it.get("attachedAuthor") or "未回复"
+        print(f"  [{t}] Q: {q[:60]}")
+        if a:
+            print(f"    A[{answerer}]: {a[:80]}")
+        else:
+            print(f"    A: （公司尚未回复）")
+        shown += 1
+        if shown >= limit:
+            break
+    return True
+
+
+def cmd_cls_telegraph(top: int = 50):
+    """财联社实时电报（L3 快讯层）— 全市场实时快讯，v1 API + 本地签名零 key。
+
+    sign = md5(sha1(按 key 字典序拼接的 query 串))，纯本地算无需 key；与东财 7×24 互为独立备份。
+    news-pulse 消费方：把快讯底层从 WebFetch 换成结构化取数，作 L3 快讯旁证。
+    """
+    params = {
+        "appName": "CailianpressWeb", "os": "web", "sv": "7.7.5",
+        "last_time": "", "refresh_type": "1", "rn": str(top),
+    }
+    sign = _cls_sign(params)
+    qs = "&".join(f"{k}={params[k]}" for k in sorted(params))
+    url = f"{_CLS_TELEGRAPH_URL}?{qs}&sign={sign}"
+    try:
+        data = _curl_json(url, headers={"User-Agent": _CLS_UA, "Referer": "https://www.cls.cn/"})
+    except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
+        print(f"❌ 财联社电报请求失败: {exc}")
+        return False
+    if not isinstance(data, dict) or data.get("errno") != 0:
+        err_no = data.get("errno") if isinstance(data, dict) else "?"
+        err_msg = data.get("msg") if isinstance(data, dict) else ""
+        print(f"❌ 财联社电报返回错误: errno={err_no} msg={err_msg}")
+        return False
+    rows = (data.get("data") or {}).get("roll_data", []) or []
+    if not rows:
+        print("⚠️ 财联社电报当前无数据")
+        return False
+    print(f"{'='*60}")
+    print(f"财联社实时电报（全市场快讯，共 {len(rows)} 条）")
+    print(f"数据来源: 财联社 v1（本地签名零 key）")
+    print(f"{'='*60}\n")
+    for it in rows[:top]:
+        ts = it.get("ctime")
+        t = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else ""
+        title = it.get("title") or it.get("brief") or ""
+        content = it.get("content") or it.get("brief") or ""
+        print(f"  {t} | {title}")
+        if content and content != title:
+            print(f"      {content[:80]}")
+    return True
+
+
+def cmd_report_list(code: str = None, industry: str = None, limit: int = 30):
+    """研报列表（L3 研报层）— 东财 reportapi 免费源，补 Tushare analyst-reports。
+
+    code 给定 → 个股研报(qType=0)；--industry 给定 → 行业研报(qType=1)；二者须其一。
+    ⚠️ reportapi 只认纯 6 位代码；北交所老号段(43/83/87)需先迁 920 码。
+    investment-research 消费方：卖方一致预期交叉验证的免费源（评级/目标价/EPS）。
+    """
+    if industry:
+        qtype, scope_code = "1", industry
+        scope = f"行业研报(industry={industry})"
+    elif code:
+        try:
+            scope_code = normalize_code(code).code
+        except ValueError as exc:
+            print(f"❌ 代码无效: {exc}")
+            return False
+        qtype, scope_code = "0", scope_code
+        scope = f"个股研报({scope_code})"
+    else:
+        print("❌ 需指定股票代码（个股研报）或 --industry（行业研报）")
+        return False
+
+    all_rows = []
+    pages = 0
+    max_pages = 5
+    while len(all_rows) < limit and pages < max_pages:
+        pages += 1
+        params = {
+            "industryCode": industry if qtype == "1" else "*",
+            "pageSize": str(min(limit, 100)),
+            "industry": "*", "rating": "*", "ratingChange": "*",
+            "beginTime": "2000-01-01", "endTime": "2030-01-01",
+            "pageNo": str(pages), "fields": "", "qType": qtype,
+            "orgCode": "", "code": scope_code if qtype == "0" else "",
+            "rcode": "",
+            "p": str(pages), "pageNum": str(pages), "pageNumber": str(pages),
+        }
+        try:
+            d = _curl_json(_REPORT_API, params=params,
+                           headers={"Referer": "https://data.eastmoney.com/"})
+        except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
+            print(f"❌ 研报请求失败: {exc}")
+            return False
+        if not isinstance(d, dict):
+            break
+        rows = d.get("data") or []
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if pages >= (d.get("TotalPage", 1) or 1):
+            break
+
+    if not all_rows:
+        print(f"⚠️ {scope} 东财研报库无覆盖（北交所老号段需先迁 920 码）")
+        return False
+    show = all_rows[:limit]
+    print(f"{'='*60}")
+    print(f"研报列表: {scope}（共 {len(all_rows)} 篇，显示前 {len(show)}）")
+    print(f"数据来源: 东财 reportapi（免费源，补 Tushare analyst-reports）")
+    print(f"{'='*60}\n")
+    for r in show:
+        pd = (r.get("publishDate") or "")[:10]
+        print(f"  [{pd}] {r.get('orgSName', '?')} | {r.get('title', '?')[:50]}")
+        rating = r.get("emRatingName") or ""
+        eps = r.get("predictThisYearEps") or ""
+        if rating or eps:
+            print(f"      评级={rating} 今年EPS预测={eps}")
     return True
 
 
@@ -3073,6 +3442,361 @@ def cmd_index_val(index: str = "hs300"):
     return True
 
 
+# ===========================================================================
+# 打板三件套（L2，东财免费源，零鉴权）
+# limit-pool / monitor-pool / anomaly-pool —— 全市场级（--date，非逐股）。
+# 端点实测 2026-07-31 返回真实数据；源参照 a-stock-data V3.6.0 §8.1/§8.4/§8.5。
+# 注意：北交所与深市同为 m=0 / 监控池 MARKET="B" 三值，市场判定须按代码号段而非 m 字段。
+# 三件套均为情绪/治理旁证，不参与 quality-screen 的 7 条硬指标判决。
+# ===========================================================================
+
+def _zt_pool(endpoint: str, sort: str, trade_date: str) -> list:
+    """东财涨停板行情中心通用请求（push2ex）。
+
+    endpoint: getTopicZTPool(涨停) / getTopicZBPool(炸板) / getTopicDTPool(跌停) /
+              getYesterdayZTPool(昨涨停)。返回 data.pool 原始列表；
+    data 为 null = 非交易日 / 参数错。失败返回 []（不抛栈）。
+    """
+    url = f"{_ZT_BASE}/{endpoint}"
+    params = {"ut": _ZT_UT, "dpt": "wz.ztzt", "Pageindex": 0,
+              "pagesize": 10000, "sort": sort, "date": trade_date}
+    headers = {"Referer": "https://quote.eastmoney.com/"}
+    try:
+        data = _curl_json(url, params=params, headers=headers)
+    except (TransportError, ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 涨停板池 {endpoint} 请求失败: {exc}", file=sys.stderr)
+        return []
+    return (data.get("data") or {}).get("pool") or []
+
+
+def _fmt_zt_time(t) -> str:
+    """涨停板时间整数 → HH:MM:SS（92500 → 09:25:00）。"""
+    s = str(t).zfill(6)
+    return f"{s[0:2]}:{s[2:4]}:{s[4:6]}"
+
+
+def cmd_limit_pool(trade_date: str = None):
+    """涨停生态池（L2）：涨停/炸板/跌停/昨涨停四维，市场情绪证据。
+
+    全市场级，--date YYYYMMDD（默认今天）。不参与 quality-screen 7 条硬指标判决，仅作情绪旁证。
+    """
+    if not trade_date:
+        trade_date = _cn_today()
+    blocks = [
+        ("涨停池", "getTopicZTPool", "fbt:asc",
+         lambda p: f"  🟥 {p['c']} {p['n']}  连板{p.get('lbc', '?')}  "
+                   f"封单{p.get('fund', 0) / 1e8:.2f}亿 炸板{p.get('zbc', 0)}次 "
+                   f"{p.get('hybk', '')} 首封{_fmt_zt_time(p.get('fbt', 0))}"),
+        ("炸板池", "getTopicZBPool", "fbt:asc",
+         lambda p: f"  🟧 {p['c']} {p['n']}  炸板{p.get('zbc', 0)}次 振幅{p.get('zf', 0)}% "
+                   f"涨速{p.get('zs', 0)}% {p.get('hybk', '')}"),
+        ("跌停池", "getTopicDTPool", "fund:asc",
+         lambda p: f"  🟩 {p['c']} {p['n']}  封单{p.get('fund', 0) / 1e8:.2f}亿 "
+                   f"连板{p.get('days', '?')} 开板{p.get('oc', 0)}次 {p.get('hybk', '')}"),
+        ("昨涨停", "getYesterdayZTPool", "fbt:asc",
+         lambda p: f"  ⬜ {p['c']} {p['n']}  昨涨停 {p.get('hybk', '')}"),
+    ]
+    print("=" * 64)
+    print(f"涨停生态池: {trade_date}")
+    print("=" * 64)
+    total = 0
+    for label, endpoint, sort, fmt in blocks:
+        try:
+            rows = _zt_pool(endpoint, sort, trade_date)
+        except Exception as exc:
+            print(f"  [{label}] 获取失败: {exc}", file=sys.stderr)
+            continue
+        total += len(rows)
+        print(f"\n  {label}（{len(rows)} 只）")
+        for p in rows[:30]:
+            try:
+                print(fmt(p))
+            except Exception:
+                continue
+        if len(rows) > 30:
+            print(f"  ... 共 {len(rows)} 只")
+    if total == 0:
+        print("❌ 未获取到涨停生态数据（非交易日或接口无返回），建议通过 WebSearch 补充",
+              file=sys.stderr)
+        return False
+    print(f"\n  数据来源: 东方财富 push2ex（涨停/炸板/跌停/昨涨停）| 合计 {total} 条")
+    print("  ⚠️ 本池为全市场情绪旁证，不参与个股去劣硬指标判决")
+    return True
+
+
+def cmd_monitor_pool(trade_date: str = None):
+    """重点监控池（L2）：交易所风险警示/重点监控名单 + 生效时间窗。
+
+    全市场级，静态 JSON（mobappconfig）。--date 用于过滤监控窗口（默认今天，北京时间）。
+    北交所 MARKET='B' 三值，须原样保留避免错标。
+    """
+    if not trade_date:
+        trade_date = _cn_today()
+    try:
+        rows = _curl_json(_MONITOR_URL,
+                          headers={"Referer": "https://vipmoney.eastmoney.com/"}) or []
+    except (TransportError, ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 重点监控池请求失败: {exc}", file=sys.stderr)
+        return False
+    today = (f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+             if len(trade_date) == 8 else trade_date)
+    active = []
+    for x in rows:
+        start, end = x.get("VALIDATESTARTDATE", ""), x.get("VALIDATEENDDATE", "")
+        if not (start <= today <= end):
+            continue
+        raw_mkt = str(x.get("MARKET", "")).upper()
+        active.append({
+            "code": x.get("STKCODE", ""),
+            "name": x.get("STKNAME", ""),
+            "market": _MONITOR_MARKET.get(raw_mkt, f"?{raw_mkt}"),
+            "start": start, "end": end,
+        })
+    print("=" * 64)
+    print(f"重点监控池: {today}（生效窗口内 {len(active)} 只 / 全量 {len(rows)} 只）")
+    print("=" * 64)
+    if not active:
+        print("  当前无处于监控窗口内的标的")
+        return True
+    for s in active:
+        print(f"  ⚠️ {s['code']} {s['name']}({s['market']}) 监控期 {s['start']}~{s['end']}")
+    print("\n  数据来源: 东方财富 mobappconfig（交易所重点监控名单）")
+    print("  ⚠️ 命中重点监控=治理红线告警，仅作旁证不作判决")
+    return True
+
+
+def _anomaly_market(code, m, board=None) -> str:
+    """异动记录 → 交易所。北交所与深市同为 m=0，按代码号段优先判定。"""
+    c = str(code or "")
+    if c.startswith("920") or c[:2] in ("43", "83", "87") or board == 8:
+        return "BJ"
+    return "SH" if m == 1 else "SZ"
+
+
+def cmd_anomaly_pool(trade_date: str = None):
+    """日内异动池（L2）：交易所「严重异常波动」口径的异动明细。
+
+    全市场级（dycalchis）。须带 team=h5 固定参数，否则返回 unknow team。
+    返回最近交易日异动；--date 仅用于显示比对（接口不接 date 入参）。
+    """
+    params = {**_ANOMALY_HQ_PARAMS, "pageSize": "200", "pageNo": "1"}
+    try:
+        data = _curl_json(f"{_ANOMALY_BASE}/list", params=params,
+                          headers={"Referer": "https://vipmoney.eastmoney.com/"})
+    except (TransportError, ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 日内异动池请求失败: {exc}", file=sys.stderr)
+        return False
+    if data.get("result") != 0:
+        print(f"❌ 日内异动池接口拒绝: result={data.get('result')} msg={data.get('msg')!r}",
+              file=sys.stderr)
+        return False
+    items = []
+    for x in data.get("data") or []:
+        e = x.get("e")
+        key = e * 10 if (x.get("s") == 6 and e in (4, 5, 6, 7)) else e
+        items.append({
+            "code": x.get("c"), "name": x.get("n"),
+            "market": _anomaly_market(x.get("c"), x.get("m"), x.get("s")),
+            "change_pct": x.get("a"), "deviation": x.get("x"),
+            "days": x.get("d"), "rule_code": key,
+            "rule": _ANOMALY_RULES.get(key, f"未知规则码 {key}"),
+            "is_today": x.get("o") != 2,
+        })
+    date = str(data.get("date", ""))
+    print("=" * 64)
+    print(f"日内异动池: {date}")
+    print("=" * 64)
+    if not items:
+        print("  当日无严重异常波动标的")
+        return True
+    for s in items[:30]:
+        flag = "今日" if s["is_today"] else "历史"
+        print(f"  🔥 {s['code']} {s['name']}({s['market']}) {s['change_pct']}% "
+              f"偏离{s['deviation']}%/{s['days']}日 | {s['rule']} [{flag}]")
+    if len(items) > 30:
+        print(f"  ... 共 {len(items)} 条")
+    if trade_date and trade_date != date:
+        print(f"  ⚠️ 请求日期 {trade_date} 与接口返回交易日 {date} 不一致，已展示接口实际交易日")
+    print("\n  数据来源: 东方财富 dycalchis（严重异常波动）")
+    print("  ⚠️ 异动且在监控池=最高风险，仅作治理旁证不作判决")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 取数级别（L0–L3）— 声明式契约
+#
+# 分级定义的唯一权威源是 skills/ashare-data.md「取数级别声明」；此处仅是它在
+# CLI 层的可执行投影。决策记录见 docs/ashare-data-tiered-upgrade-plan.md。
+#
+# 两条硬约束（勿回退）：
+#   1. 不提供 --level core。L1 CORE 由 full-company-analysis 编排器的 feeds
+#      映射按公司动态决定（实测 12–27 条），封装成固定清单会造成静默降级。
+#   2. run-level 只服务 standalone 快查，不进主管线。主管线走 gate 的
+#      run-ashare-command 逐条执行并冻结收据，命令级血缘一条都不能塌缩。
+# ---------------------------------------------------------------------------
+
+# 各级“已就位”的命令集（standalone 可复现的部分）。
+# L2/L3 的候选层命令尚未实现——按需求拉动交付，不预建。
+LEVEL_COMMANDS = {
+    "quick": ("quote", "valuation", "financials"),
+    "enhanced": ("quote", "valuation", "financials"),
+    "full": ("quote", "valuation", "financials"),
+}
+
+LEVEL_LABELS = {
+    "quick": "L0 QUICK（快查·概览三件套）",
+    "enhanced": "L2 ENHANCED（增强信号）",
+    "full": "L3 FULL（全量侦察）",
+}
+
+# 各级尚未就位的候选层：如实告知，不静默冒充已覆盖。
+# 全部 7 个需求拉动候选（打板三件套 + 热度层 + 互动易/财联社/研报）已作为独立子命令交付，
+# 由消费方 skill 调用；run-level 仅跑 L1 快查不代跑 L2/L3（ADR-003）。
+LEVEL_PENDING_LAYERS = {
+    "quick": (),
+    "enhanced": (),
+    "full": (),
+}
+
+_CORE_REJECTION = (
+    "run-level 不提供 --level core。\n"
+    "  L1 CORE 由 full-company-analysis 编排器的 feeds 映射动态决定"
+    "（实测 12–27 条命令，随公司变化），\n"
+    "  把它封装成一份固定清单会导致取数静默降级，并使命令级血缘塌缩。\n"
+    "  管线取数请走 gate 的 run-ashare-command 逐条执行并冻结收据；\n"
+    "  standalone 快查请用 --level quick / enhanced / full。"
+)
+
+
+def _search_candidates(keyword: str):
+    """东财 suggest 搜索，返回原始候选列表（供 search 与跨级定码复用）。"""
+    url = "https://searchadapter.eastmoney.com/api/suggest/get"
+    params = {
+        "input": keyword,
+        "type": "14",
+        "token": os.environ.get("EASTMONEY_SEARCH_TOKEN", ""),
+        "count": "10",
+    }
+    data = _curl_json(url, params)
+    return (data.get("QuotationCodeTable") or {}).get("Data") or []
+
+
+def _resolve_target(value: str):
+    """跨级输入归一化：六位代码直接用；公司名先定码，多候选不代选。
+
+    返回六位代码字符串；无法唯一确定时返回 None（调用方按失败处理）。
+    """
+    try:
+        return normalize_code(value).code
+    except ValueError:
+        pass
+
+    print(f"输入 '{value}' 不是六位代码，先执行 search 定码（跨级输入归一化步骤）…")
+    try:
+        candidates = _search_candidates(value)
+    except (ConnectionError, json.JSONDecodeError,
+            subprocess.TimeoutExpired) as exc:
+        print(f"❌ 定码失败: {exc}", file=sys.stderr)
+        return None
+
+    if not candidates:
+        print(f"❌ 未找到匹配 '{value}' 的股票", file=sys.stderr)
+        return None
+    if len(candidates) > 1:
+        print(f"❌ '{value}' 匹配到 {len(candidates)} 个标的，"
+              f"请指定六位代码后重跑（不代为选择）：", file=sys.stderr)
+        for item in candidates:
+            mkt = {"1": "沪", "2": "深", "3": "北"}.get(
+                str(item.get("MktNum", "")), "")
+            print(f"    {item.get('Code', '')} {item.get('Name', '')} [{mkt}]",
+                  file=sys.stderr)
+        return None
+
+    only = candidates[0]
+    code = str(only.get("Code", "")).strip()
+    try:
+        code = normalize_code(code).code
+    except ValueError:
+        print(f"❌ 定码结果非法: {code!r}", file=sys.stderr)
+        return None
+    print(f"✅ 定码: {code} {only.get('Name', '')}")
+    return code
+
+
+def cmd_run_level(target: str, level: str = "quick"):
+    """按取数级别串跑已就位命令（仅 standalone 快查）。
+
+    逐条执行、逐条呈现，每条命令的原始输出与成败独立保留——
+    不聚合成“统一报告”，以免 signals 一类的部分成功语义被糊掉。
+    """
+    normalized = (level or "").strip().lower()
+    if normalized == "core":
+        raise ValueError(_CORE_REJECTION)
+    if normalized not in LEVEL_COMMANDS:
+        valid = " / ".join(LEVEL_COMMANDS)
+        raise ValueError(f"未知取数级别 {level!r}，可选：{valid}（不含 core）")
+
+    runners = {
+        "quote": cmd_quote,
+        "valuation": cmd_valuation,
+        "financials": cmd_financials,
+    }
+    commands = LEVEL_COMMANDS[normalized]
+
+    print("=" * 60)
+    print(f"取数级别: {LEVEL_LABELS[normalized]}")
+    print("=" * 60)
+    print("⚠️ 本命令仅服务 standalone 快查，不用于 full-company-analysis 主管线。")
+    print("   管线取数走 gate 的 run-ashare-command 逐条执行并冻结收据。")
+    if normalized != "quick":
+        print("   L1 层由编排器 feeds 映射驱动，standalone 不可复现，本命令不代跑。")
+    print()
+
+    code = _resolve_target(target)
+    if code is None:
+        return False
+
+    outcomes = []
+    total = len(commands)
+    for index, name in enumerate(commands, start=1):
+        print()
+        print(f"[{index}/{total}] {name} {code}")
+        print("-" * 60)
+        try:
+            ok = runners[name](code) is not False
+        except Exception as exc:  # 单条命令异常不得中断其余命令
+            print(f"❌ {name} 执行异常: {exc}", file=sys.stderr)
+            ok = False
+        outcomes.append((name, ok))
+
+    print()
+    print("=" * 60)
+    print(f"逐条执行结果（本级已就位命令 {total} 条）")
+    print("=" * 60)
+    for name, ok in outcomes:
+        mark = "✅" if ok else "❌"
+        suffix = "" if ok else "  ← 失败，详见上方该命令原始输出"
+        print(f"  {mark} {name}{suffix}")
+
+    pending = LEVEL_PENDING_LAYERS[normalized]
+    if pending:
+        print()
+        print("本级尚未就位的候选层（需求拉动后接入，当前未取数）：")
+        for layer in pending:
+            print(f"  · {layer}")
+
+    failed = [name for name, ok in outcomes if not ok]
+    if failed:
+        print()
+        print(f"⚠️ {len(failed)}/{total} 条命令未取到数据，"
+              f"相关结论按“数据不足”处理，不得推测填充。")
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
@@ -3191,8 +3915,37 @@ def main():
     p_tl = sub.add_parser("top-list", help="龙虎榜（Tushare top_list）")
     p_tl.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
 
-    p_hot = sub.add_parser("ths-hot", help="同花顺热榜（Tushare ths_hot）")
-    p_hot.add_argument("--date", default=None, help="交易日期 YYYYMMDD")
+    p_hot = sub.add_parser(
+        "ths-hot",
+        help="市场热度榜：同花顺热榜/东财人气榜（零依赖）+ Tushare 备用",
+    )
+    p_hot.add_argument(
+        "--period", default="hour", choices=["hour", "day"],
+        help="热度周期 hour/day（默认 hour，仅零依赖路径使用）",
+    )
+    p_hot.add_argument("--date", default=None, help="交易日期 YYYYMMDD（仅 Tushare 回退使用）")
+    p_hot.add_argument("--top", type=int, default=50, help="返回条数，默认 50")
+
+    # Tier 1: 打板三件套（L2，东财免费源，全市场级）
+    p_lp = sub.add_parser("limit-pool", help="涨停生态池：涨停/炸板/跌停/昨涨停（东财 push2ex）")
+    p_lp.add_argument("--date", default=None, help="交易日期 YYYYMMDD（默认今天）")
+    p_mp = sub.add_parser("monitor-pool", help="重点监控池：风险警示/重点监控名单（东财）")
+    p_mp.add_argument("--date", default=None, help="过滤监控窗口的日期 YYYYMMDD（默认今天）")
+    p_ap = sub.add_parser("anomaly-pool", help="日内异动池：严重异常波动明细（东财 dycalchis）")
+    p_ap.add_argument("--date", default=None, help="交易日期 YYYYMMDD（默认今天；接口返回最近交易日）")
+
+    # Tier 1: L3 一手定性 / 快讯 / 研报层（零鉴权免费源，需求拉动：消费方 skill 调用）
+    p_ird = sub.add_parser("ird-interact", help="互动易问答 投资者提问+公司回复（巨潮，L3 一手定性）")
+    p_ird.add_argument("code", help="股票代码")
+    p_ird.add_argument("--limit", type=int, default=20, help="返回条数，默认 20")
+
+    p_cls = sub.add_parser("cls-telegraph", help="财联社实时电报 全市场快讯（本地签名零 key，L3 快讯）")
+    p_cls.add_argument("--top", type=int, default=50, help="返回条数，默认 50")
+
+    p_rl = sub.add_parser("report-list", help="研报列表 个股/行业（东财 reportapi，L3 研报）")
+    p_rl.add_argument("code", nargs="?", default=None, help="股票代码（个股研报；缺省需配合 --industry）")
+    p_rl.add_argument("--industry", default=None, help="东财行业码（如 1238=IT服务Ⅱ），指定则查行业研报 qType=1")
+    p_rl.add_argument("--limit", type=int, default=30, help="返回条数，默认 30")
 
     # Tier 1: 参考数据
     p_ub = sub.add_parser("unblock", help="限售股解禁（Tushare share_float）")
@@ -3312,6 +4065,19 @@ def main():
     p_idxval.add_argument("index", nargs="?", default="hs300",
                           help="指数别名 hs300/zz500/sse/cyb… 或指数代码，默认 hs300")
 
+    # 取数级别串跑（仅 standalone 快查，不进 full-company-analysis 主管线）
+    p_level = sub.add_parser(
+        "run-level",
+        help="按取数级别串跑已就位命令（standalone 快查专用，不支持 core）",
+    )
+    p_level.add_argument("target", help="六位代码或公司名（公司名先 search 定码）")
+    p_level.add_argument(
+        "--level",
+        default="quick",
+        help="取数级别 quick/enhanced/full，默认 quick；"
+             "不支持 core（L1 由编排器 feeds 映射动态决定）",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -3379,7 +4145,15 @@ def main():
         # Tier 1: 打板
         "limit-list": lambda: cmd_limit_list(args.date),
         "top-list": lambda: cmd_top_list(args.date),
-        "ths-hot": lambda: cmd_ths_hot(args.date),
+        "ths-hot": lambda: cmd_ths_hot(args.period, args.date, args.top),
+        # Tier 1: 打板三件套（L2，东财免费源）
+        "limit-pool": lambda: cmd_limit_pool(args.date),
+        "monitor-pool": lambda: cmd_monitor_pool(args.date),
+        "anomaly-pool": lambda: cmd_anomaly_pool(args.date),
+        # Tier 1: L3 一手定性 / 快讯 / 研报层（零鉴权免费源）
+        "ird-interact": lambda: cmd_ird_interact(args.code, args.limit),
+        "cls-telegraph": lambda: cmd_cls_telegraph(args.top),
+        "report-list": lambda: cmd_report_list(args.code, args.industry, args.limit),
         # Tier 1: 参考
         "unblock": lambda: cmd_unblock(args.code, args.end_date, args.limit),
         "block-trade": lambda: cmd_block_trade(args.code, args.date),
@@ -3389,6 +4163,8 @@ def main():
         "hsgt-top10": lambda: cmd_hsgt_top10(args.date),
         "sector-flow": lambda: cmd_sector_flow(args.source, args.date),
         "margin": lambda: cmd_margin(args.code, args.date),
+        # 取数级别串跑（standalone 快查专用）
+        "run-level": lambda: cmd_run_level(args.target, args.level),
     }
     try:
         outcome = cmds[args.command]()

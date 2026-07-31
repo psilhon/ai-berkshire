@@ -127,6 +127,12 @@ python3 tools/ashare_data.py history <代码> --years 10
 
 # 第7条股本变化：独立股本变动史（含变动原因：增发/回购/配售）
 python3 tools/ashare_data.py equity-history <代码>
+
+# ⚠️ 涨停生态/监管监控/异动池/热度榜（L2 情绪、治理与热度旁证，不参与 7 条硬指标判决；全市场级，按交易日扫描）
+python3 tools/ashare_data.py limit-pool --date <YYYYMMDD>
+python3 tools/ashare_data.py monitor-pool --date <YYYYMMDD>
+python3 tools/ashare_data.py anomaly-pool --date <YYYYMMDD>
+python3 tools/ashare_data.py ths-hot --period hour --top 50
 ```
 
 ⚠️ **陷阱**：`RPT_F10_FINANCE_MAINFINADATA` 返回的 `TOTAL_SHARE` 是**当前股本盖到所有历史行的静态值**，禁止用于第7条；历史股本必须走 `RPT_F10_EH_EQUITY` 股本变动史，或用历年"净利润÷EPS"反推交叉验证。
@@ -160,6 +166,7 @@ WebSearch 的角色：非 A 股标的的数据收集；A 股关键数据（尤�
 2. A 股管线取数：`quote` + `financials` + `valuation` + `history --years 10` + `equity-history`（5 个子命令依次执行）
 3. 非 A 股：WebSearch 搜索该公司的 ROE/FCF/毛利率/净利率/利息覆盖/OCF 趋势
 4. 返回结构化结果：公司名 → 7 条指标逐条数据摘要
+5. ⚠️ 打板三件套为全市场级，**不在此逐股调用**：涨停生态/监管监控/异动池由批次协调者在每批开头统一调 1 次（`limit-pool`/`monitor-pool`/`anomaly-pool --date`），作本批板块情绪与治理红线旁证；不进入 7 条硬指标判决，且避免逐股触发东财风控。
 
 > 如果批量模式下可启动的 Agent 总数受运行时限制，降级为「分 3 批，每批按市值排序优先前 8 家」；未取到的标的标为 ⚠️ 并在报告中单独说明覆盖不全。
 
@@ -273,6 +280,19 @@ WebSearch 的角色：非 A 股标的的数据收集；A 股关键数据（尤�
 | `ratios` | 财务比率全景（ROE/ROA/ROIC/流动比等，fina_indicator） | 独立第二源交叉验证 7 条指标中的 ROE——东财和 Tushare 可能不一致 | 推荐 |
 
 > **数据源优先级**：Tushare fina_indicator > 东财 financials。筛选结论中决定通过/排除的关键指标必须双源（东财+Tushare）交叉验证。
+
+## 情绪与治理旁证（免费源·东财/同花顺，L2 旁证）
+
+除 Tushare 硬指标外，批量/行业模式下可叠加以下全市场级情绪、治理与热度旁证，用于板块质量判断与治理红线告警。它们**只作旁证，不参与 7 条硬指标判决**（ADR-004 需求拉动闭环交付）。
+
+| 命令 | 数据源 | 数据内容 | 在本 skill 中的使用方式 | 层级 |
+|------|--------|---------|----------------------|:--:|
+| `limit-pool` | 东财 push2ex | 涨停/炸板/跌停/昨涨停生态（市场情绪温度） | 行业/批量模式：每批开头调 1 次，看板块涨停家数与连板高度 | 可选 |
+| `monitor-pool` | 东财 mobappconfig | 交易所重点监控名单 + 生效窗口（治理红线） | 命中监控池=治理告警，标 ⚠️ 并在报告中单独说明 | 可选 |
+| `anomaly-pool` | 东财 dycalchis | 严重异常波动明细 + 规则码 | 异动且在监控池=最高风险，作治理旁证 | 可选 |
+| `ths-hot` | 同花顺热榜 → 东财人气榜（零依赖）→ Tushare `ths_hot`（备用） | 全市场人气榜：排名/人气值/概念标签/排名变化 | 行业/批量模式：每批开头调 1 次，看板块热门个股与概念集中度，作热度旁证 | 可选 |
+
+> **注意**：四件套均为全市场级（非 `--code`），批量模式每批开头统一调 1 次，避免逐股触发东财风控；北交所与深市同为 `m=0`、市场判定须按代码号段；`anomaly-pool` 须带 `team=h5`；`ths-hot` 热度是 intraday（`--period hour/day`），`--date` 仅 Tushare 回退用。结论仍由 7 条硬指标主导，旁证仅辅助。
 
 ---
 

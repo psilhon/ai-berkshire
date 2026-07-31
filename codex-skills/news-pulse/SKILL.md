@@ -287,13 +287,34 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 | `money-flow` | 个股资金流向（小单/中单/大单/超大单） | 主力 vs 散户方向判断 | **必须** |
 | `limit-list` | 涨跌停清单（每日 150+ 条） | 市场情绪温度计——涨停家数/跌停家数 | 推荐 |
 | `limit-price` | 涨跌停价格 | 个股距涨停/跌停的距离 | 推荐 |
-| `ths-hot` | 同花顺热榜（每日 443+ 条） | 市场关注度排名——标的在全市场热门程度 | 推荐 |
+| `ths-hot` | 市场热度榜：同花顺热榜/东财人气榜（零依赖 curl 优先，每日 100+ 条）/ Tushare `ths_hot`（备用） | 市场关注度排名——标的在全市场热门程度，作热度旁证 | 推荐 |
+| `cls-telegraph` | 财联社实时电报（全市场快讯，本地签名零 key，零依赖） | 异动归因的实时资讯旁证——与东财 7×24 互为独立备份 | 推荐 |
 | `hsgt-flow` | 沪深港通资金流向（北向/南向净流入） | 外资整体方向——北向资金是净流入还是流出 | 推荐 |
 | `hsgt-top10` | 沪深港通十大成交股 | 外资重点买卖标的 | 可选 |
 | `north-hold` | 北向持股趋势 | 外资对该标的的中长期态度 | 可选 |
 
 > **数据源优先级**：Tushare（可审计可冻结） > 东财/腾讯（基础层） > WebSearch（补充层）。异动归因中资金面数据优先使用 Tushare 结构化数据，不应仅依赖 WebSearch 搜索新闻。
 > **执行方式**：在 `full-company-analysis` 流程中，本 skill 的数据通过 `tushare-enrich` 冻结收据后使用。
+
+**热度旁证（零依赖，无需 Tushare）**：`ths-hot` 已落地为零依赖命令，热度维度可独立于 Tushare 取数，作异动归因的热度旁证：
+
+```bash
+# 全市场实时热度榜（同花顺热榜 → 东财人气榜，零 token）
+python3 tools/ashare_data.py ths-hot --period hour --top 50
+# 当日维度（若走 Tushare 回退需 TUSHARE_TOKEN）
+python3 tools/ashare_data.py ths-hot --period day --date <YYYYMMDD>
+```
+
+> 热度是 intraday/rolling（`--period hour/day`），非日期驱动；`--date` 仅 Tushare 回退用。`ths-hot` 只作热度旁证，不参与硬指标判决。
+
+**快讯旁证（零依赖，无需 Tushare）**：`cls-telegraph` 已落地为零依赖命令（财联社 v1 + 本地签名零 key），全市场实时电报可作异动归因的资讯旁证，与东财 7×24 互为独立备份：
+
+```bash
+# 全市场实时电报（财联社，本地签名零 key，零 token）
+python3 tools/ashare_data.py cls-telegraph --top 50
+```
+
+> `cls-telegraph` 须带本地签名 `sign=md5(sha1(按 key 字典序拼接 query 串))`（纯本地算，无需任何 key），否则返回 errno≠0。只作快讯旁证，不参与硬指标判决。
 
 ## 依赖与资源清单
 
