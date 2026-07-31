@@ -62,6 +62,8 @@ def parser() -> argparse.ArgumentParser:
         cmd = sub.add_parser(name, help=argparse.SUPPRESS); cmd.add_argument("--run-root", required=True)
     aud = sub.add_parser("audit", help=argparse.SUPPRESS)
     aud.add_argument("--run-root", required=True); aud.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
+    fin = sub.add_parser("finalize", help=argparse.SUPPRESS)
+    fin.add_argument("--run-root", required=True); fin.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     started = sub.add_parser("job-started", help=argparse.SUPPRESS)
     started.add_argument("--run-root", required=True); started.add_argument("--work-unit-id", required=True)
     started.add_argument("--attempt-id", required=True); started.add_argument("--lease-nonce", required=True)
@@ -140,6 +142,7 @@ def main(argv=None) -> int:
         if args.command == "submit-result": emit(runtime.submit_result(root, Path(args.registry), Path(args.result))); return 0
         if args.command == "register-summary": return gate.cmd_register_summary(args)
         if args.command == "render-html": return gate.cmd_render_html(args)
+        if args.command == "finalize": return gate.cmd_finalize(args)
         if args.command == "review":
             if args.review_command == "prepare":
                 return review.cmd_prepare(args)

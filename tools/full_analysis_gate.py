@@ -610,14 +610,23 @@ def _merge_provenance(
                 fact_index[fid] = len(manifest["facts"])
             manifest["facts"].append(fact)
 
-    calc_ids = {c.get("calculation_id") for c in manifest["calculations"] if c.get("calculation_id")}
+    # 与 facts/judgments 一致：同 ID 后到覆盖（last-write-wins），
+    # 否则返工提交的修正计算会被旧记录静默屏蔽，Audit 永远重放旧参数。
+    calc_index = {
+        c.get("calculation_id"): i
+        for i, c in enumerate(manifest["calculations"])
+        if c.get("calculation_id")
+    }
     for calc in bundle.get("calculation_requests") or []:
         cid = calc.get("calculation_id")
-        if not cid or cid in calc_ids:
+        if not cid:
             continue
         calc = {**calc, "skill_id": owner_skill} if owner_skill else calc
-        manifest["calculations"].append(calc)
-        calc_ids.add(cid)
+        if cid in calc_index:
+            manifest["calculations"][calc_index[cid]] = calc
+        else:
+            calc_index[cid] = len(manifest["calculations"])
+            manifest["calculations"].append(calc)
 
     judgment_index = {
         judgment.get("judgment_id"): i
@@ -634,17 +643,22 @@ def _merge_provenance(
                 judgment_index[jid] = len(manifest["judgments"])
             manifest["judgments"].append(record)
 
-    receipt_ids = {
-        receipt.get("receipt_id")
-        for receipt in manifest["command_receipts"]
+    # 与 facts/judgments 一致：同 receipt_id 后到覆盖（last-write-wins），
+    # 保证返工补充的豁免 reason 能进入 manifest 被 Audit 认可。
+    receipt_index = {
+        receipt.get("receipt_id"): i
+        for i, receipt in enumerate(manifest["command_receipts"])
         if receipt.get("receipt_id")
     }
     for receipt in bundle.get("command_receipts") or []:
-        if receipt.get("receipt_id") in receipt_ids:
-            continue
         record = {**receipt, "skill_id": owner_skill}
-        manifest["command_receipts"].append(record)
-        receipt_ids.add(record.get("receipt_id"))
+        rid = record.get("receipt_id")
+        if rid and rid in receipt_index:
+            manifest["command_receipts"][receipt_index[rid]] = record
+        else:
+            if rid:
+                receipt_index[rid] = len(manifest["command_receipts"])
+            manifest["command_receipts"].append(record)
 
     role_keys = {
         (record.get("skill_id"), record.get("attempt_id"), record.get("role_id"))

@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,6 +143,22 @@ def _evidence_for_skill(manifest: dict, skill_id: str) -> dict:
     fact_source_ids = set()
     for f in facts:
         fact_source_ids.update(f.get("source_ids") or [])
+    sources = [s for s in manifest.get("sources", [])
+               if s.get("skill_id") == skill_id or s.get("source_id") in fact_source_ids]
+    # 跨 skill 事实：报告/判断真实引用的、归属其他 skill 的 fact，也必须纳入简报，
+    # 否则评审 Agent 会因看不到这些证据而产生“引用了不存在的 fact”的误报（false positive）。
+    _fact_index = {f["fact_id"]: f for f in manifest.get("facts", [])}
+    _ref_ids = set()
+    _ref_pat = re.compile(r"fact\.[A-Za-z0-9_.\-]+")
+    for j in judgments:
+        _ref_ids.update(_ref_pat.findall(json.dumps(j, ensure_ascii=False)))
+    _seen = {f["fact_id"] for f in facts}
+    for _fid in sorted(_ref_ids):
+        _cf = _fact_index.get(_fid)
+        if _cf is not None and _cf.get("skill_id") != skill_id and _fid not in _seen:
+            facts.append(_cf)
+            _seen.add(_fid)
+            fact_source_ids.update(_cf.get("source_ids") or [])
     sources = [s for s in manifest.get("sources", [])
                if s.get("skill_id") == skill_id or s.get("source_id") in fact_source_ids]
     return {
