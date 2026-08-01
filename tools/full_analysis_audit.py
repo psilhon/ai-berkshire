@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 
 from full_analysis_snapshot import analysis_snapshot
+from financial_rigor import build_rigor_argv, REPLAYABLE_OPERATIONS
 
 
 PWL_CODES = {"tushare_unavailable", "web_bandwidth_degraded", "ephemeral_source"}
@@ -32,10 +33,7 @@ DEFAULT_REGISTRY = str(Path(__file__).resolve().parent / "full_analysis_contract
 REPORTABLE_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS"}
 PIPELINE_SKILL = "ashare-data"  # 无 skill_id 归因的管线事实默认归属
 FINANCIAL_RIGOR = Path(__file__).resolve().parent / "financial_rigor.py"
-REPLAYABLE_OPERATIONS = {
-    "verify-market-cap", "verify-valuation", "cross-validate",
-    "benford", "calc", "three-scenario",
-}
+# REPLAYABLE_OPERATIONS 从 financial_rigor 导入：派发前门禁与 audit 重放共用单一真源。
 SUPPORTED_RULE_KINDS = {
     "min_facts", "min_dual_source_facts", "min_calculations",
     "min_judgments_with_falsification", "min_role_runs", "min_command_receipts",
@@ -148,23 +146,11 @@ def _replay_calculation_requests(calculations: list[dict]) -> bool:
     for calc in calculations:
         operation = calc.get("operation")
         args = calc.get("args")
-        if (operation not in REPLAYABLE_OPERATIONS
-                or not isinstance(args, dict)):
+        # argv 拼装统一走 financial_rigor.build_rigor_argv（派发前门禁共用单一真源），
+        # 保证 dry-run 与真执行逐字节同参；list 逐个展开以适配 three-scenario 的 nargs=3。
+        command = build_rigor_argv(operation, args, rigor_script=FINANCIAL_RIGOR)
+        if command is None:
             continue
-        command = [sys.executable, str(FINANCIAL_RIGOR), operation]
-        for key, value in args.items():
-            flag = "--" + key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    command.append(flag)
-            elif isinstance(value, list):
-                # financial_rigor 的 three-scenario 等命令使用 nargs=3；
-                # 不能把列表 JSON 编码成单个 argv，否则 argparse 会以 rc=2 拒绝。
-                command.append(flag)
-                command.extend(str(item) for item in value)
-            else:
-                encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
-                command.extend([flag, encoded])
         completed = subprocess.run(command, capture_output=True, text=True)
         if operation == "cross-validate" and completed.returncode == _CROSS_VALIDATE_RC1:
             replayed, outcome = True, "CONFLICT"

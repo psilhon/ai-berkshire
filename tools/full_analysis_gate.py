@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from full_analysis_snapshot import analysis_snapshot
+from financial_rigor import preflight_diagnose_params
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -358,6 +359,16 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
     # NOT_APPLICABLE 单元走负向验收（负向验收 fact 不适用 evidence_rules），跳过。
     if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}:
         _precheck_evidence_rules(bundle, skill)
+        # v3.3.9 T1/T2/T3：派发前预提交门禁——把 audit 才暴露的参数笔误（financial_rigor
+        # dry-run, rc=2）与「白名单外的 PASS 操作」（虚构成功/自定义操作）前移到提交当下，
+        # 聚合为一次抛错，Agent 一轮看全所有问题、原地修完再交，不进 audit、不耗 attempt。
+        preflight_errors = _precheck_calculation_params(bundle)
+        preflight_errors += _precheck_command_receipts(bundle, skill)
+        if preflight_errors:
+            raise GateError(
+                f"{bundle['skill_id']} 预提交门禁拦截 {len(preflight_errors)} 处问题"
+                f"（未进 audit、未耗 attempt），请逐条修正后一次性重交：\n"
+                + "\n".join(preflight_errors))
 
 
 def _precheck_evidence_rules(bundle: dict, skill: dict) -> None:
@@ -412,6 +423,73 @@ def _precheck_evidence_rules(bundle: dict, skill: dict) -> None:
             raise GateError(
                 f"{bundle['skill_id']} 含 falsification 的 judgments {actual} < "
                 f"要求 {min_fals['n']}")
+
+
+def _precheck_calculation_params(bundle: dict) -> list:
+    """确定性 dry-run 每条可重放 calculation，仅拦参数错（financial_rigor rc=2）。
+
+    返回错误消息列表（空=通过），由 validate_result_bundle 聚合抛出。与 audit 重放互补：
+    audit 事后判 PASS/CONFLICT/FAIL 并写 expected；本门禁只把「一个笔误毁全量」挡在
+    提交当下——缺必需 flag、类型转换失败等 argparse 层错误（退出码 2）记为错误，
+    Agent 原地修正后重交，不必跑完整轮才在 audit 暴露。
+    退出码语义对齐 financial_rigor：0 通过 / 1 业务不通过（放行）/ 2 参数错（记错误）。
+    每条消息含真实 argv + stderr 末三行 + 必需参数清单，供 Agent 一次改对。
+    """
+    errors = []
+    for calc in bundle.get("calculation_requests") or []:
+        diagnosis = preflight_diagnose_params(calc.get("operation"), calc.get("args"))
+        if diagnosis.get("ok"):
+            continue
+        hint = diagnosis.get("required_hint") or []
+        tail = "；".join(line for line in diagnosis.get("stderr_tail") or [])
+        errors.append(
+            f"  - [参数错误] {calc.get('calculation_id')}（operation={calc.get('operation')}）"
+            f"rc={diagnosis.get('rc')}"
+            + (f"；必需参数 {hint}" if hint else "")
+            + (f"；argparse: {tail}" if tail else "")
+            + f"\n      argv: {' '.join(diagnosis.get('argv') or [])}")
+    return errors
+
+
+def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
+    """校验回执操作不越出契约白名单（仅拦 PASS 状态的白名单外操作）。
+
+    返回错误消息列表（空=通过），由 validate_result_bundle 聚合抛出。
+    白名单 = 契约 required_command_operations.values ∪ conditional_command_operations
+    各 op（数据源与 audit 同源，均为 contract.json）。只拦确定性错误：
+    status=PASS 却落在白名单外的操作（虚构成功 / 自定义操作）会让下游重放失败、
+    触发整轮返工，必须当场记为错误。非 PASS 的白名单外操作与 required 缺漏不在此拦——
+    前者不构成虚构成功，后者可能因 UNAVAILABLE/FAIL+limitation 合法豁免，
+    满足率（min_satisfied_ratio）与豁免判定属 audit 权威职责，避免与 audit 判重。
+    """
+    rules = skill.get("evidence_rules") or []
+    whitelist: set = set()
+    for rule in rules:
+        kind = rule.get("kind")
+        if kind == "required_command_operations":
+            whitelist.update(rule.get("values", []))
+        elif kind == "conditional_command_operations":
+            for value in rule.get("values", []):
+                if isinstance(value, str):
+                    whitelist.add(value)
+                elif isinstance(value, dict) and value.get("op"):
+                    whitelist.add(value["op"])
+    if not whitelist:
+        return []  # 契约未声明命令操作清单的技能（非 ashare 类）不做白名单校验
+    offending = sorted({
+        str(receipt.get("operation"))
+        for receipt in bundle.get("command_receipts") or []
+        if receipt.get("status") == "PASS"
+        and str(receipt.get("operation")) not in whitelist
+    })
+    if not offending:
+        return []
+    return [
+        f"  - [回执越界] 成功操作 {offending} 不在契约白名单内；operation 必须取自"
+        f"契约白名单（required_command_operations / conditional_command_operations 声明的 op），"
+        f"禁止自定义操作或虚构成功。请改用白名单内操作重跑，"
+        f"或把该回执状态改为 FAIL/UNAVAILABLE 并附 reason 说明。"
+    ]
 
 
 def _validate_not_applicable(bundle: dict, skill: dict, manifest: dict) -> None:

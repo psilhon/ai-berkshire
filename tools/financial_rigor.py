@@ -24,8 +24,10 @@ import argparse
 import json
 import math
 import re
+import subprocess
 import sys
 from decimal import Decimal, Context, ROUND_HALF_EVEN, ROUND_HALF_UP, InvalidOperation
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Exact Decimal Engine (no floating-point drift)
@@ -811,6 +813,85 @@ class JsonAwareArgumentParser(argparse.ArgumentParser):
             print(json.dumps(env, ensure_ascii=False))
             raise SystemExit(2)
         super().error(message)
+
+
+REPLAYABLE_OPERATIONS = {
+    "verify-market-cap", "verify-valuation", "cross-validate",
+    "benford", "calc", "three-scenario",
+}
+
+# three-scenario 的必需参数清单：供派发前门禁在参数错时给 Agent 一份可对照的修复提示。
+# 与 main() 中 three-scenario 子解析器的 required 声明保持一致。
+_REQUIRED_ARGS_HINT = {
+    "three-scenario": ["--price", "--eps", "--shares", "--growth", "--pe"],
+    "verify-market-cap": ["--price", "--shares", "--reported"],
+    "verify-valuation": ["--price"],
+    "cross-validate": ["--field", "--values"],
+    "benford": ["--values"],
+    "calc": ["--expr"],
+}
+
+
+def build_rigor_argv(operation, args, rigor_script=None):
+    """把 (operation, args) 拼成可重放 financial_rigor 的 argv（不含解释器）。
+
+    这是 Gate 派发前参数预校验与 Audit 重放的【唯一】拼装真源：两处共用，
+    保证 dry-run 与真执行逐字节同参，杜绝「预校验过、audit 挂」的漂移。
+    args 取值规则与历史 audit 行为一致：
+    - bool True → 仅追加 flag；False → 省略；
+    - list → flag 后逐个展开（three-scenario 的 nargs=3 依赖此形态）；
+    - dict → JSON 编码；其余 str()。
+    返回 None 表示该 operation 不可重放（调用方应跳过）。
+    """
+    if operation not in REPLAYABLE_OPERATIONS or not isinstance(args, dict):
+        return None
+    script = str(rigor_script) if rigor_script is not None else str(
+        Path(__file__).resolve())
+    command = [sys.executable, script, operation]
+    for key, value in args.items():
+        flag = "--" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                command.append(flag)
+        elif isinstance(value, list):
+            command.append(flag)
+            command.extend(str(item) for item in value)
+        else:
+            encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+            command.extend([flag, encoded])
+    return command
+
+
+def preflight_diagnose_params(operation, args, rigor_script=None):
+    """派发前参数预校验：确定性重放一条 calculation 请求，仅拦截【参数错】。
+
+    返回 dict（始终非 None，供调用方判断）：
+    - {"ok": True}                    参数合法（含业务不通过 rc=1 —— 放行给 audit 权威判定）；
+    - {"ok": False, "rc": 2, ...}     argparse/参数层错误，应在提交当下拒回 Agent；
+    - {"ok": True, "skipped": True}   operation 不可重放，门禁不管（交给 audit）。
+
+    语义对齐退出码：0 验证通过 / 1 业务不通过 / 2 参数错误（见本模块顶部协议）。
+    本函数只把 rc=2 判为参数错；rc=1 是「算得通但结论不达标」，不属笔误，放行。
+    """
+    argv = build_rigor_argv(operation, args, rigor_script=rigor_script)
+    if argv is None:
+        return {"ok": True, "skipped": True}
+    completed = subprocess.run(argv, capture_output=True, text=True)
+    if completed.returncode == 2:
+        # 只保留 argparse 的 "...: error: <具体原因>" 行，丢弃 usage 噪音，
+        # 让派发前门禁的回传对 Agent 精准可操作。
+        error_lines = [
+            line.strip() for line in (completed.stderr or "").splitlines()
+            if ": error:" in line
+        ]
+        return {
+            "ok": False,
+            "rc": 2,
+            "argv": argv,
+            "stderr_tail": error_lines[-2:],
+            "required_hint": _REQUIRED_ARGS_HINT.get(operation, []),
+        }
+    return {"ok": True, "rc": completed.returncode}
 
 
 def main():

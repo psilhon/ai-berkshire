@@ -763,5 +763,78 @@ class TestJSONCrossCheck(_CLICase):
         self.assertEqual(proc.stderr, "")
 
 
+class TestPreflightHelpers(unittest.TestCase):
+    """v3.3.9 T1：build_rigor_argv / preflight_diagnose_params 共享真源。"""
+
+    def test_build_argv_expands_list_for_three_scenario(self):
+        argv = fr.build_rigor_argv("three-scenario", {
+            "price": 10, "eps": 1.0, "shares": 9.11,
+            "growth": [0.15, 0.08, 0.0], "pe": [25, 20, 15],
+        })
+        # nargs=3 依赖列表逐个展开，绝不能 JSON 编码成单 argv
+        gi = argv.index("--growth")
+        self.assertEqual(argv[gi + 1:gi + 4], ["0.15", "0.08", "0.0"])
+        pi = argv.index("--pe")
+        self.assertEqual(argv[pi + 1:pi + 4], ["25", "20", "15"])
+
+    def test_build_argv_returns_none_for_non_replayable(self):
+        self.assertIsNone(fr.build_rigor_argv("not-a-tool", {"x": 1}))
+        self.assertIsNone(fr.build_rigor_argv("calc", "not-a-dict"))
+
+    def test_build_argv_bool_true_appends_flag_only(self):
+        argv = fr.build_rigor_argv("calc", {"expr": "1+1", "json": True})
+        self.assertIn("--json", argv)
+        self.assertNotIn("True", argv)
+
+    def test_build_argv_matches_legacy_audit_handassembly(self):
+        # 单一真源黄金测试：复刻 v3.3.9 前 audit 的手拼逻辑，断言逐字节相等。
+        # 若未来 build_rigor_argv 偏离 audit 行为（导致 dry-run 与真执行漂移），此测试红。
+        def legacy(operation, args):
+            command = [sys.executable, "RIGOR", operation]
+            for key, value in args.items():
+                flag = "--" + key.replace("_", "-")
+                if isinstance(value, bool):
+                    if value:
+                        command.append(flag)
+                elif isinstance(value, list):
+                    command.append(flag)
+                    command.extend(str(item) for item in value)
+                else:
+                    encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+                    command.extend([flag, encoded])
+            return command
+
+        samples = [
+            ("calc", {"expr": "510 * 9.11e9"}),
+            ("three-scenario", {"price": 10, "eps": 1.0, "shares": 9.11,
+                                "growth": [0.15, 0.08, 0.0], "pe": [25, 20, 15], "json": True}),
+            ("cross-validate", {"field": "revenue",
+                                "values": {"年报": 7518, "Yahoo": 7500}, "unit": "亿"}),
+            ("verify-market-cap", {"price": 510, "shares": 9.11e9,
+                                   "reported": 4.65e12, "currency": "HKD"}),
+        ]
+        for operation, args in samples:
+            got = fr.build_rigor_argv(operation, args, rigor_script="RIGOR")
+            self.assertEqual(got, legacy(operation, args), f"漂移于 {operation}")
+
+    def test_preflight_ok_for_valid_params(self):
+        diag = fr.preflight_diagnose_params("calc", {"expr": "1+1"})
+        self.assertTrue(diag["ok"])
+
+    def test_preflight_rejects_missing_required_arg(self):
+        diag = fr.preflight_diagnose_params("three-scenario", {"price": 10})
+        self.assertFalse(diag["ok"])
+        self.assertEqual(diag["rc"], 2)
+        self.assertIn("--growth", diag["required_hint"])
+        self.assertTrue(diag["argv"])
+
+    def test_preflight_allows_business_failure_rc1(self):
+        # 算得通但结论不达标（市值偏差巨大）→ rc=1，门禁放行给 audit 权威判定
+        diag = fr.preflight_diagnose_params(
+            "verify-market-cap", {"price": 10, "shares": 1, "reported": 999999})
+        self.assertTrue(diag["ok"])
+        self.assertEqual(diag["rc"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -741,7 +741,8 @@ class GateV2Tests(unittest.TestCase):
 
     # ---- E4/E6/E7：前置账本校验 / 跨 skill 覆盖告警 / schema 报错友好化 ----
 
-    def _mk_bundle(self, skill_id, attempt, facts=None, judgments=None, caps=None, receipts=None):
+    def _mk_bundle(self, skill_id, attempt, facts=None, judgments=None, caps=None,
+                   receipts=None, calcs=None):
         """构造最小可 ingest 的 PASS bundle（可覆盖账本字段）。"""
         self.init()
         attempt_dir = self.run_root / f"evidence/attempts/{skill_id}/{attempt}"
@@ -760,7 +761,7 @@ class GateV2Tests(unittest.TestCase):
                 "bytes": source.stat().st_size, "sha256": digest, "formal": False, "accepted": False,
             }],
             "fact_updates": facts if facts is not None else [],
-            "source_records": [], "calculation_requests": [],
+            "source_records": [], "calculation_requests": calcs if calcs is not None else [],
             "judgments": judgments if judgments is not None else [],
             "capability_records": caps if caps is not None else [],
             "command_receipts": receipts if receipts is not None else [],
@@ -874,6 +875,118 @@ class GateV2Tests(unittest.TestCase):
         self.assertIn("missing_usage_summary", exceeded)
         self.assertIn("excessive_attempts", exceeded)
         self.assertIn("COST_BUDGET_EXCEEDED", check.get("verdict", ""))
+
+    # ---- v3.3.9 T1：派发前参数预校验（financial_rigor dry-run） ----
+
+    def test_calc_param_preflight_rejects_bad_argparse_params(self):
+        # three-scenario 缺必需 --growth / --pe → argparse rc=2，应在 submit 前置拦截，
+        # 不进 audit、不耗 attempt（根治「一个笔误毁全量」）
+        rp = self._mk_bundle("financial-data", "attempt-t1a", calcs=[
+            {"calculation_id": "calculation.t1.bad", "operation": "three-scenario",
+             "args": {"price": 10, "eps": 1.0, "shares": 9.11}},
+        ])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("参数", combined)
+        self.assertIn("three-scenario", combined)
+
+    def test_calc_param_preflight_allows_valid_and_business_failure(self):
+        # 合法参数（含业务不通过 rc=1）应放行到 audit，预校验只拦 rc=2 参数错
+        rp = self._mk_bundle("financial-data", "attempt-t1b", calcs=[
+            {"calculation_id": "calculation.t1.ok", "operation": "calc", "args": {"expr": "1+1"}},
+            {"calculation_id": "calculation.t1.biz", "operation": "verify-market-cap",
+             "args": {"price": 10, "shares": 1, "reported": 999999}},
+        ])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
+
+    def test_calc_param_preflight_report_includes_argv_and_expected_flags(self):
+        # 回传须含真实 argv + 必需参数清单，让 Agent 一次改对（T3 基础）
+        rp = self._mk_bundle("financial-data", "attempt-t1c", calcs=[
+            {"calculation_id": "calculation.t1.msg", "operation": "three-scenario",
+             "args": {"price": 10}},
+        ])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("calculation.t1.msg", combined)
+        self.assertIn("--growth", combined)
+
+    # ---- v3.3.9 T2：ashare 回执完整性门禁（白名单外 PASS 操作拦截） ----
+
+    ASHARE_FACTS = [
+        {"fact_id": "fact.ashare.price", "field": "price", "value": 1.0, "source_ids": ["s1"]},
+        {"fact_id": "fact.ashare.market-cap", "field": "market_cap", "value": 2.0, "source_ids": ["s1"]},
+        {"fact_id": "fact.ashare.revenue", "field": "revenue", "value": 3.0, "source_ids": ["s1"]},
+    ]
+    ASHARE_CAPS = [{"capability": "tushare_configured", "available": True}]
+    ASHARE_REQUIRED_OPS = ["quote", "financials", "valuation", "history",
+                           "equity-history", "announcements", "signals"]
+
+    def _ashare_receipts(self, extra=()):
+        receipts = [
+            {"receipt_id": f"receipt.{op}", "operation": op, "status": "PASS"}
+            for op in self.ASHARE_REQUIRED_OPS
+        ]
+        return receipts + list(extra)
+
+    def test_receipt_gate_rejects_pass_operation_outside_whitelist(self):
+        # 白名单外的 PASS 操作（虚构成功/自定义操作）应在 submit 前置拦截，
+        # 根治沪电 run「自定义操作不可重放」导致的整轮返工
+        rp = self._mk_bundle("ashare-data", "attempt-t2a", facts=self.ASHARE_FACTS,
+                             caps=self.ASHARE_CAPS, receipts=self._ashare_receipts(extra=[
+                                 {"receipt_id": "receipt.custom", "operation": "custom-download",
+                                  "status": "PASS"}]))
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("custom-download", combined)
+        self.assertIn("白名单", combined)
+
+    def test_receipt_gate_ignores_non_pass_operation_outside_whitelist(self):
+        # 白名单外的 FAIL/UNAVAILABLE 不构成「虚构成功」，门禁不拦（放行）
+        rp = self._mk_bundle("ashare-data", "attempt-t2b", facts=self.ASHARE_FACTS,
+                             caps=self.ASHARE_CAPS, receipts=self._ashare_receipts(extra=[
+                                 {"receipt_id": "receipt.custom2", "operation": "custom-download",
+                                  "status": "FAIL", "reason": "empty_data: 无数据"}]))
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
+
+    def test_receipt_gate_passes_all_whitelisted_operations(self):
+        # required + conditional 全在白名单内 → 门禁放行
+        rp = self._mk_bundle("ashare-data", "attempt-t2c", facts=self.ASHARE_FACTS,
+                             caps=self.ASHARE_CAPS, receipts=self._ashare_receipts(extra=[
+                                 {"receipt_id": "receipt.peband", "operation": "pe-band",
+                                  "status": "PASS"}]))
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
+
+    # ---- v3.3.9 T3：门禁聚合回传（一次看全、原地改完） ----
+
+    def test_preflight_aggregates_calc_and_receipt_errors_in_single_report(self):
+        # calc 参数笔误 + 回执虚构成功同时出现时，单次回传须含两类错误 + 聚合计数，
+        # 让 Agent 一轮修完（而非先拒 calc、修后再拒 receipt 的两轮）
+        rp = self._mk_bundle("ashare-data", "attempt-t3a",
+                             facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
+                             calcs=[{"calculation_id": "calculation.t3.bad",
+                                     "operation": "three-scenario", "args": {"price": 10}}],
+                             receipts=self._ashare_receipts(extra=[
+                                 {"receipt_id": "receipt.custom", "operation": "custom-download",
+                                  "status": "PASS"}]))
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("calculation.t3.bad", combined)   # 参数错条目
+        self.assertIn("--growth", combined)             # 参数修复提示
+        self.assertIn("custom-download", combined)      # 回执越界条目
+        self.assertIn("2 处问题", combined)             # 聚合计数
 
 
 if __name__ == "__main__":
