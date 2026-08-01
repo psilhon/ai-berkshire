@@ -25,7 +25,8 @@ STATE_REL = Path("evidence/runtime-state.json")
 EVENTS_REL = Path("evidence/events.jsonl")
 USAGE_REL = Path("evidence/usage.jsonl")
 MANIFEST_REL = Path("evidence/00-analysis-manifest.json")
-LEASE_MINUTES = 20
+LEASE_MINUTES = 20  # 扇出单元基础 TTL（按角色数倍增）
+NON_FANOUT_LEASE_MINUTES = 40  # 非扇出单元 TTL（宏景 run 实证：mgmt ~35min、ind-research ~25min）
 BACKOFF_SECONDS = (60, 180)
 RATE_LIMIT_COOLDOWN_SECONDS = 600
 PARTIAL_REPORT = "PARTIAL_REPORT.md"
@@ -400,17 +401,21 @@ def compute_dependency_waves(graph: dict) -> list[list[str]]:
 def _lease_ttl_for_skill(skill: dict | None) -> int:
     """计算单元的租约 TTL（分钟）。
 
-    默认 LEASE_MINUTES（20）；扇出单元（roles.mode=independent_then_integrator）需在
-    单个租约内串行跑完多个角色子 Agent + 整合，实际时长远超 20 分钟。TTL 按角色数倍增
-    （integrator 是整合者不计独立角色），避免被 _sweep_expired_leases 误判 heartbeat_lost
-    回收后触发 resume/requeue（沪电 run 三个扇出单元 team/earnings/news 均因此过期）。
+    非扇出单元默认 NON_FANOUT_LEASE_MINUTES（40）；扇出单元（roles.mode=
+    independent_then_integrator）需在单个租约内串行跑完多个角色子 Agent + 整合，
+    实际时长远超 40 分钟。TTL 按角色数倍增（integrator 是整合者不计独立角色），
+    避免被 _sweep_expired_leases 误判 heartbeat_lost 回收后触发 resume/requeue
+    （沪电 run 三个扇出单元 team/earnings/news 均因此过期）。
     返回的 TTL 同时写入 lease，heartbeat 据此续期，保持派发/续期口径一致。
+
+    宏景 run 实证：非扇出重单元（management-deep-dive ~35min、industry-research ~25min）
+    在旧 TTL=20 下频繁被 sweep abandoned 重跑；提高到 40 分钟消除误回收。
     """
     roles = (skill or {}).get("roles") or {}
     if roles.get("mode") == "independent_then_integrator":
         verifiable = [r for r in (roles.get("required_roles") or []) if r != "integrator"]
         return LEASE_MINUTES * max(len(verifiable), 1)
-    return LEASE_MINUTES
+    return NON_FANOUT_LEASE_MINUTES
 
 
 def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:
@@ -475,7 +480,7 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
         "lease_nonce": secrets.token_hex(16),
         "leased_at": iso(current),
         "expires_at": iso(current + timedelta(minutes=lease_ttl)),
-        # per-lease TTL：heartbeat 据此续期（默认 LEASE_MINUTES，fanout 按角色数倍增）
+        # per-lease TTL：heartbeat 据此续期（非扇出 NON_FANOUT_LEASE_MINUTES=40，fanout 按角色数倍增）
         "lease_ttl_minutes": lease_ttl,
     }
     unit.update({"status": "LEASED", "attempts": attempt, "lease": lease})
@@ -615,8 +620,8 @@ def _heartbeat_locked(
     unit = _unit(state, work_unit_id)
     _check_lease(unit, attempt_id, nonce)
     # per-lease 续期：fanout 单元按派发时存储的 lease_ttl_minutes（倍增后）续期，
-    # 普通单元回退默认 LEASE_MINUTES（向后兼容旧租约无该字段）。
-    ttl = unit["lease"].get("lease_ttl_minutes") or LEASE_MINUTES
+    # 普通单元回退 NON_FANOUT_LEASE_MINUTES（向后兼容旧租约无该字段）。
+    ttl = unit["lease"].get("lease_ttl_minutes") or NON_FANOUT_LEASE_MINUTES
     unit["lease"]["expires_at"] = iso(now() + timedelta(minutes=ttl))
     save_state(run_root, state)
     event(run_root, "heartbeat", work_unit_id=work_unit_id, attempt_id=attempt_id)

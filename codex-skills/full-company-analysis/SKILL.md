@@ -68,7 +68,7 @@ python3 scripts/full_analysis.py job-started \
   --agent-job-id <WorkBuddy 返回的 job id>
 ```
 
-**调度时序纪律（E2，强制）**——租约默认 20 分钟过期，扇出单元自 v3.3.10 起自动倍增（= 20 × 独立角色数，如 team/earnings 4 角色 = 80 分钟），heartbeat 按派发时的租约 TTL 续期。租约过期后 submit 被拒、只能走 resume 孤儿恢复（requeue 会丢失已完工作）。以下顺序不可颠倒：
+**调度时序纪律（E2，强制）**——非扇出单元租约默认 40 分钟过期（宏景 run 实证：mgmt ~35min、ind-research ~25min，旧 20 分钟频繁被 sweep 误回收）；扇出单元自动倍增（= 20 × 独立角色数，如 team/earnings 4 角色 = 80 分钟）；heartbeat 按派发时的租约 TTL 续期。租约过期后 submit 被拒、只能走 resume 孤儿恢复（requeue 会丢失已完工作）。以下顺序不可颠倒：
 
 1. **前台并行派发 Agent**（Agent 工具默认模式），从每个返回结果取真实 `agent_job_id`；一波内的多个单元在**同一条消息里并行派发**（见上「波次并行派发」）。**禁止后台派发**（`run_in_background` 不返回 job id，Agent 完成后无法及时 job-started，租约过期即触发 requeue 灾难）——并行用"一条消息多个前台 Agent"实现，不用后台。
 2. 所有并行 Agent 返回后**立即**为每个单元调用 `job-started`（60 秒内），各自完成后 `submit-result`；不要把提交拖到下一个波次之后。
@@ -113,6 +113,7 @@ Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短
   - `min_judgments_with_falsification`：要求每条第 `falsification` 非空数组，条数 ≥ n。
 - **result.json 结构红线**：command_receipts 每条只允许 `receipt_id/operation/status/detail/reason` 五键；fact_updates/source_records/judgments 等列表对象 `additionalProperties=false`，不得携带扩展字段（如 `detail`/`skill_id`）；评审维度 `dimensions` 必须是数组 `[{dimension, verdict}]` 而非 dict。
 - **calc 表达式红线**：`financial_rigor.py calc` 只支持纯四则运算（白名单 `0123456789.+-*/() eE`），**禁止 `round(...)` 与 `^` 幂运算**（会被判「不安全的表达式」导致 Audit 重放失败）；需要取整/幂时提交不含 round/^ 的表达式（如 `(1-59.46/86.11)*100`）。
+- **fact_id/receipt_id 命名纪律（防跨单元覆盖，强制）**：所有 `fact_updates[].fact_id` 和 `command_receipts[].receipt_id` **必须以本 skill 的 `skill_id` 作为前缀**，格式为 `fact-<skill_id>-<descriptor>` 和 `rcpt-<skill_id>-<descriptor>`。**禁止通用编号**（如 `fact-001`、`fact-price-301396`、`rcpt-quote-301396`）。**根因**：gate ingest 按 `fact_id`/`receipt_id` 做 last-write-wins 合并，不同 skill 使用相同 ID 会覆盖 `skill_id` 归属，导致 audit 缺字段（宏景 run 因 ID 冲突触发 3 轮 correction 修复）。示例：ashare-data 用 `fact-ashare-data-price`、`rcpt-ashare-data-quote`；thesis-tracker 用 `fact-thesis-tracker-price`、`rcpt-thesis-tracker-quote`；financial-data 用 `fact-financial-data-revenue`、`rcpt-financial-data-income-stmt`。
 
 **多角色 skill 必须真扇出**：当 `fanout_required: true` 时，必须为 `roles.required_roles` 中每个角色（除 `integrator` 外）启动一个**独立原生 Agent**（用 Task 工具 fan-out），各自在 `evidence/attempts/<skill_id>/<attempt_id>/role-<role>.md` 产出独立分析备忘录（每个 ≥300 字节，且不得相互引用以保证独立性）；最后由整合 Agent 读取全部角色备忘录产出正式整合报告。缺少任一 `role-<role>.md` 时 Gate 会拒收。单 Agent skill 则由一个原生 Agent 按 methodology 完整执行。
 

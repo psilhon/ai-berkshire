@@ -618,9 +618,24 @@ class DependencyGraphTests(unittest.TestCase):
         return (self._parse(leased["expires_at"])
                 - self._parse(leased["leased_at"])).total_seconds() / 60
 
+    def test_non_fanout_unit_gets_40min_lease_ttl(self):
+        # 非扇出单元 TTL = NON_FANOUT_LEASE_MINUTES = 40 分（宏景 run 实证：
+        # mgmt ~35min、ind-research ~25min，旧 TTL=20 频繁被 sweep 误回收）。
+        result = self.cli(
+            "start", "--registry", REGISTRY, "--repo-root", self.root,
+            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+            "--run-root", self.run_root,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # ashare-data 是首个就绪单元（非扇出），应获得 TTL=40
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["skill_id"], "ashare-data")
+        self.assertEqual(leased.get("lease_ttl_minutes"), 40)
+        self.assertEqual(self._lease_duration_minutes(leased), 40)
+
     def test_fanout_unit_gets_multiplied_lease_ttl(self):
-        # investment-team 扇出 4 角色（integrator 不计）→ TTL ≈ 20×4=80 分，
-        # lease 存 lease_ttl_minutes，防止多角色串行超 20 分被 sweep 误回收。
+        # investment-team 扇出 4 角色（integrator 不计）→ TTL = LEASE_MINUTES×4 = 80 分，
+        # lease 存 lease_ttl_minutes，防止多角色串行超时被 sweep 误回收。
         result = self.cli(
             "start", "--registry", REGISTRY, "--repo-root", self.root,
             "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
@@ -636,7 +651,7 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertEqual(self._lease_duration_minutes(leased), 80)
 
     def test_heartbeat_renews_by_stored_lease_ttl(self):
-        # fanout 单元的 heartbeat 按存储的 lease_ttl_minutes（80 分）续期，而非默认 20 分。
+        # fanout 单元的 heartbeat 按存储的 lease_ttl_minutes（80 分）续期，而非默认 40 分。
         result = self.cli(
             "start", "--registry", REGISTRY, "--repo-root", self.root,
             "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
