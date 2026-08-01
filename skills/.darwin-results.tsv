@@ -1,0 +1,4 @@
+timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
+2026-08-01T08:48	baseline	ashare-data	-	86.7	baseline	-	初始九维评估；dim3/dim9满分；dim1缺trigger、dim7篇幅冗为短板	dry_run
+2026-08-01T08:52	fulltest	ashare-data	-	-	measure	dim8	3个测试prompt真实跑通：search定码+MATCH/ird-interact 76条处理未回复/cls-telegraph实时errno=0，dim8由dry_run升full_test	full_test
+2026-08-01T08:54	round1	ashare-data	86.7	90.3	keep	dim1+dim7+dim8	补triggers触发词字段/收敛12命令内联枚举为权威清单指针/dim8三个prompt真实跑通升full_test	full_test

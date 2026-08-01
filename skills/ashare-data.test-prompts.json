@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "scenario": "happy path · 默认概览三件套",
+    "prompt": "帮我查一下贵州茅台的最新行情、估值和近5年财务",
+    "expected": "先确认代码 600519（公司名→search 定码）；只跑概览三件套 quote+valuation+financials（L0 QUICK），不默默扩展到八个命令；标注来源（腾讯行情盘中快照+东财52周/财务）与取数时间；不下投资结论"
+  },
+  {
+    "id": 2,
+    "scenario": "edge · L3 一手定性 + 未回复处理",
+    "prompt": "看看立讯精密的互动易问答，投资者都问了什么、公司怎么回的",
+    "expected": "先 search 定码 002475；跑 ird-interact 002475（巨潮两步 POST）；正确处理最新提问未回复（attachedContent=None）；标注 L3 一手定性+零鉴权免费源；只产数据证据不附买卖倾向"
+  },
+  {
+    "id": 3,
+    "scenario": "边界 · 全市场级 + 本地签名",
+    "prompt": "查一下财联社最新的快讯",
+    "expected": "识别 cls-telegraph 为全市场级（非个股，不接代码）；跑 cls-telegraph --top；校验 errno=0（本地签名 sign=md5(sha1(字典序 query))）；标注 L3 快讯旁证、不参与 7 条硬指标判决；失败则标数据不足不编造"
+  }
+]
