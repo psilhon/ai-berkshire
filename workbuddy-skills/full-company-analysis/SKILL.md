@@ -37,7 +37,17 @@ cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/f
 
 ## Agent 调度纪律
 
-循环调用 `python3 scripts/full_analysis.py next-work --run-root <run_root>`。每次返回 `LEASED` 后，必须直接使用 **WorkBuddy 原生 Agent** 完成该 work unit；不得由 Python、shell 或旧版 orchestrator 再创建 Agent。
+循环调用 `python3 scripts/full_analysis.py next-work --run-root <run_root>`。自 v3.3.10 起 runtime 按 **depends_on 依赖波次**调度：只有上游全 DONE 的单元才会返回 `LEASED`，跨波单元被挡（返回 `NO_WORK/DEPENDENCIES_PENDING`）直到上游完成。每次返回 `LEASED` 后，必须直接使用 **WorkBuddy 原生 Agent** 完成该 work unit；不得由 Python、shell 或旧版 orchestrator 再创建 Agent。
+
+**波次并行派发（v3.3.10，强制）**——依赖波次的墙钟收益来自"一波内多单元并行"，而非逐个串行：
+
+1. **收齐一波**：连续调用 `next-work` 直到返回 `NO_WORK`（`CONCURRENCY_LIMIT` 或 `DEPENDENCIES_PENDING`），把这批 `LEASED` 单元收为一个波次批次（并发上限 `concurrency.max`，默认 4）。
+2. **并行派发**：把该批次的每个单元作为**独立前台 Agent**，在**同一条消息里一次性全部派发**（多个 Agent 工具调用并发运行）。禁止逐个前台串行（那会把波次退化为全串行，浪费依赖图的 ~90 分收益）。
+3. **并行 job-started**：所有 Agent 返回 `agent_job_id` 后，为每个单元调用 `job-started`。
+4. **收尾与下一波**：各 Agent 完成即 `submit-result`；全部提交后回到第 1 步领取下一波。
+5. **错峰**：W3 含多个扇出重单元（investment-team / earnings-review 各 4 角色），若担心上游 429 限流，可把重单元与轻单元分两小批派发（见下方限流纪律），但**同一小批内仍要并行**。
+
+当前 13 单元的波次（契约 depends_on 的拓扑分层）：W1 `ashare-data` → W2 `financial-data`/`quality-screen`/`investment-checklist`/`investment-research` → W3 `investment-team`/`management-deep-dive`/`earnings-review`/`industry-research` → W4 `industry-funnel`/`bottleneck-hunter`/`news-pulse` → W5 `thesis-tracker`。关键路径墙钟 ≈ 42 分（vs 串行 ~142 分）。
 
 启动原生 Agent 前调用：
 
@@ -48,13 +58,14 @@ python3 scripts/full_analysis.py job-started \
   --agent-job-id <WorkBuddy 返回的 job id>
 ```
 
-**调度时序纪律（E2，强制）**——租约 20 分钟过期，过期后 submit 被拒、只能走 resume 孤儿恢复（requeue 会丢失已完工作）。以下顺序不可颠倒：
+**调度时序纪律（E2，强制）**——租约默认 20 分钟过期，扇出单元自 v3.3.10 起自动倍增（= 20 × 独立角色数，如 team/earnings 4 角色 = 80 分钟），heartbeat 按派发时的租约 TTL 续期。租约过期后 submit 被拒、只能走 resume 孤儿恢复（requeue 会丢失已完工作）。以下顺序不可颠倒：
 
-1. **前台派发 Agent**（Agent 工具默认模式），从返回结果取真实 `agent_job_id`；**禁止后台派发**（`run_in_background` 不返回 job id，Agent 完成后无法及时 job-started，租约过期即触发 requeue 灾难）。
-2. Agent 返回后**立即**调用 `job-started`（60 秒内），随后 `submit-result`；不要把提交拖到下一个工作单元之后。
-3. 若提交被拒（身份不匹配/实质校验），当场修复 result.json 或报告后重提，**不要留到收口阶段批量处理**——批量返工会使整条返工链（audit→prepare→评审→ingest→summarize）连锁重跑。
-4. **长任务强制 heartbeat**：预计执行超过 10 分钟的 Agent（fanout 单元、多模块研究单元），派发指令必须要求其每完成一个主要阶段调用一次 `heartbeat`（命令见 BUNDLE-SPEC）；全程零心跳的 run 会被 doctor 判「疑似主上下文直写」，需人工复核。
+1. **前台并行派发 Agent**（Agent 工具默认模式），从每个返回结果取真实 `agent_job_id`；一波内的多个单元在**同一条消息里并行派发**（见上「波次并行派发」）。**禁止后台派发**（`run_in_background` 不返回 job id，Agent 完成后无法及时 job-started，租约过期即触发 requeue 灾难）——并行用"一条消息多个前台 Agent"实现，不用后台。
+2. 所有并行 Agent 返回后**立即**为每个单元调用 `job-started`（60 秒内），各自完成后 `submit-result`；不要把提交拖到下一个波次之后。
+3. 若提交被拒（身份不匹配/实质校验/预提交门禁），当场修复 result.json 或报告后重提，**不要留到收口阶段批量处理**——批量返工会使整条返工链（audit→prepare→评审→ingest→summarize）连锁重跑。
+4. **长任务强制 heartbeat**：预计执行超过 10 分钟的 Agent（扇出单元、多模块研究单元），派发指令必须要求其每完成一个主要阶段调用一次 `heartbeat`（命令见 BUNDLE-SPEC，心跳按租约 TTL 续期）；全程零心跳的 run 会被 doctor 判「疑似主上下文直写」，需人工复核。
 5. **429 降级派发（E12）**：派发 Agent 遇模型 429 限流时，改派 `model:"lite"` 继续（不中止 run、不消耗 runtime 预算）；runtime 的 429 冷却仅约束 Agent job 预算侧，派发层的模型降级是编排器正常容错，两者不混淆。若 lite 亦连续失败，才走 `record-failure` 重试退避。
+6. **并行限流权衡（v3.3.10）**：峰值并行度受 `concurrency.max`（默认 4）约束，已从 1 起步调优。三个扇出单元（team/earnings/news）内部已是多角色独立上下文，叠加单元级并行峰值可达 8-10 Agent，易触发上游 429。纪律：数据类轻单元（ashare/financial/quality/checklist/research）大胆并行；重单元（team/earnings）在 W3 内可与轻单元（mgmt/ind-research）混编，若连续 429 则把重单元拆成下一小批错峰，配合本条第 5 项 lite 降级。
 
 派发给 Agent 的指令必须包含注册表分配的精确正式产物路径，并要求其把中间文件放在：
 

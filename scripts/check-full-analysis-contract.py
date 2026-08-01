@@ -342,6 +342,56 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
                         f"{len(verifiable_roles)}",
                     )
         _validate_evidence(errors, label, item.get("evidence_rules"), known, ashare_commands)
+
+    # v3.3.10 T4：depends_on 依赖图校验（自包含，不 import Runtime——本脚本刻意独立）。
+    # 语义与 runtime.build_dependency_graph 一致：ashare-data 为根；缺省 depends_on 视为
+    # 仅依赖 ashare-data；依赖须引用已注册 skill；整图不得有环（否则波次调度死锁）。
+    graph: dict[str, list[str]] = {}
+    for item in skills:
+        sid = item.get("skill_id")
+        if not isinstance(sid, str):
+            continue
+        if sid == "ashare-data":
+            deps: list = []
+        else:
+            deps = item.get("depends_on")
+            if deps is None:
+                deps = ["ashare-data"]
+            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+                _err(errors, f"[{sid}:v2] depends_on 必须为字符串数组")
+                deps = []
+            unknown = [d for d in deps if d not in known]
+            if unknown:
+                _err(errors, f"[{sid}:v2] depends_on 引用未注册 skill: {unknown}")
+            if sid in deps:
+                _err(errors, f"[{sid}:v2] depends_on 不得自引用")
+        graph[sid] = [d for d in deps if d in known and d != sid]
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in graph}
+
+    def _has_cycle(node: str, stack: list) -> list | None:
+        color[node] = GRAY
+        stack.append(node)
+        for dep in graph.get(node, []):
+            if dep not in color:
+                continue
+            if color[dep] == GRAY:
+                return stack[stack.index(dep):] + [dep]
+            if color[dep] == WHITE:
+                found = _has_cycle(dep, stack)
+                if found:
+                    return found
+        stack.pop()
+        color[node] = BLACK
+        return None
+
+    for node in graph:
+        if color[node] == WHITE:
+            cycle = _has_cycle(node, [])
+            if cycle:
+                _err(errors, f"depends_on 存在依赖环: {' -> '.join(cycle)}")
+                break
     return errors
 
 

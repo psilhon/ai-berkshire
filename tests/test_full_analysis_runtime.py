@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from tests.test_full_analysis_e2e import build_compliant_evidence, build_compliant_report
@@ -13,6 +14,8 @@ REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "scripts" / "full_analysis.py"
 GATE = REPO / "tools" / "full_analysis_gate.py"
 REGISTRY = REPO / "tools" / "full_analysis_contract.json"
+sys.path.insert(0, str(REPO / "tools"))
+import full_analysis_runtime as rt  # noqa: E402
 
 
 class RuntimeTests(unittest.TestCase):
@@ -148,19 +151,93 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("是否非空以 evidence_rules 为准", methodology)
 
     def test_next_work_and_job_started_enforce_four_concurrent_leases(self):
+        # v3.3.10：依赖门禁下，完成 ashare 后 W2 四个单元就绪，
+        # 并发上限 4 允许四个租约，第五个触发 CONCURRENCY_LIMIT。
         self.start()
+        self._set_unit_done("ashare-data")
         leases = [self.cli("next-work", "--run-root", self.run_root) for _ in range(4)]
         fifth = self.cli("next-work", "--run-root", self.run_root)
         for lease in leases:
             self.assertEqual(lease.returncode, 0)
             self.assertEqual(json.loads(lease.stdout)["status"], "LEASED")
         self.assertEqual(json.loads(fifth.stdout)["status"], "NO_WORK")
+        self.assertEqual(json.loads(fifth.stdout)["reason"], "CONCURRENCY_LIMIT")
         a = json.loads(leases[0].stdout)
         started = self.cli("job-started", "--run-root", self.run_root,
                            "--work-unit-id", a["work_unit_id"], "--attempt-id", a["attempt_id"],
                            "--lease-nonce", a["lease_nonce"], "--agent-job-id", "job-1")
         self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
         self.assertEqual(self.state()["budget"]["used"], 2)
+
+    def _set_unit_done(self, skill_id):
+        """直接把某单元置为 DONE（模拟上游完成），隔离测试依赖门禁逻辑。"""
+        path = self.run_root / "evidence/runtime-state.json"
+        state = self.state()
+        for unit in state["work_units"]:
+            if unit["skill_id"] == skill_id:
+                unit["status"] = "DONE"
+                unit["lease"] = None
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+    def test_dependency_gate_blocks_units_until_deps_done(self):
+        # v3.3.10 T5：依赖未完成的单元不得派发（波次调度的正确性根基）
+        self.start()
+        first = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(first["skill_id"], "ashare-data")  # W1 根节点先发
+        # ashare 未完成时，其余单元依赖未就绪，应无可派发
+        second = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(second["status"], "NO_WORK")
+        self.assertEqual(second["reason"], "DEPENDENCIES_PENDING")
+        # 完成 ashare 后，W2 单元解锁
+        self._set_unit_done("ashare-data")
+        third = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(third["status"], "LEASED")
+        self.assertIn(third["skill_id"],
+                      {"financial-data", "quality-screen",
+                       "investment-checklist", "investment-research"})
+
+    def test_dependency_gate_fills_wave_in_parallel_up_to_concurrency(self):
+        # 完成 ashare 后，编排器循环 next-work 可在并发上限内填满整个 W2（4 个），
+        # 第 5 个因 CONCURRENCY_LIMIT 停（不是 DEPENDENCIES_PENDING）
+        self.start()
+        self._set_unit_done("ashare-data")
+        leased, last = [], None
+        for _ in range(6):
+            result = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+            last = result
+            if result["status"] == "LEASED":
+                leased.append(result["skill_id"])
+            else:
+                break
+        self.assertEqual(len(leased), 4)
+        self.assertEqual(set(leased),
+                         {"financial-data", "quality-screen",
+                          "investment-checklist", "investment-research"})
+        self.assertEqual(last["status"], "NO_WORK")
+        self.assertEqual(last["reason"], "CONCURRENCY_LIMIT")
+
+    def test_dependency_gate_holds_downstream_until_full_wave_done(self):
+        # W3（investment-team 依赖 ashare+financial+quality）须等依赖全 DONE 才解锁；
+        # 仅完成部分依赖时不得越级派发。
+        self.start()
+        self._set_unit_done("ashare-data")
+        self._set_unit_done("financial-data")
+        # 只完成 ashare+financial，quality 未 DONE → 派发的仍是 W2 剩余单元，绝不到 W3
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["status"], "LEASED")
+        self.assertIn(leased["skill_id"],
+                      {"quality-screen", "investment-checklist", "investment-research"})
+        self.assertNotIn(leased["skill_id"],
+                         {"investment-team", "management-deep-dive",
+                          "earnings-review", "industry-research"})
+        # 补齐 W2 全部 DONE 后，W3 才解锁
+        for skill in ("quality-screen", "investment-checklist", "investment-research"):
+            self._set_unit_done(skill)
+        result = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(result["status"], "LEASED")
+        self.assertIn(result["skill_id"],
+                      {"investment-team", "management-deep-dive",
+                       "earnings-review", "industry-research"})
 
     def test_rate_limit_failure_enters_global_cooldown_and_retry_backoff(self):
         self.start()
@@ -234,6 +311,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_concurrent_job_started_updates_are_serialized_without_lost_budget(self):
         self.start()
+        # v3.3.10：依赖门禁下先完成 ashare，W2 四个单元就绪供并发 job-started 租用
+        self._set_unit_done("ashare-data")
         leases = [
             json.loads(
                 self.cli("next-work", "--run-root", self.run_root).stdout)
@@ -404,6 +483,179 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreater(len(leased.get("methodology_text") or ""), 1000,
                            "full 模式应内嵌完整方法论（含授权信封+skill 正文+指令）")
         self.assertIsNone(leased.get("methodology_ref"))
+
+
+class DependencyGraphTests(unittest.TestCase):
+    """v3.3.10 T4：contract depends_on 依赖图 + 拓扑分层 + 环检测。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        self.run_root = self.root / "local/company/000651.SZ-格力电器/20260723-120000-ab12"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def cli(self, *args):
+        return subprocess.run(
+            [sys.executable, str(CLI), *map(str, args)], cwd=self.root,
+            capture_output=True, text=True,
+        )
+
+    # ---- 纯函数：依赖图构建 ----
+
+    def test_build_graph_default_depends_on_ashare(self):
+        # 缺省 depends_on 视为仅依赖 ashare（向后兼容）；ashare 自身为根（无依赖）
+        skills = [
+            {"skill_id": "ashare-data"},
+            {"skill_id": "financial-data"},
+            {"skill_id": "quality-screen", "depends_on": ["ashare-data"]},
+        ]
+        graph = rt.build_dependency_graph(skills)
+        self.assertEqual(graph["ashare-data"], [])
+        self.assertEqual(graph["financial-data"], ["ashare-data"])
+        self.assertEqual(graph["quality-screen"], ["ashare-data"])
+
+    def test_build_graph_explicit_deps_preserved(self):
+        skills = [
+            {"skill_id": "ashare-data"},
+            {"skill_id": "a", "depends_on": ["ashare-data"]},
+            {"skill_id": "b", "depends_on": ["ashare-data", "a"]},
+        ]
+        graph = rt.build_dependency_graph(skills)
+        self.assertEqual(graph["b"], ["ashare-data", "a"])
+
+    def test_build_graph_unknown_dep_raises(self):
+        skills = [
+            {"skill_id": "ashare-data"},
+            {"skill_id": "a", "depends_on": ["nonexistent"]},
+        ]
+        with self.assertRaises(ValueError):
+            rt.build_dependency_graph(skills)
+
+    def test_detect_cycle_finds_ring(self):
+        graph = {"ashare-data": [], "a": ["b"], "b": ["a"]}
+        cycle = rt.detect_dependency_cycle(graph)
+        self.assertIsNotNone(cycle)
+        self.assertTrue(set(cycle).issubset({"a", "b"}))
+
+    def test_detect_cycle_none_for_dag(self):
+        graph = {"ashare-data": [], "a": ["ashare-data"], "b": ["ashare-data", "a"]}
+        self.assertIsNone(rt.detect_dependency_cycle(graph))
+
+    def test_compute_waves_matches_expected_five_waves(self):
+        # 用真实契约验证分层精确涌现 W1-W5
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        graph = rt.build_dependency_graph(registry["skills"])
+        waves = rt.compute_dependency_waves(graph)
+        self.assertEqual(len(waves), 5, f"应为 5 波，实际 {waves}")
+        wave_sets = [set(w) for w in waves]
+        self.assertEqual(wave_sets[0], {"ashare-data"})
+        self.assertEqual(wave_sets[1],
+                         {"financial-data", "quality-screen", "investment-checklist",
+                          "investment-research"})
+        self.assertEqual(wave_sets[2],
+                         {"investment-team", "management-deep-dive",
+                          "earnings-review", "industry-research"})
+        self.assertEqual(wave_sets[3],
+                         {"industry-funnel", "bottleneck-hunter", "news-pulse"})
+        self.assertEqual(wave_sets[4], {"thesis-tracker"})
+
+    # ---- 端到端：init 持久化依赖图、拒绝有环契约 ----
+
+    def test_init_persists_dependency_waves_into_state(self):
+        result = self.cli(
+            "start", "--registry", REGISTRY, "--repo-root", self.root,
+            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+            "--run-root", self.run_root,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        state = json.loads((self.run_root / "evidence/runtime-state.json").read_text())
+        self.assertIn("dependency_graph", state)
+        self.assertIn("dependency_waves", state)
+        self.assertEqual(len(state["dependency_waves"]), 5)
+        # 每个 work_unit 带 depends_on
+        by_id = {u["work_unit_id"]: u for u in state["work_units"]}
+        self.assertEqual(by_id["wu-financial-data"].get("depends_on"), ["ashare-data"])
+
+    def test_start_rejects_contract_with_dependency_cycle(self):
+        # 构造含环的临时契约：financial-data 依赖 quality-screen，quality-screen 又依赖 financial-data
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for skill in registry["skills"]:
+            if skill["skill_id"] == "financial-data":
+                skill["depends_on"] = ["quality-screen"]
+            elif skill["skill_id"] == "quality-screen":
+                skill["depends_on"] = ["financial-data"]
+        bad_registry = self.root / "bad-contract.json"
+        bad_registry.write_text(json.dumps(registry, ensure_ascii=False), encoding="utf-8")
+        result = self.cli(
+            "start", "--registry", bad_registry, "--repo-root", self.root,
+            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+            "--run-root", self.run_root,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        combined = result.stdout + result.stderr
+        self.assertIn("依赖", combined)
+        self.assertIn("环", combined)
+
+    # ---- v3.3.10 T7：fanout 租约 TTL 倍增 + per-lease 续期 ----
+
+    @staticmethod
+    def _parse(iso_str):
+        return datetime.fromisoformat(iso_str)
+
+    def _set_status(self, skill_id, status):
+        path = self.run_root / "evidence/runtime-state.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        for unit in state["work_units"]:
+            if unit["skill_id"] == skill_id:
+                unit["status"] = status
+                unit["lease"] = None
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+    def _lease_duration_minutes(self, leased):
+        return (self._parse(leased["expires_at"])
+                - self._parse(leased["leased_at"])).total_seconds() / 60
+
+    def test_fanout_unit_gets_multiplied_lease_ttl(self):
+        # investment-team 扇出 4 角色（integrator 不计）→ TTL ≈ 20×4=80 分，
+        # lease 存 lease_ttl_minutes，防止多角色串行超 20 分被 sweep 误回收。
+        result = self.cli(
+            "start", "--registry", REGISTRY, "--repo-root", self.root,
+            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+            "--run-root", self.run_root,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for skill in ("ashare-data", "financial-data", "quality-screen",
+                      "investment-checklist", "investment-research"):
+            self._set_status(skill, "DONE")
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["skill_id"], "investment-team")
+        self.assertEqual(leased.get("lease_ttl_minutes"), 80)
+        self.assertEqual(self._lease_duration_minutes(leased), 80)
+
+    def test_heartbeat_renews_by_stored_lease_ttl(self):
+        # fanout 单元的 heartbeat 按存储的 lease_ttl_minutes（80 分）续期，而非默认 20 分。
+        result = self.cli(
+            "start", "--registry", REGISTRY, "--repo-root", self.root,
+            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+            "--run-root", self.run_root,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for skill in ("ashare-data", "financial-data", "quality-screen",
+                      "investment-checklist", "investment-research"):
+            self._set_status(skill, "DONE")
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["skill_id"], "investment-team")
+        beat = json.loads(self.cli(
+            "heartbeat", "--run-root", self.run_root,
+            "--work-unit-id", leased["work_unit_id"],
+            "--attempt-id", leased["attempt_id"],
+            "--lease-nonce", leased["lease_nonce"]).stdout)
+        renewed = self._parse(beat["expires_at"]) - self._parse(leased["leased_at"])
+        # 续期后距初始 leased_at 应 ≥80 分（heartbeat 时刻 + 80 分 TTL）
+        self.assertGreaterEqual(renewed.total_seconds() / 60, 80)
 
 
 if __name__ == "__main__":

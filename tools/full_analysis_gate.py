@@ -23,6 +23,7 @@ from pathlib import Path
 
 from full_analysis_snapshot import analysis_snapshot
 from financial_rigor import preflight_diagnose_params
+import full_analysis_runtime as runtime_mod
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -562,6 +563,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         raise GateError("生产全量分析只接受 WorkBuddy platform", 2)
     if not re.match(r"^[0-9A-Z]{6}\.(SH|SZ|BJ)$", args.code):
         raise GateError(f"证券代码格式非法: {args.code}", 2)
+    # v3.3.10：init 时即构建依赖图并落盘，供编排层波次调度与 runtime 依赖门禁使用。
+    # 契约环在 init 前即拒绝（runtime/contract 校验器同源语义，此处刻意不 import 校验器）。
+    dep_graph = runtime_mod.build_dependency_graph(registry["skills"])
+    dep_cycle = runtime_mod.detect_dependency_cycle(dep_graph)
+    if dep_cycle:
+        raise GateError(f"contract depends_on 存在依赖环: {' -> '.join(dep_cycle)}", 2)
+    dep_waves = runtime_mod.compute_dependency_waves(dep_graph)
     root = Path(args.run_root) if args.run_root else build_run_root(Path(args.repo_root), args.code, args.company)
     if root.exists() and any(root.iterdir()):
         raise GateError(f"run_root 已存在且非空: {root}", 2)
@@ -603,11 +611,14 @@ def cmd_init(args: argparse.Namespace) -> int:
         "concurrency": {"max": 4, "current": 0, "cooldown_until": None},
         "authorization": registry["authorization_profile"],
         "run_started_at": now_iso(),
+        "dependency_graph": dep_graph,
+        "dependency_waves": dep_waves,
         "work_units": [{
             "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
             "core": item["core"],
             "status": "PENDING", "attempts": 0, "max_attempts": 3,
             "lease": None, "next_retry_at": None,
+            "depends_on": dep_graph.get(item["skill_id"], []),
         } for item in registry["skills"]],
     })
     (root / EVENTS_REL).write_text("", encoding="utf-8")

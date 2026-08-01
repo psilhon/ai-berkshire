@@ -59,13 +59,11 @@ class CorrectionTests(unittest.TestCase):
                            "--company", "格力电器", "--code", "000651.SZ",
                            "--as-of", "2026-07-23", "--run-root", self.run_root)
         self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
-        # 取 financial-data 单元并提交（next-work 直到命中）
-        for _ in range(13):
-            leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-            if leased["skill_id"] == "financial-data":
-                break
-        else:
-            raise AssertionError("未取到 financial-data 租约")
+        # v3.3.10：依赖门禁下先完成 ashare-data（financial-data 的上游），financial 才就绪
+        self._mark_skill_done("ashare-data")
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        if leased.get("skill_id") != "financial-data":
+            raise AssertionError(f"未取到 financial-data 租约: {leased}")
         self.lease = leased
         started_job = self.cli("job-started", "--run-root", self.run_root,
                                "--work-unit-id", leased["work_unit_id"],
@@ -87,6 +85,16 @@ class CorrectionTests(unittest.TestCase):
 
     def manifest(self):
         return json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
+
+    def _mark_skill_done(self, skill_id):
+        """直接把某单元置为 DONE（模拟上游完成），让依赖门禁放行下游单元。"""
+        path = self.run_root / "evidence/runtime-state.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        for unit in state["work_units"]:
+            if unit["skill_id"] == skill_id:
+                unit["status"] = "DONE"
+                unit["lease"] = None
+        path.write_text(json.dumps(state), encoding="utf-8")
 
     def _correction(self, **over):
         calc = self.bundle["calculation_requests"][0]

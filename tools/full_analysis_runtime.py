@@ -302,6 +302,117 @@ def _load_registry() -> dict:
         return {"skills": []}
 
 
+# v3.3.10 依赖波次调度：contract depends_on → 拓扑分层 → 波次并行派发。
+# 这三个纯函数是依赖图的单一所有者，gate.cmd_init（持久化）与
+# check-full-analysis-contract.py（校验环）均复用，避免多处各自解析漂移。
+PIPELINE_ROOT = "ashare-data"
+
+
+def build_dependency_graph(skills: list) -> dict:
+    """从 contract skills 构建 {skill_id: [dep_skill_id,...]}。
+
+    缺省 depends_on 视为仅依赖 ashare-data（向后兼容旧契约）；ashare-data 自身为根，
+    无论契约是否声明，其依赖强制为空（防止自环/依赖下游）。
+    依赖中引用未知 skill_id 抛 ValueError（init 前即暴露契约错误）。
+    """
+    ids = {s["skill_id"] for s in skills}
+    graph: dict[str, list] = {}
+    for skill in skills:
+        sid = skill["skill_id"]
+        if sid == PIPELINE_ROOT:
+            graph[sid] = []
+            continue
+        deps = skill.get("depends_on")
+        if deps is None:
+            deps = [PIPELINE_ROOT]
+        deps = [d for d in deps if d != sid]
+        unknown = [d for d in deps if d not in ids]
+        if unknown:
+            raise ValueError(f"{sid} depends_on 引用未知 skill: {unknown}")
+        graph[sid] = list(deps)
+    return graph
+
+
+def detect_dependency_cycle(graph: dict) -> list | None:
+    """DFS 检测依赖环，返回构成环的节点列表（无环返回 None）。"""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in graph}
+    parent: dict = {}
+
+    def dfs(node: str) -> list | None:
+        color[node] = GRAY
+        for dep in graph.get(node, []):
+            if dep not in color:
+                continue
+            if color[dep] == GRAY:
+                # 回溯环路径
+                cycle = [dep, node]
+                cur = node
+                while cur in parent and parent[cur] != dep:
+                    cur = parent[cur]
+                    cycle.append(cur)
+                return cycle
+            if color[dep] == WHITE:
+                parent[dep] = node
+                found = dfs(dep)
+                if found:
+                    return found
+        color[node] = BLACK
+        return None
+
+    for node in graph:
+        if color[node] == WHITE:
+            found = dfs(node)
+            if found:
+                return found
+    return None
+
+
+def compute_dependency_waves(graph: dict) -> list[list[str]]:
+    """按拓扑层级把 skill 分层为波次：layer 0 = 无依赖，layer N = 依赖全在 <N 层。
+
+    返回 [[wave0 skills], [wave1 skills], ...]，每波内的单元可并行派发。
+    要求传入图已无环（调用方先 detect_dependency_cycle）。
+    """
+    layer_of: dict[str, int] = {}
+
+    def layer(node: str) -> int:
+        if node in layer_of:
+            return layer_of[node]
+        deps = graph.get(node, [])
+        if not deps:
+            layer_of[node] = 0
+            return 0
+        depth = max(layer(dep) for dep in deps) + 1
+        layer_of[node] = depth
+        return depth
+
+    for node in graph:
+        layer(node)
+
+    waves: dict[int, list[str]] = {}
+    for node, depth in layer_of.items():
+        waves.setdefault(depth, []).append(node)
+    # 每波内按契约 registry 顺序稳定排序，保证派发顺序可复现
+    return [sorted(waves[d]) for d in sorted(waves)]
+
+
+def _lease_ttl_for_skill(skill: dict | None) -> int:
+    """计算单元的租约 TTL（分钟）。
+
+    默认 LEASE_MINUTES（20）；扇出单元（roles.mode=independent_then_integrator）需在
+    单个租约内串行跑完多个角色子 Agent + 整合，实际时长远超 20 分钟。TTL 按角色数倍增
+    （integrator 是整合者不计独立角色），避免被 _sweep_expired_leases 误判 heartbeat_lost
+    回收后触发 resume/requeue（沪电 run 三个扇出单元 team/earnings/news 均因此过期）。
+    返回的 TTL 同时写入 lease，heartbeat 据此续期，保持派发/续期口径一致。
+    """
+    roles = (skill or {}).get("roles") or {}
+    if roles.get("mode") == "independent_then_integrator":
+        verifiable = [r for r in (roles.get("required_roles") or []) if r != "integrator"]
+        return LEASE_MINUTES * max(len(verifiable), 1)
+    return LEASE_MINUTES
+
+
 def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:
     with runtime_lock(run_root):
         return _next_work_locked(run_root, methodology_mode)
@@ -321,6 +432,11 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
     active = _active_units(state)
     if len(active) >= state["concurrency"]["max"]:
         return {"status": "NO_WORK", "reason": "CONCURRENCY_LIMIT"}
+    # v3.3.10 T5：依赖波次门禁——只有 depends_on 全 DONE 的单元才就绪可派发。
+    # 这把 registry 线性顺序升级为依赖图波次：编排器循环 next-work 时，每波内就绪的
+    # 多个单元会在并发上限内被连续租出（波次并行），跨波则被挡到上游 DONE。
+    # FAILED 依赖不放行（下游无法基于失败上游产出）；单元自身重跑时其依赖必已 DONE。
+    done_skills = {u["skill_id"] for u in state["work_units"] if u["status"] == "DONE"}
     candidates = []
     current = now()
     for unit in state["work_units"]:
@@ -331,28 +447,40 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
             continue
         if budget["used"] >= budget["stop_dispatch_at"] and not unit.get("core", True):
             continue
+        deps = unit.get("depends_on")
+        if deps is None:
+            deps = [] if unit["skill_id"] == PIPELINE_ROOT else [PIPELINE_ROOT]
+        if any(dep not in done_skills for dep in deps):
+            continue
         candidates.append(unit)
     if not candidates:
-        return {"status": "NO_WORK", "reason": "QUEUE_EMPTY"}
+        waiting = any(u["status"] in {"PENDING", "RETRY_WAIT"} for u in state["work_units"])
+        reason = "DEPENDENCIES_PENDING" if waiting else "QUEUE_EMPTY"
+        return {"status": "NO_WORK", "reason": reason}
     unit = candidates[0]
-    attempt = unit["attempts"] + 1
-    material = f"{state['run_id']}:{unit['work_unit_id']}:{attempt}:{secrets.token_hex(4)}"
-    lease = {
-        "attempt_id": f"attempt-{hashlib.sha256(material.encode()).hexdigest()[:12]}",
-        "lease_nonce": secrets.token_hex(16),
-        "leased_at": iso(current),
-        "expires_at": iso(current + timedelta(minutes=LEASE_MINUTES)),
-    }
-    unit.update({"status": "LEASED", "attempts": attempt, "lease": lease})
-    save_state(run_root, state)
-    event(run_root, "work_leased", work_unit_id=unit["work_unit_id"], attempt_id=lease["attempt_id"])
-    # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）
+    # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）。
+    # 提前加载 skill 同时供租约 TTL 计算：fanout 单元多角色串行执行易超默认租约，
+    # 被 _sweep_expired_leases 误判 heartbeat_lost 回收（沪电 run 三个扇出单元均踩坑）。
     registry = _load_registry()
     skill = next(
         (s for s in registry.get("skills", [])
          if s.get("skill_id") == unit["skill_id"]),
         None,
     )
+    lease_ttl = _lease_ttl_for_skill(skill)
+    attempt = unit["attempts"] + 1
+    material = f"{state['run_id']}:{unit['work_unit_id']}:{attempt}:{secrets.token_hex(4)}"
+    lease = {
+        "attempt_id": f"attempt-{hashlib.sha256(material.encode()).hexdigest()[:12]}",
+        "lease_nonce": secrets.token_hex(16),
+        "leased_at": iso(current),
+        "expires_at": iso(current + timedelta(minutes=lease_ttl)),
+        # per-lease TTL：heartbeat 据此续期（默认 LEASE_MINUTES，fanout 按角色数倍增）
+        "lease_ttl_minutes": lease_ttl,
+    }
+    unit.update({"status": "LEASED", "attempts": attempt, "lease": lease})
+    save_state(run_root, state)
+    event(run_root, "work_leased", work_unit_id=unit["work_unit_id"], attempt_id=lease["attempt_id"])
     authorization = (
         state.get("authorization")
         or registry.get("authorization_profile")
@@ -486,7 +614,10 @@ def _heartbeat_locked(
     state = load_state(run_root)
     unit = _unit(state, work_unit_id)
     _check_lease(unit, attempt_id, nonce)
-    unit["lease"]["expires_at"] = iso(now() + timedelta(minutes=LEASE_MINUTES))
+    # per-lease 续期：fanout 单元按派发时存储的 lease_ttl_minutes（倍增后）续期，
+    # 普通单元回退默认 LEASE_MINUTES（向后兼容旧租约无该字段）。
+    ttl = unit["lease"].get("lease_ttl_minutes") or LEASE_MINUTES
+    unit["lease"]["expires_at"] = iso(now() + timedelta(minutes=ttl))
     save_state(run_root, state)
     event(run_root, "heartbeat", work_unit_id=work_unit_id, attempt_id=attempt_id)
     return {"status": "HEARTBEAT", "expires_at": unit["lease"]["expires_at"]}
