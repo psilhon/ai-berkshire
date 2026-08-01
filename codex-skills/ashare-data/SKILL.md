@@ -1,6 +1,7 @@
 ---
 name: ashare-data
 description: A股数据管线统一入口：实时行情/近5年财务/估值/10年年报史/股本变动/公告/龙虎榜资金流解禁等市场信号。零依赖走腾讯行情+东方财富+巨潮（curl 直连），结果标注主源/备用源/数据时间/警告。输入六位代码或公司名即可取数。
+triggers: A股数据, 行情, 估值, 财务, 公告, 龙虎榜, 资金流, 解禁, 股本变动, 年报, ashare-data, 数据管线, 取数, 互动易, 财联社快讯, 研报, 涨停, 热度榜
 owner: psilhon
 category: 数据与思维工具
 maturity: stable
@@ -68,7 +69,7 @@ This skill is generated from `skills/ashare-data.md` so Claude Code and Codex us
 | `cls-telegraph` | 财联社实时电报：全市场快讯（L3 快讯） | `--top N`（默认50） | 财联社 v1（本地签名零 key） |
 | `report-list` | 研报列表：个股/行业研报+评级/EPS（L3 研报） | `<代码>` / `--industry <东财行业码>` `--limit N`（默认30） | 东方财富 reportapi（零鉴权） |
 
-> 上表为常用命令；CLI 另有一批 Tushare 增强命令（`pe-band`/`dividend`/`shareholders`/`management`/`consensus`/`research-visits`/`insider-trades`/`industry-pe`/`hk-quote`/`ah-cross-check`/`disclosure-calendar`/`news`），均需 `TUSHARE_TOKEN`，`python3 tools/ashare_data.py --help` 可列全。
+> 上表为常用命令；CLI 另有一批 Tushare 增强命令，完整清单与分类见下方「扩展 Tushare 命令参考（47 个条件命令）」，均需 `TUSHARE_TOKEN`，`python3 tools/ashare_data.py --help` 可列全。
 
 ---
 
