@@ -457,6 +457,28 @@ class CliIntegrationTests(unittest.TestCase):
         output = json.loads(summarized.stdout)
         self.assertEqual(output["overall_verdict"], "REVIEW_REQUIRED")
 
+    def test_prepare_reports_stale_reviews_when_evidence_changed(self):
+        # E8: 第二次 prepare 时若证据/报告 digest 变化，输出 stale_reviews 提示重审
+        self._setup_run_with_artifact("investment-research")
+        first = self.cli("review", "prepare", "--run-root", self.run_root,
+                         "--scope", "investment-research")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertNotIn("stale_reviews", first.stdout)
+
+        # 改 facts（模拟返工补登记）→ evidence_digest 变化
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["facts"][0]["value"] = "200"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        second = self.cli("review", "prepare", "--run-root", self.run_root,
+                          "--scope", "investment-research")
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        out = json.loads(second.stdout)
+        self.assertIn("stale_reviews", out)
+        self.assertEqual(out["stale_reviews"][0]["skill_id"], "investment-research")
+        self.assertIn("证据", out["stale_reviews"][0]["changed"])
+
 
 if __name__ == "__main__":
     unittest.main()

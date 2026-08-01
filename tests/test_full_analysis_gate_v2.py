@@ -739,6 +739,127 @@ class GateV2Tests(unittest.TestCase):
         self.assertNotEqual(finalized.returncode, 0)
         self.assertIn("Audit 快照", finalized.stdout + finalized.stderr)
 
+    # ---- E4/E6/E7：前置账本校验 / 跨 skill 覆盖告警 / schema 报错友好化 ----
+
+    def _mk_bundle(self, skill_id, attempt, facts=None, judgments=None, caps=None, receipts=None):
+        """构造最小可 ingest 的 PASS bundle（可覆盖账本字段）。"""
+        self.init()
+        attempt_dir = self.run_root / f"evidence/attempts/{skill_id}/{attempt}"
+        attempt_dir.mkdir(parents=True)
+        source = attempt_dir / "report.md"
+        source.write_text(build_compliant_report(REGISTRY, skill_id), encoding="utf-8")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        run_id = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())["run"]["run_id"]
+        bundle = {
+            "schema_version": "result-schema/v1", "run_id": run_id,
+            "work_unit_id": f"wu-{skill_id}", "attempt_id": attempt,
+            "agent_job_id": f"job-{attempt}", "lease_nonce": "lease-x",
+            "skill_id": skill_id, "role_id": None, "status": "PASS",
+            "artifact_records": [{
+                "artifact_id": f"artifact.{skill_id}", "path": str(source.relative_to(self.run_root)),
+                "bytes": source.stat().st_size, "sha256": digest, "formal": False, "accepted": False,
+            }],
+            "fact_updates": facts if facts is not None else [],
+            "source_records": [], "calculation_requests": [],
+            "judgments": judgments if judgments is not None else [],
+            "capability_records": caps if caps is not None else [],
+            "command_receipts": receipts if receipts is not None else [],
+            "limitations": [], "pwl_candidates": [],
+            "started_at": "2026-07-23T12:00:00+08:00",
+            "completed_at": "2026-07-23T12:01:00+08:00", "error": None,
+        }
+        result_path = attempt_dir / "result.json"
+        result_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+        return result_path
+
+    def test_e4_precheck_rejects_missing_required_fact_fields(self):
+        # ashare-data 契约 required_fact_fields=[price, market_cap, revenue]，
+        # 缺 revenue 时应在 submit 前置校验被拒（而非等 audit）
+        rp = self._mk_bundle("ashare-data", "attempt-e4a", facts=[
+            {"fact_id": "fact.ashare.price", "field": "price", "value": 1.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.market-cap", "field": "market_cap", "value": 2.0, "source_ids": ["s1"]},
+        ], caps=[{"capability": "tushare_configured", "available": True}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        self.assertIn("缺必需字段", ingested.stdout + ingested.stderr)
+        self.assertIn("revenue", ingested.stdout + ingested.stderr)
+
+    def test_e4_precheck_rejects_missing_capability_attestation(self):
+        # capability 名错配（tushare 而非契约值 tushare_configured）应在提交时被拒
+        rp = self._mk_bundle("ashare-data", "attempt-e4b", facts=[
+            {"fact_id": "fact.ashare.price", "field": "price", "value": 1.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.market-cap", "field": "market_cap", "value": 2.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.revenue", "field": "revenue", "value": 3.0, "source_ids": ["s1"]},
+        ], caps=[{"capability": "tushare", "available": True}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        self.assertIn("capability", ingested.stdout + ingested.stderr)
+
+    def test_e4_precheck_passes_when_accounting_aligned(self):
+        rp = self._mk_bundle("ashare-data", "attempt-e4c", facts=[
+            {"fact_id": "fact.ashare.price", "field": "price", "value": 1.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.market-cap", "field": "market_cap", "value": 2.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.revenue", "field": "revenue", "value": 3.0, "source_ids": ["s1"]},
+        ], caps=[{"capability": "tushare_configured", "available": True}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
+
+    def test_e6_cross_skill_override_writes_warning_event(self):
+        rp1 = self._mk_bundle("ashare-data", "attempt-e6a", facts=[
+            {"fact_id": "fact.ashare.price", "field": "price", "value": 1.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.market-cap", "field": "market_cap", "value": 2.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.revenue", "field": "revenue", "value": 3.0, "source_ids": ["s1"]},
+        ], caps=[{"capability": "tushare_configured", "available": True}])
+        self.assertEqual(run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                                  "--registry", REGISTRY, "--result", rp1).returncode, 0)
+        # 第二个 run_root 需复用同一 root：bundle 的 run_id 绑定 manifest；此处改造成本高，
+        # 直接验证 _merge_provenance 层的事件写入（同 manifest 两次合并跨 skill 覆盖）
+        manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        from types import SimpleNamespace as _NS
+        bundle2 = json.loads(rp1.read_text(encoding="utf-8"))
+        bundle2["skill_id"] = "financial-data"
+        bundle2["work_unit_id"] = "wu-financial-data"
+        gate_module._merge_provenance(manifest, bundle2, run_root=self.run_root)
+        events = (self.run_root / "evidence/events.jsonl").read_text(encoding="utf-8")
+        self.assertIn("fact_overridden", events)
+        self.assertIn("from_skill", events)
+        self.assertIn("ashare-data", events)
+
+    def test_e7_schema_error_lists_allowed_keys(self):
+        # command_receipts 含未知键 skill_id → 报错应列出允许键
+        rp = self._mk_bundle("ashare-data", "attempt-e7", facts=[
+            {"fact_id": "fact.ashare.price", "field": "price", "value": 1.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.market-cap", "field": "market_cap", "value": 2.0, "source_ids": ["s1"]},
+            {"fact_id": "fact.ashare.revenue", "field": "revenue", "value": 3.0, "source_ids": ["s1"]},
+        ], caps=[{"capability": "tushare_configured", "available": True}],
+            receipts=[{"receipt_id": "r1", "operation": "quote", "status": "PASS", "skill_id": "x"}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        self.assertIn("允许键", ingested.stdout + ingested.stderr)
+
+    def test_e10_start_pins_contract_digest_and_commit(self):
+        self.init()
+        manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        self.assertIn("registry_sha256", manifest["contract"])
+        self.assertIn("contract_commit", manifest["run"])
+
+    def test_e10_finalize_rejects_contract_mismatch(self):
+        self.init()
+        # 复制注册表并改动一个不影响加载的字段（min_bytes+1，schema_version 不动）
+        # → finalize 必须拒绝（CONTRACT_VERSION_MISMATCH）
+        tampered = self.root / "tampered-contract.json"
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        data["skills"][0]["artifact"]["min_bytes"] = data["skills"][0]["artifact"]["min_bytes"] + 1
+        tampered.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        finalized = run_gate(self.root, "finalize", "--run-root", self.run_root,
+                             "--registry", tampered)
+        self.assertNotEqual(finalized.returncode, 0)
+        self.assertIn("CONTRACT_VERSION_MISMATCH", finalized.stdout + finalized.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

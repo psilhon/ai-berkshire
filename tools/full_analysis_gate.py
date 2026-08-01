@@ -157,6 +157,18 @@ def atomic_copy(
             os.unlink(name)
 
 
+def _git_head_commit() -> str | None:
+    """读取仓库 HEAD commit（无 git 环境时为 None；仅作版本记录，不阻断）。"""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+            timeout=5, cwd=Path(__file__).resolve().parents[1],
+        )
+        return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
+    except Exception:
+        return None
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -287,7 +299,9 @@ def _validate_schema_value(value, schema: dict, path: str = "$") -> None:
         if schema.get("additionalProperties") is False:
             extra = sorted(set(value) - set(properties))
             if extra:
-                raise GateError(f"{path} 含未知字段 {extra}")
+                # E7: 报错时列出允许键，减少 Agent 试错
+                allowed_keys = ", ".join(sorted(properties)) or "（无）"
+                raise GateError(f"{path} 含未知字段 {extra}；允许键: {allowed_keys}")
         for key, item in value.items():
             if key in properties:
                 _validate_schema_value(item, properties[key], f"{path}.{key}")
@@ -337,6 +351,66 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
         _validate_not_applicable(bundle, skill, load_manifest(run_root))
     elif bundle.get("not_applicable") is not None:
         raise GateError("非 NOT_APPLICABLE 状态不得携带 not_applicable")
+    # E4: 前置校验 evidence_rules 账本（快速失败，替代等 audit 批量暴露）。
+    # 仅校验 bundle 自身携带的账本字段/rule_id/capability 名；跨 skill 覆盖、
+    # source 存在性、command 满足率等仍由 audit 权威判定。
+    # NOT_APPLICABLE 单元走负向验收（负向验收 fact 不适用 evidence_rules），跳过。
+    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}:
+        _precheck_evidence_rules(bundle, skill)
+
+
+def _precheck_evidence_rules(bundle: dict, skill: dict) -> None:
+    """提交时前置校验 evidence_rules 的最低账本要求，返回 None（失败抛 GateError）。
+
+    与 audit 的逐条证据校验互补：此处只拦截「账本已提交但字段/rule_id/capability 名
+    未对齐契约」这类确定性错误（如 quality_metric_1 写成中文名、tushare_configured
+    写成 tushare），让 Agent 在提交当下即修复，而不是整轮跑完才在 audit 暴露。
+    账本完全为空（Agent 未提交任何该类型记录）时跳过——不足性由 audit 权威判定，
+    避免与 audit 的 insufficient_* 判重。
+    """
+    rules = {r.get("kind"): r for r in (skill.get("evidence_rules") or [])}
+    facts = bundle.get("fact_updates") or []
+    judgments = bundle.get("judgments") or []
+    capabilities = bundle.get("capability_records") or []
+
+    req_fields = rules.get("required_fact_fields")
+    if req_fields and facts:
+        present = {f.get("field") for f in facts}
+        missing = [f for f in req_fields.get("values", []) if f not in present]
+        if missing:
+            raise GateError(
+                f"{bundle['skill_id']} fact_updates 缺必需字段 {missing}；"
+                f"field 必须与契约逐字一致（如 {req_fields['values']}），禁止用中文名/自定义名")
+
+    req_judgments = rules.get("required_judgment_rule_ids")
+    if req_judgments and judgments:
+        present = {j.get("rule_id") for j in judgments}
+        missing = [r for r in req_judgments.get("values", []) if r not in present]
+        if missing:
+            raise GateError(
+                f"{bundle['skill_id']} judgments 缺必需 rule_id {missing}；"
+                f"rule_id 必须与契约逐字一致（如 {req_judgments['values']}）")
+
+    cond = rules.get("conditional_command_operations")
+    if cond and capabilities:
+        cap = cond.get("capability")
+        attests = {c.get("capability") for c in capabilities}
+        if cap and cap not in attests:
+            raise GateError(
+                f"{bundle['skill_id']} 缺 capability 声明 {cap!r}（capability_records 须含"
+                f" {{'capability': {cap!r}, 'available': true}}）")
+
+    min_fals = rules.get("min_judgments_with_falsification")
+    if min_fals and judgments:
+        actual = sum(
+            1 for j in judgments
+            if isinstance(j.get("falsification"), list)
+            and any(str(x).strip() for x in j["falsification"])
+        )
+        if actual < min_fals.get("n", 0):
+            raise GateError(
+                f"{bundle['skill_id']} 含 falsification 的 judgments {actual} < "
+                f"要求 {min_fals['n']}")
 
 
 def _validate_not_applicable(bundle: dict, skill: dict, manifest: dict) -> None:
@@ -428,7 +502,10 @@ def cmd_init(args: argparse.Namespace) -> int:
                       "registry_sha256": sha256_file(Path(args.registry)),
                       "skill_count": len(registry["skills"])},
         "run": {"run_id": run_id, "status": "RUNNING", "created_at": now_iso(), "updated_at": now_iso(),
-                "platform": args.platform, "as_of": args.as_of, "run_root": str(root)},
+                "platform": args.platform, "as_of": args.as_of, "run_root": str(root),
+                # E10：钉死启动时的契约版本（digest 复用 contract.registry_sha256），
+                # finalize 校验防过期编排 run 被准出。
+                "contract_commit": _git_head_commit()},
         "company": {"code": args.code, "name": args.company},
         "skills": [{"skill_id": item["skill_id"], "status": "PENDING", "attempts": [], "artifact_records": []}
                    for item in registry["skills"]],
@@ -577,6 +654,7 @@ def _merge_provenance(
     bundle: dict,
     *,
     verified_role_runs: list[dict] | None = None,
+    run_root: Path | None = None,
 ) -> None:
     # 证据归因：用 bundle 自带的 skill_id 给每条 fact/calc 打标记（向后兼容，不改 result schema）。
     # 让 Audit 能按 skill 计算应有证据、强制执行 contract 的 evidence_rules。
@@ -604,6 +682,16 @@ def _merge_provenance(
         if owner_skill and not fact.get("skill_id"):
             fact = {**fact, "skill_id": owner_skill}
         if fid and fid in fact_index:
+            prior = manifest["facts"][fact_index[fid]]
+            prior_skill = prior.get("skill_id")
+            # E6: 跨 skill 同 fact_id 覆盖（last-write-wins 抢归因）——audit 按 skill_id
+            # 归因事实，核心事实被下游 skill 覆盖会使上游缺 required_fact_fields。
+            # 写 warning 事件供 doctor/人工排查（不阻断提交）。
+            if owner_skill and prior_skill and owner_skill != prior_skill and run_root is not None:
+                append_event(run_root, {
+                    "type": "fact_overridden", "fact_id": fid,
+                    "from_skill": prior_skill, "to_skill": owner_skill,
+                })
             manifest["facts"][fact_index[fid]] = fact
         else:
             if fid:
@@ -806,6 +894,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         next_manifest,
         bundle,
         verified_role_runs=verified_role_runs,
+        run_root=root,
     )
 
     # ===== 阶段三：持久化提交（内存准备已完成，只做原子文件替换）=====
@@ -981,6 +1070,17 @@ def _verify_formal_artifacts(root: Path, manifest: dict) -> list[dict]:
 def cmd_finalize(args: argparse.Namespace) -> int:
     root, registry = Path(args.run_root), load_registry(Path(args.registry))
     manifest = load_manifest(root)
+    # E10 契约版本钉死：run 启动时的契约 digest 必须等于当前契约 digest，
+    # 防过期编排 run（旧 HEAD 启动、中途更新契约）被 APPROVED。无 --force 绕过路径。
+    pinned = (manifest.get("contract") or {}).get("registry_sha256")
+    current_digest = sha256_file(Path(args.registry))
+    if not pinned or current_digest != pinned:
+        manifest["run"]["status"] = "PARTIAL"
+        save_manifest(root, manifest)
+        raise GateError(
+            "CONTRACT_VERSION_MISMATCH: 当前契约 digest 与 run 启动时不一致，"
+            "run 基于过期契约；请用最新版契约重新 start"
+            "（旧 run 产物在 run_root 目录，可按 rework 复用规则迁移）")
     # 完整性前置：先复核正式文件与 manifest 记录一致（捕获"manifest 合格、正式文件被覆盖/污染"）
     corrupt = _verify_formal_artifacts(root, manifest)
     if corrupt:
@@ -1309,3 +1409,126 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# ---------------------------------------------------------------- correction bundle
+CORRECTION_SCHEMA = "correction-bundle/v1"
+CORRECTION_KINDS = ("calculation_requests", "command_receipts", "fact_updates", "judgments")
+_CORRECTION_ID_KEYS = {
+    "calculation_requests": "calculation_id",
+    "command_receipts": "receipt_id",
+    "fact_updates": "fact_id",
+    "judgments": "judgment_id",
+}
+_CORRECTION_TARGETS = {
+    "calculation_requests": "calculations",
+    "command_receipts": "command_receipts",
+    "fact_updates": "facts",
+    "judgments": "judgments",
+}
+CORRECTION_FORBIDDEN = {
+    "artifact_records", "source_records", "role_runs", "capability_records",
+    "limitations", "pwl_candidates", "report", "summary",
+}
+
+
+def _validate_correction(correction: dict, manifest: dict, registry: dict) -> None:
+    if correction.get("schema_version") != CORRECTION_SCHEMA:
+        raise GateError(f"correction schema_version 必须是 {CORRECTION_SCHEMA}")
+    run_id = (manifest.get("run") or {}).get("run_id")
+    if correction.get("run_id") != run_id:
+        raise GateError(f"correction run_id 与 run 不匹配: {correction.get('run_id')!r}")
+    skill_id = correction.get("skill_id")
+    find_skill(registry, skill_id)  # 不存在即抛
+    forbidden = sorted(k for k in CORRECTION_FORBIDDEN if k in correction)
+    if forbidden:
+        raise GateError(f"correction 禁止携带 {forbidden}（只允许 corrections 内四类账本修正，不得带正式报告路径）")
+    corrections = correction.get("corrections")
+    if not isinstance(corrections, dict):
+        raise GateError("corrections 必须为对象")
+    non_empty = [k for k in CORRECTION_KINDS if corrections.get(k)]
+    if not non_empty:
+        raise GateError("corrections 至少一类非空")
+    extra = sorted(set(corrections) - set(CORRECTION_KINDS))
+    if extra:
+        raise GateError(f"corrections 含未知类别 {extra}（允许 {list(CORRECTION_KINDS)}）")
+    entry = next((item for item in manifest["skills"] if item["skill_id"] == skill_id), None)
+    known_attempts = set(entry.get("attempts") or []) if entry else set()
+    base = correction.get("base_attempt_id")
+    if not base or base not in known_attempts:
+        raise GateError(f"base_attempt_id {base!r} 不在 {skill_id} 已接受 attempts {sorted(known_attempts)} 中")
+    id_sets = {
+        "calculation_requests": {c.get("calculation_id") for c in manifest["calculations"] if c.get("calculation_id")},
+        "command_receipts": {r.get("receipt_id") for r in manifest["command_receipts"] if r.get("receipt_id")},
+        "fact_updates": {f.get("fact_id") for f in manifest["facts"] if f.get("fact_id")},
+        "judgments": {j.get("judgment_id") for j in manifest["judgments"] if j.get("judgment_id")},
+    }
+    for kind in CORRECTION_KINDS:
+        id_key = _CORRECTION_ID_KEYS[kind]
+        for item in corrections.get(kind) or []:
+            if not isinstance(item, dict):
+                raise GateError(f"{kind} 条目必须为对象")
+            rid = item.get(id_key)
+            if not rid:
+                raise GateError(f"{kind} 条目缺 {id_key}")
+            if rid not in id_sets[kind]:
+                raise GateError(
+                    f"{kind} 引用不存在的 {id_key}={rid!r}（correction 只允许修改已有 ID，禁止新增）")
+
+
+def _apply_correction(manifest: dict, correction: dict, run_root: Path) -> None:
+    corrections = correction["corrections"]
+    # 1. removed 差集清理（雅克 run 经验：已删除请求的残留会让 audit 二次暴露）
+    for kind, target in _CORRECTION_TARGETS.items():
+        id_key = _CORRECTION_ID_KEYS[kind]
+        removed = {
+            item.get(id_key)
+            for item in corrections.get(kind) or []
+            if item.get("removed") is True
+        }
+        if removed:
+            manifest[target] = [
+                record for record in manifest[target]
+                if record.get(id_key) not in removed
+            ]
+    # 2. 非 removed → last-write-wins 覆盖（复用 _merge_provenance 同一套合并逻辑）
+    pseudo = {
+        "skill_id": correction["skill_id"],
+        "fact_updates": [f for f in corrections.get("fact_updates") or [] if not f.get("removed")],
+        "calculation_requests": [c for c in corrections.get("calculation_requests") or [] if not c.get("removed")],
+        "judgments": [j for j in corrections.get("judgments") or [] if not j.get("removed")],
+        "command_receipts": [r for r in corrections.get("command_receipts") or [] if not r.get("removed")],
+    }
+    _merge_provenance(manifest, pseudo, run_root=run_root)
+    # 3. 保留 correction 记录（base_attempt_id + digest，供审计/复核追溯）
+    digest = hashlib.sha256(
+        json.dumps(correction, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    manifest.setdefault("corrections", []).append({
+        "schema_version": CORRECTION_SCHEMA,
+        "skill_id": correction["skill_id"],
+        "base_attempt_id": correction["base_attempt_id"],
+        "digest": digest,
+        "applied_at": now_iso(),
+    })
+
+
+def cmd_submit_correction(args: argparse.Namespace) -> int:
+    root, registry = Path(args.run_root), load_registry(Path(args.registry))
+    manifest = load_manifest(root)
+    correction = load_json(Path(args.correction), "Correction Bundle")
+    _validate_correction(correction, manifest, registry)
+    next_manifest = copy.deepcopy(manifest)
+    _apply_correction(next_manifest, correction, root)
+    save_manifest(root, next_manifest)
+    append_event(root, {
+        "type": "correction_applied",
+        "skill_id": correction["skill_id"],
+        "base_attempt_id": correction["base_attempt_id"],
+    })
+    print(json.dumps({
+        "status": "CORRECTED",
+        "skill_id": correction["skill_id"],
+        "base_attempt_id": correction["base_attempt_id"],
+    }, ensure_ascii=False))
+    return 0

@@ -23,6 +23,8 @@ TOOLS_DIR = Path(__file__).resolve().parent
 DEFAULT_REGISTRY = TOOLS_DIR / "full_analysis_contract.json"
 STATE_REL = Path("evidence/runtime-state.json")
 EVENTS_REL = Path("evidence/events.jsonl")
+USAGE_REL = Path("evidence/usage.jsonl")
+MANIFEST_REL = Path("evidence/00-analysis-manifest.json")
 LEASE_MINUTES = 20
 BACKOFF_SECONDS = (60, 180)
 RATE_LIMIT_COOLDOWN_SECONDS = 600
@@ -142,7 +144,9 @@ RESULT_BUNDLE_TEMPLATE = """
 
 
 class RuntimeErrorState(Exception):
-    pass
+    def __init__(self, message: str = "", *, code: int = 1):
+        super().__init__(message)
+        self.code = code
 
 
 @contextmanager
@@ -390,6 +394,8 @@ def _next_work_locked(run_root: Path) -> dict:
         "evidence_rules": skill.get("evidence_rules", []) if skill else [],
         "roles": roles,
         "fanout_required": bool(roles.get("mode") == "independent_then_integrator"),
+        # E9 联动：rework 重置的单元带可复用基准 attempt，编排器按此复用 report/role-memo/raw
+        "reuse_base_attempt": unit.get("reuse_attempt"),
         "authorization": authorization,
         **lease,
     }
@@ -645,4 +651,183 @@ def _resume_locked(
         "status": "RESUMED",
         "abandoned": abandoned,
         "recovered": recovered,
+    }
+
+
+# ---------------------------------------------------------------- usage 计量
+USAGE_PHASES = {"work", "summary", "review"}
+
+
+def _usage_records(run_root: Path) -> list[dict]:
+    path = Path(run_root) / USAGE_REL
+    if not path.exists():
+        return []
+    records = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
+
+
+def _refresh_usage_summary(run_root: Path) -> dict:
+    """从 usage.jsonl 全量重算 manifest.usage_summary（幂等，单一真源=jsonl）。"""
+    records = _usage_records(run_root)
+    by_phase: dict[str, dict] = {}
+    by_skill: dict[str, dict] = {}
+    total_tokens = 0
+    for rec in records:
+        phase = rec.get("phase", "?")
+        skill = rec.get("skill_id", "?")
+        in_tok = rec.get("input_tokens") or 0
+        out_tok = rec.get("output_tokens") or 0
+        total_tokens += in_tok + out_tok
+        for bucket, key in ((by_phase, phase), (by_skill, skill)):
+            agg = bucket.setdefault(key, {"records": 0, "input_tokens": 0,
+                                          "output_tokens": 0, "input_bytes": 0,
+                                          "output_bytes": 0, "duration_ms": 0,
+                                          "cache_hits": 0})
+            agg["records"] += 1
+            agg["input_tokens"] += in_tok
+            agg["output_tokens"] += out_tok
+            agg["input_bytes"] += rec.get("input_bytes") or 0
+            agg["output_bytes"] += rec.get("output_bytes") or 0
+            agg["duration_ms"] += rec.get("duration_ms") or 0
+            if rec.get("cache_hit"):
+                agg["cache_hits"] += 1
+    summary = {
+        "schema_version": "usage-summary/v1",
+        "total_records": len(records),
+        "total_tokens": total_tokens,
+        "by_phase": [{"phase": k, **v} for k, v in sorted(by_phase.items())],
+        "by_skill": [{"skill_id": k, **v} for k, v in sorted(by_skill.items())],
+    }
+    manifest_path = Path(run_root) / MANIFEST_REL
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["usage_summary"] = summary
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8",
+        )
+    return summary
+
+
+def record_usage(
+    run_root: Path,
+    *,
+    phase: str,
+    attempt_id: str,
+    skill_id: str,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    input_bytes: int,
+    output_bytes: int,
+    duration_ms: int,
+    cache_hit: bool = False,
+) -> dict:
+    """记录一次 Agent 阶段的真实 usage，写入 evidence/usage.jsonl 并刷新 manifest 汇总。"""
+    if phase not in USAGE_PHASES:
+        raise RuntimeErrorState(f"phase 必须是 {sorted(USAGE_PHASES)} 之一，收到 {phase!r}", code=1)
+    for label, value in (("input_tokens", input_tokens), ("output_tokens", output_tokens),
+                         ("input_bytes", input_bytes), ("output_bytes", output_bytes),
+                         ("duration_ms", duration_ms)):
+        if value is not None and value < 0:
+            raise RuntimeErrorState(f"{label} 不能为负数（收到 {value}）", code=1)
+    if input_bytes is None or output_bytes is None:
+        raise RuntimeErrorState("input_bytes/output_bytes 必填（attempt 绑定必须存在）", code=1)
+
+    state = load_state(run_root)
+    run_id = state.get("run_id") or state.get("run", {}).get("run_id", "")
+    receipt = {
+        "schema_version": "usage-receipt/v1",
+        "run_id": run_id,
+        "phase": phase,
+        "skill_id": skill_id,
+        "attempt_id": attempt_id,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "input_bytes": input_bytes,
+        "output_bytes": output_bytes,
+        "duration_ms": duration_ms,
+        "cache_hit": cache_hit,
+        "recorded_at": iso(now()),
+    }
+    path = Path(run_root) / USAGE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for existing in _usage_records(run_root):
+        if existing.get("attempt_id") == attempt_id and existing.get("phase") == phase:
+            raise RuntimeErrorState(
+                f"重复 usage 记录：attempt_id={attempt_id} phase={phase} 已存在",
+                code=1,
+            )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(receipt, ensure_ascii=False) + "\n")
+    event(run_root, "usage_recorded", phase=phase, skill_id=skill_id, attempt_id=attempt_id)
+    summary = _refresh_usage_summary(run_root)
+    return {"status": "RECORDED", "receipt": receipt, "usage_summary": summary}
+
+
+def rework(run_root: Path, work_unit_id: str, reason: str = "") -> dict:
+    """报告正文/artifact 类返工：DONE/PARTIAL → PENDING + 清租约 + 事件 + 复用指引。
+
+    与 submit-correction 分工：确定性证据错误走 correction（不耗 attempt）；
+    缺章节/缺正文/实质校验失败才走本命令（耗一次 attempt）。
+    防呆：未派发/PENDING/LEASED 单元与无被 Gate 接受产物的单元拒绝。
+    """
+    with runtime_lock(run_root):
+        return _rework_locked(run_root, work_unit_id, reason)
+
+
+def _rework_locked(run_root: Path, work_unit_id: str, reason: str) -> dict:
+    state = load_state(run_root)
+    unit = next((u for u in state["work_units"] if u["work_unit_id"] == work_unit_id), None)
+    if unit is None:
+        raise RuntimeErrorState(f"未知 work_unit_id: {work_unit_id}", code=1)
+    if unit["status"] not in {"DONE", "PARTIAL"}:
+        raise RuntimeErrorState(
+            f"rework 只接受 DONE/PARTIAL 单元（{work_unit_id} 当前 {unit['status']}）；"
+            f"PENDING/LEASED/未派发单元请走正常 next-work",
+            code=1,
+        )
+    # 防呆：必须已有被 Gate 接受的 attempt（manifest.skills[].attempts 非空）
+    manifest_path = Path(run_root) / MANIFEST_REL
+    accepted: list[str] = []
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            entry = next(
+                (item for item in manifest.get("skills", []) if item["skill_id"] == unit["skill_id"]),
+                None,
+            )
+            accepted = list((entry or {}).get("attempts") or [])
+        except (OSError, json.JSONDecodeError):
+            accepted = []
+    if not accepted:
+        raise RuntimeErrorState(
+            f"{work_unit_id} 无被 Gate 接受的 attempt，不能 rework（先提交合格产物）",
+            code=1,
+        )
+    lease = unit.get("lease") or {}
+    old_attempt = lease.get("attempt_id")
+    if old_attempt:
+        unit.setdefault("abandoned_attempts", []).append(old_attempt)
+    base = accepted[-1]
+    unit["reuse_attempt"] = base  # next-work 据此下发 reuse_base_attempt 指引
+    unit["status"] = "PENDING"
+    unit["lease"] = None
+    state.setdefault("rework_count", 0)
+    state["rework_count"] += 1
+    save_state(run_root, state)
+    event(
+        run_root, "rework_initiated",
+        work_unit_id=work_unit_id, reason=reason,
+        base_attempt=base, previous_attempt=old_attempt,
+    )
+    return {
+        "status": "REWORKED",
+        "work_unit_id": work_unit_id,
+        "base_attempt": base,
+        "reuse_base_attempt": base,
     }

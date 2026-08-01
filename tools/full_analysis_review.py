@@ -212,6 +212,15 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     prepared = []
     brief_index = {}
 
+    # E8: 读上次 prepare 的 index，对比 report/evidence digest 以提示失效评审
+    previous_briefs = {}
+    prev_index_path = review_dir / "review-index.json"
+    if prev_index_path.is_file():
+        try:
+            previous_briefs = (json.loads(prev_index_path.read_text(encoding="utf-8")) or {}).get("briefs", {})
+        except (json.JSONDecodeError, OSError):
+            previous_briefs = {}
+
     for skill_id in scope:
         if skill_id == "delivery-summary":
             summary = (manifest.get("delivery") or {}).get("summary")
@@ -307,7 +316,27 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         "briefs": brief_index,
         "prepared_at": _now_iso(),
     })
-    print(json.dumps({"prepared": prepared, "count": len(prepared)}, ensure_ascii=False))
+
+    # E8: 对比上次 prepare，提示报告/证据已变化（对应评审结果失效需重审）的 skill
+    stale = []
+    for sid, cur in brief_index.items():
+        prev = previous_briefs.get(sid) or {}
+        changed = [
+            label for label, key in (("报告", "report_digest"), ("证据", "evidence_digest"))
+            if prev.get(key) and prev.get(key) != cur.get(key)
+        ]
+        if changed:
+            stale.append({"skill_id": sid, "changed": changed,
+                          "hint": "delivery-summary 证据变化必中（其 evidence_digest 依赖全部 facts）"
+                                  if sid == "delivery-summary" else "该 skill 的 review-result 已过期，需重审"})
+    if stale:
+        print(json.dumps({
+            "prepared": prepared, "count": len(prepared),
+            "stale_reviews": stale,
+            "note": "以下 skill 的报告或证据相对上次 prepare 已变化，其 review-result 失效，须重新派评审 Agent 并 ingest",
+        }, ensure_ascii=False))
+    else:
+        print(json.dumps({"prepared": prepared, "count": len(prepared)}, ensure_ascii=False))
     return 0
 
 

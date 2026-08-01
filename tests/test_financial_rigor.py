@@ -349,6 +349,18 @@ class TestCLIExitCodeSemantics(_CLICase):
         self.assertEqual(proc.returncode, 1, msg=proc.stdout)
         self.assertNotIn("Traceback", proc.stderr)
 
+    def test_calc_round_half_up_exits_zero(self):
+        # E5: round(EXPR,N) 预处理为 ROUND_HALF_UP 量化，不再判"不安全的表达式"
+        proc = self.run_cli("calc", "--expr", "round((1-59.46/86.11)*100,2)")
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertIn("30.95", proc.stdout)
+
+    def test_calc_round_preserves_safety_rejects_function_calls(self):
+        # E5: 展开后仍拒绝函数调用/注入
+        proc = self.run_cli("calc", "--expr", "__import__('os').system('ls')")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("不安全的表达式", proc.stdout)
+
     def test_no_subcommand_exits_two_with_usage(self):
         # 修复前: 裸调用打印 help 到 stdout 且退出码 0 — 零操作却报"成功"
         proc = self.run_cli()

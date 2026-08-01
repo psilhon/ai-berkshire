@@ -86,6 +86,22 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(calculations[0]["expected"]["replayed"], True)
         self.assertEqual(calculations[0]["expected"]["outcome"], "PASS")
 
+    def test_replay_cross_validate_conflict_counts_as_replayed(self):
+        # E5: cross-validate 来源偏差>容差时 rc=1（验证未过但工具执行成功），
+        # 应记为 outcome=CONFLICT/replayed=True，不再误判"未重放"。
+        calculations = [{
+            "calculation_id": "calculation.cross-conflict",
+            "operation": "cross-validate",
+            "args": {"field": "share", "values": {"a": 70, "b": 100}, "unit": "%"},
+        }]
+        changed = audit_module._replay_calculation_requests(calculations)
+        self.assertTrue(changed)
+        exp = calculations[0]["expected"]
+        self.assertEqual(exp["replayed"], True)
+        self.assertEqual(exp["outcome"], "CONFLICT")
+        # CONFLICT 计入"已重放"集合
+        self.assertIn(calculations[0], audit_module._replayed_calculations({"calculations": calculations}))
+
     def test_replay_does_not_trust_stale_expected_result(self):
         calculations = [{
             "calculation_id": "calculation.three-scenario",

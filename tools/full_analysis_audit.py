@@ -80,8 +80,10 @@ def _evidence_by_skill(manifest: dict) -> dict:
     return acc
 
 
-def _violation(code: str, skill_id: str, detail: str) -> list[dict]:
-    return [{"code": code, "skill_id": skill_id, "detail": detail}]
+def _violation(code: str, skill_id: str, detail: str, *, correctable: bool = True) -> list[dict]:
+    # correctable=True：证据账本类错误，可通过 submit-correction 定向修正，不消耗新 attempt
+    # （编排器据此分流 CORRECTABLE_EVIDENCE vs REPORT_REQUIRED_RETRY）。
+    return [{"code": code, "skill_id": skill_id, "detail": detail, "correctable": correctable}]
 
 
 def _source_identity(source: dict) -> str | None:
@@ -124,12 +126,20 @@ def _eval_min_dual_source_facts(skill_id, rule, ev, context):
 
 
 def _replayed_calculations(ev: dict) -> list[dict]:
+    # outcome=PASS 或 CONFLICT 均视为"已重放"：CONFLICT 是 cross-validate 执行成功但
+    # 来源偏差超容差（工具 rc=1 输出完整冲突记录），仍属确定性重放结果。
     return [
         calc for calc in ev["calculations"]
         if isinstance(calc.get("expected"), dict)
         and calc["expected"].get("replayed") is True
-        and calc["expected"].get("outcome") == "PASS"
+        and calc["expected"].get("outcome") in ("PASS", "CONFLICT")
     ]
+
+
+# cross-validate 语义：rc=1 表示"验证未通过"（来源偏差>容差），工具执行成功且输出了完整
+# 冲突记录——区别于工具崩溃/参数错误的 rc 非 0。此类请求标记 outcome=CONFLICT、replayed=True，
+# 不再被误判为"未重放"（历史事故：ROE 口径冲突 3.66% 与 LNG 份额 17.65% 均被误判）。
+_CROSS_VALIDATE_RC1 = 1
 
 
 def _replay_calculation_requests(calculations: list[dict]) -> bool:
@@ -156,9 +166,13 @@ def _replay_calculation_requests(calculations: list[dict]) -> bool:
                 encoded = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
                 command.extend([flag, encoded])
         completed = subprocess.run(command, capture_output=True, text=True)
+        if operation == "cross-validate" and completed.returncode == _CROSS_VALIDATE_RC1:
+            replayed, outcome = True, "CONFLICT"
+        else:
+            replayed, outcome = completed.returncode == 0, ("PASS" if completed.returncode == 0 else "FAIL")
         calc["expected"] = {
-            "replayed": completed.returncode == 0,
-            "outcome": "PASS" if completed.returncode == 0 else "FAIL",
+            "replayed": replayed,
+            "outcome": outcome,
             "tool": "financial_rigor.py",
             "returncode": completed.returncode,
             "output_sha256": hashlib.sha256(completed.stdout.encode("utf-8")).hexdigest(),
@@ -334,27 +348,27 @@ def audit(run_root: Path, registry_path: Path = Path(DEFAULT_REGISTRY)) -> tuple
         seen = set()
         for identifier in value:
             if identifier in seen:
-                errors.append({"code": code, "detail": identifier})
+                errors.append({"code": code, "detail": identifier, "correctable": True})
             seen.add(identifier)
     known_sources = set(source_ids)
     facts_with_source = 0
     for fact in facts:
         refs = fact.get("source_ids")
         if not isinstance(refs, list) or not refs:
-            errors.append({"code": "fact_without_source", "detail": fact.get("fact_id")})
+            errors.append({"code": "fact_without_source", "detail": fact.get("fact_id"), "correctable": True})
             continue
         facts_with_source += 1
         for source_id in refs:
             if source_id not in known_sources:
-                errors.append({"code": "missing_source", "detail": f"{fact.get('fact_id')} -> {source_id}"})
+                errors.append({"code": "missing_source", "detail": f"{fact.get('fact_id')} -> {source_id}", "correctable": True})
     replayed = 0
     for calc in calculations:
         expected = calc.get("expected")
         if (isinstance(expected, dict) and expected.get("replayed") is True
-                and expected.get("outcome") == "PASS"):
+                and expected.get("outcome") in ("PASS", "CONFLICT")):
             replayed += 1
         else:
-            errors.append({"code": "calculation_not_replayed", "detail": calc.get("calculation_id")})
+            errors.append({"code": "calculation_not_replayed", "detail": calc.get("calculation_id"), "correctable": True})
     for item in manifest.get("limitations", []):
         if isinstance(item, dict) and item.get("code") not in PWL_CODES:
             warnings.append({"code": "unclassified_limitation", "detail": item.get("code")})
@@ -372,6 +386,7 @@ def audit(run_root: Path, registry_path: Path = Path(DEFAULT_REGISTRY)) -> tuple
             "code": "evidence_evaluator_coverage",
             "detail": {"unsupported": unsupported,
                        "missing": sorted(SUPPORTED_RULE_KINDS - set(RULE_EVALUATORS))},
+            "correctable": False,
         })
     rules_by_skill = {s["skill_id"]: (s.get("evidence_rules") or []) for s in registry.get("skills", [])}
     ev_by_skill = _evidence_by_skill(manifest)

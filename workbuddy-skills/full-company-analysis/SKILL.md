@@ -24,6 +24,17 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 
+**启动前版本校验（E1，强制）**：编排器必须在 `start` 之前执行一次仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）：
+
+```bash
+cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py && git log -1 --oneline
+```
+
+- 若上述编排相关文件存在**未提交改动**：先与用户确认「工作区契约/脚本是最新意图版本」再继续；不得基于「会话早期印象」假设版本，必须实时读取。
+- `start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
+- 启动后 `start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（13 项业务契约 + preflight）；数量异常视为版本错配，停止并核对。
+- **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
+
 ## Agent 调度纪律
 
 循环调用 `python3 scripts/full_analysis.py next-work --run-root <run_root>`。每次返回 `LEASED` 后，必须直接使用 **WorkBuddy 原生 Agent** 完成该 work unit；不得由 Python、shell 或旧版 orchestrator 再创建 Agent。
@@ -37,12 +48,32 @@ python3 scripts/full_analysis.py job-started \
   --agent-job-id <WorkBuddy 返回的 job id>
 ```
 
+**调度时序纪律（E2，强制）**——租约 20 分钟过期，过期后 submit 被拒、只能走 resume 孤儿恢复（requeue 会丢失已完工作）。以下顺序不可颠倒：
+
+1. **前台派发 Agent**（Agent 工具默认模式），从返回结果取真实 `agent_job_id`；**禁止后台派发**（`run_in_background` 不返回 job id，Agent 完成后无法及时 job-started，租约过期即触发 requeue 灾难）。
+2. Agent 返回后**立即**调用 `job-started`（60 秒内），随后 `submit-result`；不要把提交拖到下一个工作单元之后。
+3. 若提交被拒（身份不匹配/实质校验），当场修复 result.json 或报告后重提，**不要留到收口阶段批量处理**——批量返工会使整条返工链（audit→prepare→评审→ingest→summarize）连锁重跑。
+4. **长任务强制 heartbeat**：预计执行超过 10 分钟的 Agent（fanout 单元、多模块研究单元），派发指令必须要求其每完成一个主要阶段调用一次 `heartbeat`（命令见 BUNDLE-SPEC）；全程零心跳的 run 会被 doctor 判「疑似主上下文直写」，需人工复核。
+5. **429 降级派发（E12）**：派发 Agent 遇模型 429 限流时，改派 `model:"lite"` 继续（不中止 run、不消耗 runtime 预算）；runtime 的 429 冷却仅约束 Agent job 预算侧，派发层的模型降级是编排器正常容错，两者不混淆。若 lite 亦连续失败，才走 `record-failure` 重试退避。
+
 派发给 Agent 的指令必须包含注册表分配的精确正式产物路径，并要求其把中间文件放在：
 
 ```text
 <run_root>/evidence/attempts/<skill_id>/<attempt_id>/
 ```
 
+**usage 回传协议（E14，Task 1 后强制）**——每个 work/summary/review Agent 完成后必须回传真实用量，供成本基准与预算告警（Task 6）使用：
+
+```text
+python3 scripts/full_analysis.py record-usage \
+  --run-root <run_root> --phase work|summary|review \
+  --attempt-id <attempt_id> --skill-id <skill_id> \
+  --input-tokens <int> --output-tokens <int> \
+  --input-bytes <int> --output-bytes <int> \
+  --duration-ms <int> [--cache-hit]
+```
+
+三条纪律：①**token 缺失允许**——提供商不返回 token 时只提交字节数（`input_tokens`/`output_tokens` 记 `null`），禁止伪造为 0；②**字节数必填**——`input_bytes`/`output_bytes` 缺失整条被拒；③**一次一条**——同一 `attempt_id + phase` 只允许一条记录，重复提交被拒。汇总写入 `evidence/usage.jsonl` 并在 manifest `usage_summary` 按 phase/skill 聚合，作为 benchmark 与 `COST_BUDGET_EXCEEDED` 告警的唯一真源。
 Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短收据。除 facts/sources/calculation requests 外，必须按当前 skill 的 `evidence_rules` 填写结构化 `judgments`、`command_receipts` 与 `capability_records`；缺少任何已注册规则所需账本时 Audit 必须失败。多角色单元的 `role_runs` 不接受 Agent 自证，由 Gate 根据实际 `role-<role>.md` 备忘录生成并绑定路径、字节数与 SHA-256。计算请求只能提交 operation/args，重放结果由共享 Audit Job 调用 `financial_rigor.py` 生成，Agent 不得自证。`NOT_APPLICABLE` 不是自报状态：必须提交 `not_applicable` 结构、带来源的判定事实和负向验收报告；`always`/`always_applicable` 单元不得 N/A。主上下文只接收 `attempt_id`、`result_path`、`status`、`bytes`、`sha256`；**不读取报告正文、不复制隐藏推理、不把长文本带回主上下文**。
 
 **派发前必读 `next-work` 注入的规范**：每次 `next-work` 返回的 payload 内含 `methodology_text`（即 `skills/<skill_id>.md` 完整方法论 + 结构指令 + 证据指令 + Result Bundle 模板）、`sections`（章节与最低字数要求）、`evidence_rules`（本 skill 的结构化证据最低要求）与 `roles`/`fanout_required`。执行 Agent 必须以 `methodology_text` 为强制规范完整落地，**不得仅凭 skill 名称凭记忆发挥**。三条刚性纪律：
@@ -50,6 +81,17 @@ Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短
 1. **heading 逐字使用**：报告 `##` 标题必须逐字使用 `sections` 数组中每个条目的 `heading` 字段值（如「数据截止日」「核心结论」），**严禁使用 `section_id`**（如 `data_cutoff`）。Gate 按 heading 精确匹配，用 section_id 整份报告被拒收。
 2. **## 后必须有正文**：每个 `##` 章节下必须先有 ≥150 字正文段落，再展开 `###` 子节。`##` 后紧跟 `###` 会导致该章节被判为「无正文」，不计入实质章节数。
 3. **结构化证据必填**：Result Bundle 必须包含 `fact_updates` / `source_records` / `calculation_requests` / `judgments` / `command_receipts`，按 `evidence_rules` 满足最低条数。只写报告正文不写证据 → Audit 产生 violation → 阻断准出。
+
+**派发模板必含账本清单（E3，强制）**——Audit 按「契约精确值」核对账本，Agent 按模板印象填中文名/自定义 rule_id 必被拒（两次 run 均已踩坑）。编排器派发 prompt 必须**把本 skill 的契约要求逐字内嵌**，不得让 Agent 自行推断：
+
+- **sections 清单**：把 `next-work` payload 的 `sections[]` 的 `heading` 逐字列出（一个都不能少），并写明「## 下先写 ≥150 字正文再展开 ###」。
+- **evidence_rules 账本清单**：把 `evidence_rules[]` 转成可执行清单——
+  - `required_fact_fields`：逐字列出 field 值（如 `quality_metric_1`…`quality_metric_7`、`income_statement`/`balance_sheet`/`cash_flow`、`funnel_universe`/`funnel_top10`/`funnel_final3`），要求 fact_updates 的 `field` 与之完全一致（**禁止用中文名**）。
+  - `required_judgment_rule_ids`：逐字列出 rule_id（如 `checklist_final_decision`/`investment_thesis`/`contrarian_synthesis`/`management_integrity`/`industry_scope`/`physical_bottleneck`/`price_move_attribution`/`core_thesis`），要求 judgments 至少一条 `rule_id` 精确匹配。
+  - `conditional_command_operations.capability`：逐字给出 capability 名（如 `tushare_configured`），要求 capability_records 含该名且 `available: true`。
+  - `min_judgments_with_falsification`：要求每条第 `falsification` 非空数组，条数 ≥ n。
+- **result.json 结构红线**：command_receipts 每条只允许 `receipt_id/operation/status/detail/reason` 五键；fact_updates/source_records/judgments 等列表对象 `additionalProperties=false`，不得携带扩展字段（如 `detail`/`skill_id`）；评审维度 `dimensions` 必须是数组 `[{dimension, verdict}]` 而非 dict。
+- **calc 表达式红线**：`financial_rigor.py calc` 只支持纯四则运算（白名单 `0123456789.+-*/() eE`），**禁止 `round(...)` 与 `^` 幂运算**（会被判「不安全的表达式」导致 Audit 重放失败）；需要取整/幂时提交不含 round/^ 的表达式（如 `(1-59.46/86.11)*100`）。
 
 **多角色 skill 必须真扇出**：当 `fanout_required: true` 时，必须为 `roles.required_roles` 中每个角色（除 `integrator` 外）启动一个**独立原生 Agent**（用 Task 工具 fan-out），各自在 `evidence/attempts/<skill_id>/<attempt_id>/role-<role>.md` 产出独立分析备忘录（每个 ≥300 字节，且不得相互引用以保证独立性）；最后由整合 Agent 读取全部角色备忘录产出正式整合报告。缺少任一 `role-<role>.md` 时 Gate 会拒收。单 Agent skill 则由一个原生 Agent 按 methodology 完整执行。
 
@@ -62,7 +104,7 @@ python3 scripts/full_analysis.py submit-result \
   --run-root <run_root> --result <attempt_dir>/result.json
 ```
 
-租约期间按需调用 `heartbeat`。Agent 失败调用 `record-failure`；429 只走 Runtime 的全局冷却与降并发，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
+租约期间按需调用 `heartbeat`（长任务按上文「调度时序纪律」第 4 条**强制**）。Agent 失败调用 `record-failure`；429 在派发层按「调度时序纪律」第 5 条降级 lite 继续，runtime 侧的 429 冷却只约束 Agent job 预算，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
 
 ## 执行一致性纪律（防质量坍塌，强制）
 
@@ -73,6 +115,18 @@ python3 scripts/full_analysis.py submit-result \
 - **扇出单元不得在主上下文模拟**：`fanout_required` 单元的各角色必须用 Task 工具派独立 Agent，禁止单 Agent 串行"扮演"多角色后自称已扇出。
 
 ## 恢复与收口
+
+**返工协议（E9/E11 分工，强制）**——audit 失败的返工按错误类型分流，禁止一律整单重跑：
+
+1. **证据账本类（CORRECTABLE_EVIDENCE）→ `submit-correction`**：audit 错误的 `correctable: true`（缺 fact 字段/rule_id/capability、receipt 不足、计算参数需修正、已删除请求的残留清理等）只修账本、不重写报告、不新增 attempt。用 `correction-bundle/v1` 提交修正（只允许修改已有 ID；删除用 `"removed": true`；禁止携带报告路径）：
+
+```text
+python3 scripts/full_analysis.py submit-correction \
+  --run-root <run_root> --correction <correction.json>
+```
+
+correction 合并**以修正集合为准做差集**：被 removed 的记录从 manifest 移除（防止残留让 audit 二次暴露），其余 last-write-wins 覆盖；`base_attempt_id` 与 digest 记入 manifest.corrections 可追溯。
+2. **报告正文/artifact 类（REPORT_REQUIRED_RETRY）→ `rework`**：缺章节/缺正文/实质校验不通过才重置单元重新派 Agent（见下）。
 
 WorkBuddy 重启后调用 `resume`。Runtime 会先检查活动租约目录中的孤儿 Result Bundle：Gate 验证通过则直接接管为 DONE；无结果或验证失败才标为 abandoned 并重新排队。已经被 Gate 接受的正式产物可复用。
 

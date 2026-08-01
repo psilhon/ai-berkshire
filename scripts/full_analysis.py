@@ -25,7 +25,7 @@ def emit(value: object) -> None:
 class PublicParser(argparse.ArgumentParser):
     """隐藏内部桥接命令，避免把 Runtime 协议误当成用户 API。"""
 
-    INTERNAL = ("next-work", "audit", "job-started", "heartbeat", "record-failure", "submit-result")
+    INTERNAL = ("next-work", "audit", "job-started", "heartbeat", "record-failure", "submit-result", "record-usage", "submit-correction", "rework")
 
     def format_help(self):
         text = super().format_help()
@@ -74,6 +74,23 @@ def parser() -> argparse.ArgumentParser:
     fail = sub.add_parser("record-failure", help=argparse.SUPPRESS)
     fail.add_argument("--run-root", required=True); fail.add_argument("--work-unit-id", required=True)
     fail.add_argument("--attempt-id", required=True); fail.add_argument("--reason", required=True)
+    usage = sub.add_parser("record-usage", help=argparse.SUPPRESS)
+    usage.add_argument("--run-root", required=True)
+    usage.add_argument("--phase", required=True, choices=["work", "summary", "review"])
+    usage.add_argument("--attempt-id", required=True)
+    usage.add_argument("--skill-id", required=True)
+    usage.add_argument("--input-tokens", type=int, default=None)
+    usage.add_argument("--output-tokens", type=int, default=None)
+    usage.add_argument("--input-bytes", type=int, default=None)
+    usage.add_argument("--output-bytes", type=int, default=None)
+    usage.add_argument("--duration-ms", type=int, default=None)
+    usage.add_argument("--cache-hit", action="store_true")
+    corr = sub.add_parser("submit-correction", help=argparse.SUPPRESS)
+    corr.add_argument("--run-root", required=True); corr.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
+    corr.add_argument("--correction", required=True)
+    rw = sub.add_parser("rework", help=argparse.SUPPRESS)
+    rw.add_argument("--run-root", required=True); rw.add_argument("--work-unit-id", required=True)
+    rw.add_argument("--reason", default="")
     submit = sub.add_parser("submit-result", help=argparse.SUPPRESS)
     submit.add_argument("--run-root", required=True); submit.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     submit.add_argument("--result", required=True)
@@ -139,7 +156,16 @@ def main(argv=None) -> int:
         if args.command == "job-started": emit(runtime.job_started(root, args.work_unit_id, args.attempt_id, args.lease_nonce, args.agent_job_id)); return 0
         if args.command == "heartbeat": emit(runtime.heartbeat(root, args.work_unit_id, args.attempt_id, args.lease_nonce)); return 0
         if args.command == "record-failure": emit(runtime.record_failure(root, args.work_unit_id, args.attempt_id, args.reason)); return 0
+        if args.command == "record-usage":
+            emit(runtime.record_usage(
+                root, phase=args.phase, attempt_id=args.attempt_id, skill_id=args.skill_id,
+                input_tokens=args.input_tokens, output_tokens=args.output_tokens,
+                input_bytes=args.input_bytes, output_bytes=args.output_bytes,
+                duration_ms=args.duration_ms, cache_hit=args.cache_hit))
+            return 0
         if args.command == "submit-result": emit(runtime.submit_result(root, Path(args.registry), Path(args.result))); return 0
+        if args.command == "submit-correction": return gate.cmd_submit_correction(args)
+        if args.command == "rework": emit(runtime.rework(root, args.work_unit_id, args.reason)); return 0
         if args.command == "register-summary": return gate.cmd_register_summary(args)
         if args.command == "render-html": return gate.cmd_render_html(args)
         if args.command == "finalize": return gate.cmd_finalize(args)

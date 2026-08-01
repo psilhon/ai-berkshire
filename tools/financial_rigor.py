@@ -25,7 +25,7 @@ import json
 import math
 import re
 import sys
-from decimal import Decimal, Context, ROUND_HALF_EVEN, InvalidOperation
+from decimal import Decimal, Context, ROUND_HALF_EVEN, ROUND_HALF_UP, InvalidOperation
 
 # ---------------------------------------------------------------------------
 # Exact Decimal Engine (no floating-point drift)
@@ -323,6 +323,31 @@ def benford_check(values: list):
 _NUMBER_RE = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 
 
+# round(EXPR, N) 预处理：允许一层括号内层、无逗号。Decimal 本身精确，round 仅量化显示位数。
+_ROUND_RE = re.compile(r"round\(\s*((?:[^()]|\([^()]*\))*?)\s*,\s*(\d+)\s*\)")
+_CALC_ALLOWED = set("0123456789.+-*/() eE")
+
+
+def _expand_round(expr: str) -> str:
+    """把 round(EXPR, N) 展开为 quantize 后的字面量（ROUND_HALF_UP 四舍五入）。
+
+    仅接受白名单字符的内层表达式；循环展开以支持嵌套 round。非 round 部分原样保留。
+    """
+    def _repl(m):
+        inner = m.group(1).strip()
+        if not all(c in _CALC_ALLOWED for c in inner.replace(" ", "")):
+            raise ValueError(f"round 内层含非法字符: {inner}")
+        dec_inner = _NUMBER_RE.sub(r"Decimal('\g<0>')", inner)
+        value = eval(dec_inner, {"__builtins__": {}}, {"Decimal": Decimal})  # noqa: S307
+        n = int(m.group(2))
+        return value.quantize(Decimal("1e-%d" % n), rounding=ROUND_HALF_UP).to_eng_string()
+    prev = None
+    while prev != expr:
+        prev = expr
+        expr = _ROUND_RE.sub(_repl, expr)
+    return expr
+
+
 def exact_calc(expr: str):
     """Evaluate a financial expression with exact decimal arithmetic.
 
@@ -333,6 +358,12 @@ def exact_calc(expr: str):
     print("=" * 60)
 
     # Safe evaluation: only allow numbers and arithmetic
+    # round(EXPR, N) 先展开为量化字面量（内层单独过白名单），再校验整体
+    try:
+        expr = _expand_round(expr)
+    except ValueError as e:
+        print(f"  ❌ 不安全的表达式: {e}")
+        return None
     allowed = set("0123456789.+-*/() eE")
     if not all(c in allowed for c in expr.replace(" ", "")):
         print(f"  ❌ 不安全的表达式: {expr}")
@@ -633,11 +664,18 @@ def _json_benford(values):
 
 def _json_calc(expr):
     allowed = set("0123456789.+-*/() eE")
+    try:
+        expr = _expand_round(expr)
+    except ValueError as e:
+        result = {"expression": expr, "value": None}
+        return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
+                         errors=[{"code": "unsafe_expression", "message": str(e)}])
     if not all(c in allowed for c in expr.replace(" ", "")):
         result = {"expression": expr, "value": None}
         return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
                          errors=[{"code": "unsafe_expression", "message": "表达式含非法字符"}])
     try:
+        expr = _expand_round(expr)
         dec_expr = _NUMBER_RE.sub(r"Decimal('\g<0>')", expr)
         value = exact(eval(dec_expr, {"__builtins__": {}}, {"Decimal": Decimal}))
         result = {"expression": expr, "value": _dstr(value)}
