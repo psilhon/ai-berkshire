@@ -302,12 +302,12 @@ def _load_registry() -> dict:
         return {"skills": []}
 
 
-def next_work(run_root: Path) -> dict:
+def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:
     with runtime_lock(run_root):
-        return _next_work_locked(run_root)
+        return _next_work_locked(run_root, methodology_mode)
 
 
-def _next_work_locked(run_root: Path) -> dict:
+def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
     state = load_state(run_root)
     budget = state["budget"]
     if budget["used"] >= budget["hard_max"]:
@@ -359,19 +359,29 @@ def _next_work_locked(run_root: Path) -> dict:
         or {}
     )
     methodology_text = ""
+    methodology_ref = None
+    methodology_sha256 = None
     if skill:
         spec = skill.get("spec_source")
         if spec:
             spec_path = TOOLS_DIR.parent / spec
             if spec_path.is_file():
-                methodology_text = (
-                    AUTHORIZATION_DIRECTIVE.format(run_root=Path(run_root))
-                    + spec_path.read_text(encoding="utf-8")
-                    + ANTI_PADDING_DIRECTIVE
-                    + STRUCTURE_DIRECTIVE
-                    + EVIDENCE_DIRECTIVE
-                    + RESULT_BUNDLE_TEMPLATE
-                )
+                spec_text = spec_path.read_text(encoding="utf-8")
+                if methodology_mode == "ref":
+                    # Task 4：ref 模式不把完整 skill 文本放入 payload，
+                    # 只给规范路径 + SHA-256 + 稳定指令；执行适配器按 hash 加载或缓存。
+                    methodology_ref = spec
+                    methodology_sha256 = hashlib.sha256(spec_text.encode("utf-8")).hexdigest()
+                    methodology_text = AUTHORIZATION_DIRECTIVE.format(run_root=Path(run_root))
+                else:
+                    methodology_text = (
+                        AUTHORIZATION_DIRECTIVE.format(run_root=Path(run_root))
+                        + spec_text
+                        + ANTI_PADDING_DIRECTIVE
+                        + STRUCTURE_DIRECTIVE
+                        + EVIDENCE_DIRECTIVE
+                        + RESULT_BUNDLE_TEMPLATE
+                    )
     roles = skill.get("roles", {}) if skill else {}
     return {
         "status": "LEASED",
@@ -379,6 +389,9 @@ def _next_work_locked(run_root: Path) -> dict:
         "skill_id": unit["skill_id"],
         "methodology_path": skill.get("spec_source") if skill else None,
         "methodology_text": methodology_text,
+        "methodology_ref": methodology_ref,
+        "methodology_sha256": methodology_sha256,
+        "methodology_mode": methodology_mode,
         # 校准路线（防凑数）：不把 min_bytes 具体数字暴露给执行 Agent——它是 Gate 的拒收
         # 地板（挡空壳式坍塌），不是写作目标；奔字数写是凑数的根源。保留 key（值为 None）
         # 以兼容下游派发脚本，深度由 _substance_errors 实质校验保证。

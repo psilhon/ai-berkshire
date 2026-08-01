@@ -204,6 +204,7 @@ register-summary 完成后，编排器**立即**执行 `python3 scripts/full_ana
   4. `valuation_consistency`（估值假设与事实是否内部自洽，情景是否全偏乐观）
   5. `limitations_completeness`（限制项是否完整，有无未披露重大不确定性）
 - `findings` 每条含 `dimension` / `severity`∈{high,medium,low} / `description` / `evidence_refs`（非空数组）/ `remediation`；dimensions 中标 FINDING 的维度集合必须与 findings 覆盖的维度集合**完全一致**。
+- **`fix_source`（E13，推荐填写）**：每条 finding 可带 `fix_source` 指向问题**源头**而非评审结果本身——`{"file": "<相对 run_root 路径>", "line_approx": <int|null>, "kind": "pipeline_raw"|"role_memo"|"report"|"methodology", "note": "<一句话>"}`。传播型笔误（口径错、倍数笔误、基数错误）应填到源头（子 Agent 备忘录/管线 raw/正式报告），ingest 后聚入 `review-index.json`，可用 `review fix-list` 导出季度源头修复清单；缺 fix_source 的 finding 归 UNFIXED 组。low 笔误不进返工链，由清单在下次 run 前批量修源头。
 
 最小合规模板：
 

@@ -60,6 +60,7 @@ def parser() -> argparse.ArgumentParser:
     doc.add_argument("--write", action="store_true")
     for name in ("next-work",):
         cmd = sub.add_parser(name, help=argparse.SUPPRESS); cmd.add_argument("--run-root", required=True)
+        cmd.add_argument("--methodology-mode", default="full", choices=["full", "ref"])
     aud = sub.add_parser("audit", help=argparse.SUPPRESS)
     aud.add_argument("--run-root", required=True); aud.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     fin = sub.add_parser("finalize", help=argparse.SUPPRESS)
@@ -107,10 +108,15 @@ def parser() -> argparse.ArgumentParser:
     rev_prep = rev_sub.add_parser("prepare", help=argparse.SUPPRESS)
     rev_prep.add_argument("--run-root", required=True); rev_prep.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     rev_prep.add_argument("--scope", default=None)
+    rev_prep.add_argument("--payload-mode", default="compact", choices=["compact", "full"])
     rev_ing = rev_sub.add_parser("ingest", help=argparse.SUPPRESS)
     rev_ing.add_argument("--run-root", required=True); rev_ing.add_argument("--review", required=True)
     rev_sum = rev_sub.add_parser("summarize", help=argparse.SUPPRESS)
     rev_sum.add_argument("--run-root", required=True)
+    rev_fix = rev_sub.add_parser("fix-list", help="导出评审 finding 源头修复清单（E13）")
+    rev_fix.add_argument("--run-root", required=True)
+    rev_fix.add_argument("--severity", default=None, choices=["high", "medium", "low"])
+    rev_fix.add_argument("--out", default=None)
     # P3 重复运行稳定性基准
     bench = sub.add_parser("benchmark", help="重复运行稳定性基准（对比 2+ 个 run）")
     bench.add_argument("--run-roots", required=True, nargs="+")
@@ -150,7 +156,7 @@ def main(argv=None) -> int:
         if args.command == "doctor":
             return doctor.run_and_render(root, Path(args.registry),
                                          as_json=args.json, write=args.write, strict=args.strict)
-        if args.command == "next-work": emit(runtime.next_work(root)); return 0
+        if args.command == "next-work": emit(runtime.next_work(root, methodology_mode=args.methodology_mode)); return 0
         if args.command == "audit":
             report, code = audit_tool.audit(root, Path(args.registry)); emit(report); return code
         if args.command == "job-started": emit(runtime.job_started(root, args.work_unit_id, args.attempt_id, args.lease_nonce, args.agent_job_id)); return 0
@@ -176,6 +182,8 @@ def main(argv=None) -> int:
                 return review.cmd_ingest(args)
             if args.review_command == "summarize":
                 return review.cmd_summarize(args)
+            if args.review_command == "fix-list":
+                return review.cmd_fix_list(args)
             return 2
         return 2
     except (gate.GateError, runtime.RuntimeErrorState) as exc:

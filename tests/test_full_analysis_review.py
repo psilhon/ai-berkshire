@@ -303,12 +303,18 @@ class CliIntegrationTests(unittest.TestCase):
         brief_path = self.run_root / "evidence/review/review-brief-investment-research.json"
         self.assertTrue(brief_path.exists())
         brief = json.loads(brief_path.read_text(encoding="utf-8"))
-        self.assertEqual(brief["brief_schema_version"], "review-brief/v1")
+        self.assertEqual(brief["brief_schema_version"], "review-brief/v2")
+        self.assertEqual(brief["payload_mode"], "compact")
         self.assertIn("review_protocol", brief)
-        self.assertEqual(brief["evidence"]["fact_count"], 1)
+        self.assertEqual(len(brief["evidence_index"]["facts"]), 1)
         self.assertIn("brief_digest", brief)
         self.assertIn("sha256", brief["report"])
-        self.assertIn("sha256", brief["evidence"])
+        self.assertIn("claim_sections", brief["report"])
+        self.assertIn("evidence_sha256", brief)
+        self.assertIn("evidence_path", brief)
+        # compact 不携带全量证据与完整报告正文
+        self.assertNotIn("content", brief["report"])
+        self.assertNotIn("command_receipts", brief["evidence_index"])
 
         # 模拟评审子 Agent 产出
         review_result = _make_review_result(
@@ -318,7 +324,7 @@ class CliIntegrationTests(unittest.TestCase):
               "evidence_refs": ["f.1"], "remediation": "补充证据或降低结论强度"}],
             brief_digest=brief["brief_digest"],
             report_digest=brief["report"]["sha256"],
-            evidence_digest=brief["evidence"]["sha256"],
+            evidence_digest=brief["evidence_sha256"],
         )
         review_file = self.run_root / "evidence/review/submitted-review.json"
         review_file.write_text(json.dumps(review_result, ensure_ascii=False), encoding="utf-8")
@@ -370,7 +376,7 @@ class CliIntegrationTests(unittest.TestCase):
              "evidence/review/review-brief-delivery-summary.json").read_text())
         self.assertEqual(brief["skill_id"], "delivery-summary")
         self.assertEqual(brief["report"]["sha256"], summary_digest)
-        self.assertEqual(brief["evidence"]["fact_count"], 1)
+        self.assertEqual(len(brief["evidence_index"]["facts"]), 1)
 
     def test_default_prepare_automatically_reviews_not_applicable_reports(self):
         self._setup_run_with_artifact("quality-screen")
@@ -419,7 +425,7 @@ class CliIntegrationTests(unittest.TestCase):
             run_id="foreign-run",
             brief_digest="stale-digest",
             report_digest=brief["report"]["sha256"],
-            evidence_digest=brief["evidence"]["sha256"],
+            evidence_digest=brief["evidence_sha256"],
         )
         submitted = self.run_root / "evidence/review/foreign-review.json"
         submitted.write_text(json.dumps(result), encoding="utf-8")
@@ -441,7 +447,7 @@ class CliIntegrationTests(unittest.TestCase):
             skill_id, "PASS",
             brief_digest=brief["brief_digest"],
             report_digest=brief["report"]["sha256"],
-            evidence_digest=brief["evidence"]["sha256"],
+            evidence_digest=brief["evidence_sha256"],
         )
         submitted = self.run_root / "evidence/review/submitted-pass.json"
         submitted.write_text(json.dumps(result), encoding="utf-8")
@@ -478,6 +484,94 @@ class CliIntegrationTests(unittest.TestCase):
         self.assertIn("stale_reviews", out)
         self.assertEqual(out["stale_reviews"][0]["skill_id"], "investment-research")
         self.assertIn("证据", out["stale_reviews"][0]["changed"])
+
+    def test_compact_brief_smaller_than_full(self):
+        # Task 3: 默认 compact 简报字节数必须低于 --payload-mode full（引用级 vs 全量复制）
+        self._setup_run_with_artifact("investment-research")
+        # 用接近真实规模的报告（claim_sections 限长截断，full 内嵌全文）
+        report_path = self.run_root / "01-data-screen/investment-research.md"
+        long_report = "## 核心结论\n" + "数据详实论证内容充实满足下限要求。" * 500 + "\n"
+        long_report += "## 下游证据\n" + "证据交叉验证。" * 200 + "\n"
+        report_path.write_text(long_report, encoding="utf-8")
+        compact = self.cli("review", "prepare", "--run-root", self.run_root,
+                           "--scope", "investment-research")
+        self.assertEqual(compact.returncode, 0, compact.stdout + compact.stderr)
+        compact_brief = self.run_root / "evidence/review/review-brief-investment-research.json"
+        compact_bytes = compact_brief.stat().st_size
+        full = self.cli("review", "prepare", "--run-root", self.run_root,
+                        "--scope", "investment-research", "--payload-mode", "full")
+        self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
+        full_bytes = compact_brief.stat().st_size
+        self.assertLess(compact_bytes, full_bytes,
+                        f"compact({compact_bytes}B) 应小于 full({full_bytes}B)")
+
+
+    def test_ingest_aggregates_fix_sources_into_index(self):
+        # E13: 带 fix_source 的 finding ingest 后，review-index.fix_sources 聚合正确
+        self._setup_run_with_artifact("investment-research")
+        prep = self.cli("review", "prepare", "--run-root", self.run_root,
+                        "--scope", "investment-research")
+        self.assertEqual(prep.returncode, 0, prep.stdout + prep.stderr)
+        brief = json.loads(
+            (self.run_root / "evidence/review/review-brief-investment-research.json").read_text())
+        result = _make_review_result(
+            "investment-research", "REVIEW_REQUIRED",
+            [{"dimension": "counter_evidence", "severity": "medium",
+              "description": "FCF 口径笔误传播",
+              "evidence_refs": ["f.1"], "remediation": "修源头备忘录",
+              "fix_source": {"file": "evidence/attempts/investment-research/attempt-x/role-buffett.md",
+                             "line_approx": 12, "kind": "role_memo", "note": "FCF 口径笔误源头"}},
+             {"dimension": "limitations_completeness", "severity": "low",
+              "description": "缺一处限制",
+              "evidence_refs": ["f.1"], "remediation": "补充限制"}],
+            brief_digest=brief["brief_digest"],
+            report_digest=brief["report"]["sha256"],
+            evidence_digest=brief["evidence_sha256"],
+        )
+        fp = self.run_root / "evidence/review/submitted-e13.json"
+        fp.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        ingested = self.cli("review", "ingest", "--run-root", self.run_root, "--review", fp)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
+        index = json.loads(
+            (self.run_root / "evidence/review/review-index.json").read_text(encoding="utf-8"))
+        fix_sources = index.get("fix_sources", {})
+        per_skill = fix_sources.get("investment-research", [])
+        self.assertEqual(len(per_skill), 1)
+        self.assertEqual(per_skill[0]["kind"], "role_memo")
+        self.assertEqual(per_skill[0]["severity"], "medium")
+
+    def test_fix_list_groups_by_kind_and_marks_unfixed(self):
+        # E13: fix-list 按 kind 分组；缺 fix_source 的 finding 归 UNFIXED
+        self._setup_run_with_artifact("investment-research")
+        prep = self.cli("review", "prepare", "--run-root", self.run_root,
+                        "--scope", "investment-research")
+        self.assertEqual(prep.returncode, 0, prep.stdout + prep.stderr)
+        brief = json.loads(
+            (self.run_root / "evidence/review/review-brief-investment-research.json").read_text())
+        result = _make_review_result(
+            "investment-research", "REVIEW_REQUIRED",
+            [{"dimension": "counter_evidence", "severity": "medium",
+              "description": "FCF 口径笔误",
+              "evidence_refs": ["f.1"], "remediation": "修源头",
+              "fix_source": {"file": "evidence/attempts/x/role-buffett.md",
+                             "kind": "role_memo", "note": "源头"}},
+             {"dimension": "limitations_completeness", "severity": "low",
+              "description": "无 fix_source 的 finding",
+              "evidence_refs": ["f.1"], "remediation": "补充"}],
+            brief_digest=brief["brief_digest"],
+            report_digest=brief["report"]["sha256"],
+            evidence_digest=brief["evidence_sha256"],
+        )
+        fp = self.run_root / "evidence/review/submitted-e13b.json"
+        fp.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(self.cli("review", "ingest", "--run-root", self.run_root,
+                                  "--review", fp).returncode, 0)
+        listing = self.cli("review", "fix-list", "--run-root", self.run_root)
+        self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
+        text_out = listing.stdout
+        self.assertIn("子 Agent 备忘录源头", text_out)
+        self.assertIn("未定位源头", text_out)
+        self.assertIn("FCF 口径笔误", text_out)
 
 
 if __name__ == "__main__":

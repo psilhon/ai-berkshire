@@ -376,5 +376,35 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(item["status"], "PENDING")
 
 
+    def test_methodology_ref_mode_omits_full_text(self):
+        # Task 4: ref 模式返回稳定 hash/path，payload 不含完整 skill 文本；full 模式保持兼容
+        self.start()
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root,
+                                     "--methodology-mode", "ref").stdout)
+        self.assertEqual(leased["status"], "LEASED")
+        self.assertEqual(leased["methodology_mode"], "ref")
+        self.assertIsNotNone(leased["methodology_ref"])
+        self.assertEqual(len(leased["methodology_sha256"]), 64)
+        ref_text = leased.get("methodology_text") or ""
+        spec = Path(REPO) / leased["methodology_ref"]
+        self.assertTrue(spec.is_file(), f"methodology_ref 应指向真实 spec: {spec}")
+        full = spec.read_text(encoding="utf-8")
+        # ref 模式 methodology_text 只含授权信封（不含 skill 正文长文）
+        self.assertLess(len(ref_text), len(full) / 2,
+                        f"ref payload 不应内嵌完整 skill 文本({len(ref_text)}>={len(full)}/2)")
+        # hash 稳定性：等于 spec 文件内容 sha256（确定性，与派发次数无关）
+        expected = hashlib.sha256(full.encode("utf-8")).hexdigest()
+        self.assertEqual(leased["methodology_sha256"], expected)
+
+    def test_methodology_full_mode_keeps_embedded_text(self):
+        self.start()
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["status"], "LEASED")
+        self.assertEqual(leased["methodology_mode"], "full")
+        self.assertGreater(len(leased.get("methodology_text") or ""), 1000,
+                           "full 模式应内嵌完整方法论（含授权信封+skill 正文+指令）")
+        self.assertIsNone(leased.get("methodology_ref"))
+
+
 if __name__ == "__main__":
     unittest.main()

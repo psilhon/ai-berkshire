@@ -34,8 +34,10 @@ from pathlib import Path
 
 
 REVIEW_SCHEMA_VERSION = "semantic-review/v1"
-BRIEF_SCHEMA_VERSION = "review-brief/v1"
+BRIEF_SCHEMA_VERSION = "review-brief/v1"  # full 诊断模式（旧评审 Agent 兼容）
+BRIEF_SCHEMA_V2 = "review-brief/v2"       # compact 默认模式（Task 3）
 SUMMARY_SCHEMA_VERSION = "review-summary/v1"
+CLAIM_SECTION_MAX_CHARS = 1200  # compact claim_sections 每段上限
 
 # 语义评审范围：高判断密度的核心单元（可由 --scope 覆盖）
 DEFAULT_REVIEW_SCOPE = [
@@ -171,6 +173,66 @@ def _evidence_for_skill(manifest: dict, skill_id: str) -> dict:
     }
 
 
+def _claim_sections(report_text: str) -> list[dict]:
+    """按 ## 标题提取报告结论段落（限长），供 compact brief 的 claim_sections。
+
+    只取顶层 `## ` 章节标题与其下正文前 CLAIM_SECTION_MAX_CHARS 字符；
+    不复制整份报告正文（v1 full 模式才内嵌全文）。
+    """
+    sections: list[dict] = []
+    lines = report_text.splitlines()
+    current_heading = None
+    current_body: list[str] = []
+    for line in lines:
+        if line.startswith("## "):
+            if current_heading:
+                sections.append({
+                    "heading": current_heading,
+                    "text": "".join(current_body)[:CLAIM_SECTION_MAX_CHARS],
+                })
+            current_heading = line[3:].strip()
+            current_body = []
+        elif current_heading is not None and line.strip():
+            current_body.append(line.strip() + " ")
+    if current_heading:
+        sections.append({
+            "heading": current_heading,
+            "text": "".join(current_body)[:CLAIM_SECTION_MAX_CHARS],
+        })
+    return sections
+
+
+def _brief_evidence_digest(brief: dict) -> str | None:
+    """v2 compact（evidence_sha256 顶层）与 v1 full（evidence.sha256 嵌套）兼容读取。"""
+    return brief.get("evidence_sha256") or (brief.get("evidence") or {}).get("sha256")
+
+
+def _evidence_index(evidence: dict) -> dict:
+    """compact 模式：只保留证据 ID 索引（fact/source/calc/judgment 引用），不复制全量证据。"""
+    return {
+        "facts": [
+            {"fact_id": f.get("fact_id"), "skill_id": f.get("skill_id"),
+             "source_ids": f.get("source_ids") or []}
+            for f in evidence["facts"]
+        ],
+        "sources": [
+            {"source_id": s.get("source_id"), "uri": s.get("url") or s.get("uri"),
+             "published_at": s.get("retrieved_at") or s.get("published_at")}
+            for s in evidence["sources"]
+        ],
+        "calculations": [
+            {"calculation_id": c.get("calculation_id"), "operation": c.get("operation")}
+            for c in evidence["calculations"]
+        ],
+        "judgments": [
+            {"judgment_id": j.get("judgment_id"),
+             "fact_ids": j.get("fact_ids") or [],
+             "calculation_ids": j.get("calculation_ids") or []}
+            for j in evidence["judgments"]
+        ],
+    }
+
+
 def _read_report(run_root: Path, skill_item: dict) -> str | None:
     """读取 skill 的正式报告内容。"""
     records = skill_item.get("artifact_records") or []
@@ -266,39 +328,72 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             "review_protocol": REVIEW_PROTOCOL,
         }
         brief_digest = _digest(digest_payload)
-        brief = {
-            "brief_schema_version": BRIEF_SCHEMA_VERSION,
-            "skill_id": skill_id,
-            "run_id": manifest.get("run", {}).get("run_id"),
-            "brief_digest": brief_digest,
-            "prepared_at": _now_iso(),
-            "report": {
-                "path": (m_item.get("artifact_records") or [{}])[0].get("path", ""),
-                "content": report_text,
-                "bytes": len(report_text.encode("utf-8")),
-                "sha256": report_digest,
-            },
-            "evidence": {
-                "fact_count": len(evidence["facts"]),
-                "source_count": len(evidence["sources"]),
-                "calculation_count": len(evidence["calculations"]),
-                "facts": evidence["facts"],
-                "sources": evidence["sources"],
-                "calculations": evidence["calculations"],
-                "judgments": evidence["judgments"],
-                "command_receipts": evidence["command_receipts"],
-                "role_runs": evidence["role_runs"],
-                "sha256": evidence_digest,
-            },
-            "contract": digest_payload["contract"],
-            "review_protocol": REVIEW_PROTOCOL,
-            "instructions": (
-                "你是独立语义评审 Agent。请逐一检查五个维度，对每个维度给出 PASS 或 FINDING。"
-                "FINDING 必须包含 severity（high/medium/low）、具体描述、证据引用、返工建议。"
-                "若任一维度存在 high severity finding，verdict 必须为 REVIEW_REQUIRED。"
-                "输出严格遵循 semantic-review/v1 schema。不要编造证据引用。"
-            ),
-        }
+        payload_mode = getattr(args, "payload_mode", "compact")
+        if payload_mode == "compact":
+            # Task 3：引用级 compact 简报——结论段落（限长）+ 证据 ID 索引 + manifest 路径，
+            # 评审 Agent 按 evidence_path 只读核对 ID；不复制完整报告与全量证据。
+            brief = {
+                "brief_schema_version": BRIEF_SCHEMA_V2,
+                "skill_id": skill_id,
+                "run_id": manifest.get("run", {}).get("run_id"),
+                "brief_digest": brief_digest,
+                "prepared_at": _now_iso(),
+                "payload_mode": "compact",
+                "report": {
+                    "path": (m_item.get("artifact_records") or [{}])[0].get("path", ""),
+                    "sha256": report_digest,
+                    "claim_sections": _claim_sections(report_text),
+                },
+                "evidence_index": _evidence_index(evidence),
+                "evidence_path": "evidence/00-analysis-manifest.json",
+                "evidence_sha256": evidence_digest,
+                "contract": digest_payload["contract"],
+                "review_protocol": REVIEW_PROTOCOL,
+                "instructions": (
+                    "你是独立语义评审 Agent。请逐一检查五个维度，对每个维度给出 PASS 或 FINDING。"
+                    "FINDING 必须包含 severity（high/medium/low）、具体描述、证据引用、返工建议。"
+                    "若任一维度存在 high severity finding，verdict 必须为 REVIEW_REQUIRED。"
+                    "输出严格遵循 semantic-review/v1 schema。不要编造证据引用。"
+                    "证据核对：简报只含 evidence_index（ID 索引），完整证据在 evidence_path"
+                    "（run_root 相对路径）指向的 manifest 中，按 fact_id/source_id/calculation_id 只读核对。"
+                ),
+            }
+        else:
+            # v1 full 诊断模式：内嵌完整报告与全量证据（旧评审 Agent 兼容）
+            brief = {
+                "brief_schema_version": BRIEF_SCHEMA_VERSION,
+                "skill_id": skill_id,
+                "run_id": manifest.get("run", {}).get("run_id"),
+                "brief_digest": brief_digest,
+                "prepared_at": _now_iso(),
+                "payload_mode": "full",
+                "report": {
+                    "path": (m_item.get("artifact_records") or [{}])[0].get("path", ""),
+                    "content": report_text,
+                    "bytes": len(report_text.encode("utf-8")),
+                    "sha256": report_digest,
+                },
+                "evidence": {
+                    "fact_count": len(evidence["facts"]),
+                    "source_count": len(evidence["sources"]),
+                    "calculation_count": len(evidence["calculations"]),
+                    "facts": evidence["facts"],
+                    "sources": evidence["sources"],
+                    "calculations": evidence["calculations"],
+                    "judgments": evidence["judgments"],
+                    "command_receipts": evidence["command_receipts"],
+                    "role_runs": evidence["role_runs"],
+                    "sha256": evidence_digest,
+                },
+                "contract": digest_payload["contract"],
+                "review_protocol": REVIEW_PROTOCOL,
+                "instructions": (
+                    "你是独立语义评审 Agent。请逐一检查五个维度，对每个维度给出 PASS 或 FINDING。"
+                    "FINDING 必须包含 severity（high/medium/low）、具体描述、证据引用、返工建议。"
+                    "若任一维度存在 high severity finding，verdict 必须为 REVIEW_REQUIRED。"
+                    "输出严格遵循 semantic-review/v1 schema。不要编造证据引用。"
+                ),
+            }
         brief_path = review_dir / f"review-brief-{skill_id}.json"
         _atomic_write_json(brief_path, brief)
         brief_index[skill_id] = {
@@ -392,6 +487,15 @@ def _validate_review_result(result: dict) -> list[str]:
                 errors.append(f"findings[{i}].evidence_refs 缺失")
             if not isinstance(f.get("remediation"), str) or not f["remediation"]:
                 errors.append(f"findings[{i}].remediation 缺失")
+            fs = f.get("fix_source")
+            if fs is not None:
+                if not isinstance(fs, dict):
+                    errors.append(f"findings[{i}].fix_source 必须为对象")
+                else:
+                    if not isinstance(fs.get("file"), str) or not fs["file"]:
+                        errors.append(f"findings[{i}].fix_source.file 缺失")
+                    if fs.get("kind") not in (None, "report", "role_memo", "pipeline_raw", "methodology"):
+                        errors.append(f"findings[{i}].fix_source.kind 非法: {fs.get('kind')!r}")
             described_dims.add(f.get("dimension"))
         if finding_dims != described_dims:
             errors.append("dimensions 的 FINDING 与 findings 覆盖不一致")
@@ -425,7 +529,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         "run_id": brief.get("run_id"),
         "brief_digest": brief.get("brief_digest"),
         "report_digest": (brief.get("report") or {}).get("sha256"),
-        "evidence_digest": (brief.get("evidence") or {}).get("sha256"),
+        "evidence_digest": _brief_evidence_digest(brief),
     }
     mismatched = [field for field, value in expected.items() if result.get(field) != value]
     if mismatched:
@@ -433,6 +537,26 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         return 1
     out_path = root / "evidence/review" / f"review-result-{skill_id}.json"
     _atomic_write_json(out_path, result)
+    # E13: 聚合 fix_source 到 review-index（供 fix-list 导出季度源头修复清单）
+    index_path = root / "evidence/review/review-index.json"
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        per_skill = index.setdefault("fix_sources", {}).setdefault(skill_id, [])
+        for finding in result.get("findings", []):
+            fs = finding.get("fix_source")
+            if fs:
+                per_skill.append({
+                    "dimension": finding.get("dimension"),
+                    "severity": finding.get("severity"),
+                    "description": (finding.get("description") or "")[:200],
+                    "file": fs.get("file"),
+                    "line_approx": fs.get("line_approx"),
+                    "kind": fs.get("kind"),
+                    "note": fs.get("note"),
+                })
+        _atomic_write_json(index_path, index)
+    except (OSError, json.JSONDecodeError):
+        pass
     print(json.dumps({"skill_id": skill_id, "verdict": result["verdict"],
                       "findings_count": len(result.get("findings", [])),
                       "path": str(out_path)}, ensure_ascii=False))
@@ -476,7 +600,7 @@ def aggregate(run_root: Path) -> tuple[dict, int]:
             "run_id": brief.get("run_id"),
             "skill_id": brief.get("skill_id"),
             "report_digest": (brief.get("report") or {}).get("sha256"),
-            "evidence_digest": (brief.get("evidence") or {}).get("sha256"),
+            "evidence_digest": _brief_evidence_digest(brief),
             "contract": brief.get("contract"),
             "review_protocol": brief.get("review_protocol"),
         }
@@ -604,6 +728,71 @@ def cmd_summarize(args: argparse.Namespace) -> int:
     return code
 
 
+FIX_KIND_LABELS = {
+    "pipeline_raw": "数据管线/脚本源头",
+    "role_memo": "子 Agent 备忘录源头",
+    "report": "正式报告正文",
+    "methodology": "方法论/契约源头",
+    "UNFIXED": "未定位源头（季度复核补定位）",
+}
+
+
+def cmd_fix_list(args: argparse.Namespace) -> int:
+    """导出评审 finding 源头修复清单（E13）：按 kind/severity 分组，缺 fix_source 归 UNFIXED。"""
+    root = Path(args.run_root)
+    review_dir = root / "evidence/review"
+    rows = []
+    for fp in sorted(review_dir.glob("review-result-*.json")):
+        try:
+            result = json.loads(fp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for finding in result.get("findings", []):
+            severity = finding.get("severity")
+            if args.severity and severity != args.severity:
+                continue
+            fs = finding.get("fix_source") or {}
+            rows.append({
+                "skill_id": result.get("skill_id"),
+                "severity": severity,
+                "dimension": finding.get("dimension"),
+                "kind": fs.get("kind") or "UNFIXED",
+                "file": fs.get("file"),
+                "line_approx": fs.get("line_approx"),
+                "note": fs.get("note", ""),
+                "description": (finding.get("description") or "")[:200],
+            })
+    # 分组输出 Markdown
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(row["kind"], []).append(row)
+    order = [k for k in ("pipeline_raw", "role_memo", "report", "methodology", "UNFIXED") if k in groups]
+    order += [k for k in groups if k not in order]
+    lines = ["# 评审 Finding 源头修复清单", "",
+             f"生成时间: {_now_iso()} ｜ 共 {len(rows)} 条 finding"
+             f"（high/medium/low = {sum(1 for r in rows if r['severity']=='high')}/"
+             f"{sum(1 for r in rows if r['severity']=='medium')}/"
+             f"{sum(1 for r in rows if r['severity']=='low')}）", ""]
+    for kind in order:
+        items = groups[kind]
+        lines.append(f"## {FIX_KIND_LABELS.get(kind, kind)}（{len(items)} 条）")
+        lines.append("")
+        for row in items:
+            loc = row["file"] or "-"
+            if row["line_approx"]:
+                loc += f":{row['line_approx']}"
+            lines.append(f"- [{row['severity']}] ({row['skill_id']}/{row['dimension']}) {row['description']}")
+            lines.append(f"  - 源头: `{loc}` ｜ {row['note']}")
+        lines.append("")
+    out_text = "\n".join(lines)
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(out_text, encoding="utf-8")
+    print(out_text)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="全量分析语义评审层（P2）")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -621,7 +810,8 @@ def main(argv=None) -> int:
     sub.add_parser("summarize", help="聚合评审结果").add_argument("--run-root", required=True)
 
     args = parser.parse_args(argv)
-    handlers = {"prepare": cmd_prepare, "ingest": cmd_ingest, "summarize": cmd_summarize}
+    handlers = {"prepare": cmd_prepare, "ingest": cmd_ingest, "summarize": cmd_summarize,
+                "fix-list": cmd_fix_list}
     return handlers[args.command](args)
 
 

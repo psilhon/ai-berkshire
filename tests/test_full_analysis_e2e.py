@@ -242,7 +242,7 @@ class FullAnalysisE2ETests(unittest.TestCase):
                 "run_id": brief["run_id"],
                 "brief_digest": brief["brief_digest"],
                 "report_digest": brief["report"]["sha256"],
-                "evidence_digest": brief["evidence"]["sha256"],
+                "evidence_digest": brief["evidence_sha256"],
                 "verdict": "PASS",
                 "dimensions": [
                     {"dimension": dimension, "verdict": "PASS"}
