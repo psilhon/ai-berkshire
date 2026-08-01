@@ -124,8 +124,9 @@ def parser() -> argparse.ArgumentParser:
     bench.add_argument("--output-dir", default=None)
     cl = sub.add_parser("cache-lookup", help=argparse.SUPPRESS)
     cl.add_argument("--run-root", required=True); cl.add_argument("--skill-id", required=True)
+    cl.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     cs = sub.add_parser("cache-store", help=argparse.SUPPRESS)
-    cs.add_argument("--run-root", required=True)
+    cs.add_argument("--run-root", required=True); cs.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     return p
 
 

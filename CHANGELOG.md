@@ -5,6 +5,16 @@
 
 ---
 
+## [v3.3.8] — 2026-08-01
+
+> 沪电股份全量验证发现的 hotfix（2 处真实 bug）
+
+### 🐛 修复 (Fixed)
+- **cache-lookup/cache-store CLI 缺 `--registry` 参数**：v3.3.7 模块函数测试通过但 CLI 集成未覆盖，生产验证（沪电 run）首次调用即 AttributeError；补参数 + 新增 CLI 回归测试。
+- **gate `_git_head_commit` 因缺 `import subprocess` 恒返回 None**：v3.3.7 的 E10 契约 commit 记录功能实际失效（digest 钉死仍正常，commit 仅作记录）；补 import + 强化测试断言非空。
+
+---
+
 ## [v3.3.5] — 2026-08-01
 
 > 执行纪律 + 证据修正链路 + 契约版本钉死（A 层/B 层/C 层 Task 1/2/7/8）

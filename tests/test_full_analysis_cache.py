@@ -110,5 +110,22 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(miss["status"], "MISS")
 
 
+    def test_cache_lookup_cli_requires_registry_flag(self):
+        # v3.3.7 生产验证发现：cache-lookup CLI 曾缺 --registry 参数（模块函数测试未覆盖 CLI）
+        import subprocess, sys
+        manifest = _make_manifest()
+        (self.run_root / "evidence/00-analysis-manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        self._store(manifest)
+        proc = subprocess.run(
+            [sys.executable, str(REPO / "scripts/full_analysis.py"),
+             "cache-lookup", "--run-root", self.run_root, "--skill-id", "ashare-data"],
+            cwd=self.root, capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "HIT")
+
+
 if __name__ == "__main__":
     unittest.main()

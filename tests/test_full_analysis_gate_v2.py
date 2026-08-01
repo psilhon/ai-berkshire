@@ -846,6 +846,7 @@ class GateV2Tests(unittest.TestCase):
         manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
         self.assertIn("registry_sha256", manifest["contract"])
         self.assertIn("contract_commit", manifest["run"])
+        self.assertTrue(manifest["run"]["contract_commit"], "contract_commit 应为非空 HEAD commit")
 
     def test_e10_finalize_rejects_contract_mismatch(self):
         self.init()
