@@ -5,6 +5,42 @@
 
 ---
 
+## [v3.3.5] — 2026-08-01
+
+> 执行纪律 + 证据修正链路 + 契约版本钉死（A 层/B 层/C 层 Task 1/2/7/8）
+
+### ✨ 新增 (Added)
+- **执行纪律文档（A 层）**：启动前 git 版本校验（E1）、调度时序硬规则（E2，前台派发取真实 agent id、60 秒内提交、长任务强制 heartbeat）、派发模板内嵌契约 sections/evidence_rules（E3）、429 降级派发（E12）。
+- **submit 前置账本校验（E4）**：evidence_rules 的 field/rule_id/capability 名在提交当下即被拦截，不再等 audit 批量暴露。
+- **calc round() 支持（E5a）**：白名单展开为 ROUND_HALF_UP 量化；cross-validate 语义区分（E5b）：rc=1 视为 CONFLICT（已重放）而非未重放。
+- **record-usage（Task 1）**：真实 Token/字节/重试计量，`evidence/usage.jsonl` + manifest `usage_summary` 聚合。
+- **submit-correction（Task 2）**：correction-bundle/v1 定向修正账本（removed 差集清理 manifest 残留）；audit 错误带 `correctable` 分类（CORRECTABLE_EVIDENCE vs REPORT_REQUIRED_RETRY）。
+- **rework 命令（Task 7/E9）**：DONE/PARTIAL→PENDING + 清租约 + `rework_initiated` 事件 + `reuse_base_attempt` 联动，替代手编 runtime-state。
+- **finalize 契约钉死（Task 8/E10）**：start 记录 contract digest/commit，finalize 校验不一致拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force`）。
+
+### 🛡️ 增强 (Enhanced)
+- 跨 skill 同 fact_id 覆盖写 `fact_overridden` 告警事件（E6）；schema 报错列出允许键（E7）；review prepare 检测 facts 变更提示 stale_reviews（E8）。
+
+## [v3.3.6] — 2026-08-01
+
+> compact 评审简报 + methodology ref + fix-source 回写（Task 3/4/9）
+
+### ✨ 新增 (Added)
+- **review-brief/v2 compact（Task 3）**：默认简报只含 claim_sections（限长结论段）+ evidence_index（ID 索引）+ evidence_path，不再内嵌完整报告与全量证据；`--payload-mode full` 保留 v1 诊断兼容。
+- **methodology ref 模式（Task 4）**：next-work `--methodology-mode ref` 只下发 spec 路径 + SHA-256 + 授权信封，不内嵌完整 skill 全文。
+- **fix_source（Task 9/E13）**：review finding 可带源头定位（pipeline_raw/role_memo/report/methodology）；`review fix-list` 导出季度源头修复清单，缺 fix_source 归 UNFIXED。
+
+## [v3.3.7] — 2026-08-01
+
+> 跨运行产物缓存 + 成本预算告警（Task 5/6）
+
+### ✨ 新增 (Added)
+- **APPROVED 产物缓存（Task 5）**：finalize 自动写入 `<公司目录>/.full-analysis-cache/<key>/`；缓存键含 methodology/上游事实/能力 digest，任一变化自动失效；`cache-lookup` 只读查询，篡改即 MISS。
+- **成本预算告警（Task 6）**：finalize 输出 `cost_budget`（missing_usage_summary / excessive_attempts / oversized_review_brief），非阻断；benchmark 增加 `metrics.usage`（total_tokens / cache_hit_rate）。
+- 新增运维文档 `docs/full-analysis-cost-budget.md` 与 `docs/full-analysis-review-fix-list.md`。
+
+---
+
 ## [v3.3.4] — 2026-07-27
 
 > 全量分析 HTML 与公司索引可靠性热修复

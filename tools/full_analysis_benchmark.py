@@ -234,6 +234,31 @@ def _evidence_count_variance(run_roots: list[Path]) -> dict:
     }
 
 
+def _usage_metrics(manifests: list[dict]) -> dict:
+    """Task 6：从 manifest.usage_summary 提取成本指标（缺省返回 available=False）。"""
+    rows = []
+    for m in manifests:
+        summary = m.get("usage_summary") or {}
+        rows.append({
+            "run_id": m.get("run", {}).get("run_id"),
+            "total_tokens": summary.get("total_tokens"),
+            "total_records": summary.get("total_records"),
+            "by_phase": summary.get("by_phase", []),
+            "by_skill": summary.get("by_skill", []),
+        })
+    available = any(r["total_tokens"] is not None for r in rows)
+    cache_hits = sum(
+        s.get("cache_hits", 0)
+        for r in rows for s in (r.get("by_skill") or [])
+    )
+    total_records = sum(r.get("total_records") or 0 for r in rows)
+    return {
+        "available": available,
+        "per_run": rows,
+        "cache_hit_rate": round(cache_hits / total_records, 4) if total_records else None,
+    }
+
+
 def _cohort_issues(manifests: list[dict]) -> list[str]:
     issues = []
     identities = {
@@ -320,6 +345,7 @@ def compare(run_roots: list[Path], output_dir: Path | None = None) -> tuple[dict
             "conclusion_drift": _conclusion_drift(manifests),
             "evidence_count_variance": _evidence_count_variance(valid_roots),
             "doctor_agreement": _doctor_agreement(valid_roots),
+            "usage": _usage_metrics(manifests),
         },
     }
 

@@ -156,6 +156,13 @@ python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 
 # 步骤 D：finalize APPROVED 后跑 doctor 体检；HTML 已在步骤 B2 生成
+# 收口后处理（Task 5/6）：finalize 自动写跨运行产物缓存（cache-store）与
+# 成本告警（cost_budget 字段，非阻断）。编排器可查询缓存复用上游产物：
+#   python3 scripts/full_analysis.py cache-lookup --run-root <run> --skill-id <skill>
+#   （命中 HIT 时，同一公司同 as_of 的后续 run 对应单元可直接复用 artifact，
+#     不派 Agent；方法论/上游事实/能力变化自动使缓存失效）
+#   python3 scripts/full_analysis.py benchmark --run-roots <run1> <run2>
+#   （stability 报告含 metrics.usage：total_tokens / cache_hit_rate）
 ```
 
 > **为什么 register-summary 必须在 audit 之前**：`analysis_snapshot` 的投影包含 `manifest.delivery`，register-summary 写入 `delivery.summary` 会改变快照摘要。若 audit 先于 register-summary 执行，finalize 的快照一致性校验将因摘要不匹配而拒绝准出。

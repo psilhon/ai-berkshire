@@ -1067,6 +1067,42 @@ def _verify_formal_artifacts(root: Path, manifest: dict) -> list[dict]:
     return corrupt
 
 
+COST_BUDGET_REVIEW_BYTES_WARN = 500 * 1024  # 单份 compact brief 异常阈值
+
+
+def _cost_budget_check(run_root: Path, manifest: dict) -> dict:
+    """Task 6 成本门槛告警（非阻断）：只显式提示超限项，不静默关闭任何质量校验。
+
+    - missing_usage_summary：run 无 usage_summary（旧流程 run 或 usage 未回传）
+    - excessive_attempts：同一 skill 完整 attempt > 1（确定性证据错误应走 correction，
+      报告问题走 rework 后仍重复完整提交视为成本超限）
+    - oversized_review_brief：任一 review brief 超过 compact 异常阈值
+    """
+    exceeded: list[dict] = []
+    if not manifest.get("usage_summary"):
+        exceeded.append({"code": "missing_usage_summary",
+                         "detail": "run 无 usage_summary（Task 1 record-usage 未回传或旧流程 run）"})
+    for item in manifest.get("skills", []):
+        attempts = item.get("attempts") or []
+        if len(attempts) > 1:
+            exceeded.append({"code": "excessive_attempts",
+                             "detail": f"{item['skill_id']} 完整 attempt {len(attempts)} > 1"
+                                       f"（确定性证据错误应走 submit-correction，不耗 attempt）"})
+    review_dir = Path(run_root) / "evidence/review"
+    if review_dir.is_dir():
+        for fp in sorted(review_dir.glob("review-brief-*.json")):
+            size = fp.stat().st_size
+            if size > COST_BUDGET_REVIEW_BYTES_WARN:
+                exceeded.append({"code": "oversized_review_brief",
+                                 "detail": f"{fp.name} {size}B > {COST_BUDGET_REVIEW_BYTES_WARN}B"
+                                           f"（compact 模式异常，检查 payload_mode）"})
+    return {
+        "verdict": "COST_BUDGET_EXCEEDED" if exceeded else "COST_BUDGET_OK",
+        "exceeded": exceeded,
+        "note": "成本门槛为可观测性告警，不阻断 APPROVED；质量由 audit/review 独立把关",
+    }
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     root, registry = Path(args.run_root), load_registry(Path(args.registry))
     manifest = load_manifest(root)
@@ -1145,6 +1181,18 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     manifest["run"]["status"] = "APPROVED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})
+    # Task 5：APPROVED 后写入跨运行产物缓存（非阻断——失败不影响准出）
+    try:
+        import full_analysis_cache as _cache
+        _stored = _cache.store_approved(root, manifest, registry)
+        append_event(root, {"type": "cache_stored", "count": _stored.get("stored", 0)})
+    except Exception as _exc:  # pragma: no cover - cache 异常不阻断 APPROVED
+        append_event(root, {"type": "cache_store_unavailable", "reason": str(_exc)})
+    # Task 6：成本门槛告警（非阻断，显式输出 COST_BUDGET_EXCEEDED 项）
+    cost_budget = _cost_budget_check(root, manifest)
+    if cost_budget["exceeded"]:
+        append_event(root, {"type": "cost_budget_exceeded",
+                            "items": [item["code"] for item in cost_budget["exceeded"]]})
     # 生成 HTML 版总结报告（APPROVED 后自动执行，非阻断——失败不影响准出）
     if manifest["run"]["status"] == "APPROVED":
         _generate_summary_html(root, manifest)
@@ -1155,7 +1203,8 @@ def cmd_finalize(args: argparse.Namespace) -> int:
                       "doctor_status": doctor_info["status"],
                       "doctor_verdict": doctor_info["verdict"],
                       "review_status": review_info["status"],
-                      "review_verdict": review_info.get("verdict")}, ensure_ascii=False))
+                      "review_verdict": review_info.get("verdict"),
+                      "cost_budget": cost_budget}, ensure_ascii=False))
     return 0
 
 

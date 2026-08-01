@@ -860,6 +860,20 @@ class GateV2Tests(unittest.TestCase):
         self.assertNotEqual(finalized.returncode, 0)
         self.assertIn("CONTRACT_VERSION_MISMATCH", finalized.stdout + finalized.stderr)
 
+    def test_cost_budget_check_flags_missing_usage_and_repeated_attempts(self):
+        # Task 6: 缺 usage summary / 同一 skill 重复 attempt → cost_budget 告警（非阻断）
+        self.init()
+        manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        # 缺 usage_summary + 第一个 skill 记 2 次 attempt
+        self.assertNotIn("usage_summary", manifest)
+        manifest["skills"][0]["attempts"] = ["attempt-a", "attempt-b"]
+        gate_module.atomic_write_json(self.run_root / "evidence/00-analysis-manifest.json", manifest)
+        check = gate_module._cost_budget_check(self.run_root, manifest)
+        exceeded = {item["code"] for item in check.get("exceeded", [])}
+        self.assertIn("missing_usage_summary", exceeded)
+        self.assertIn("excessive_attempts", exceeded)
+        self.assertIn("COST_BUDGET_EXCEEDED", check.get("verdict", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
