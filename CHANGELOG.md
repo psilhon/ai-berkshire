@@ -5,6 +5,20 @@
 
 ---
 
+## [v3.4.3] — 2026-08-03
+
+> 三关键问题修复（review 发现：W3 错峰 Runtime 不可实现 + full-test 归因勘误 + CHECKPOINT 闭环）
+
+### 🐛 修复 (Fixed)
+- **W3 错峰在 Runtime 层不可实现（HIGH）**：`next-work` 原无按 skill 选择租约的参数，`candidates[0]` 按契约顺序固定派发（investment-team → management-deep-dive → earnings-review → industry-research），要领到 earnings-review 必须先租出 management-deep-dive，错峰意图落空。新增 `--allowlist` 参数（逗号分隔 skill_id），白名单外的就绪单元本轮不派发，编排器可先领 W3a（investment-team+earnings-review）完成后再领 W3b。新增回归测试 `test_next_work_allowlist_enforces_w3_stagger`。
+- **full-test 归因勘误（HIGH）**：v3.4.2 条目此前将 dim8 full_test 归因于绿的谐波 run，但该 run 的 contract_commit 为 `1ef23e8`（v3.3.11 时代，早于 v3.4.1/v3.4.2）——它只证明**文档流程与真实产物一致**，不验证错峰纪律有效性。v3.4.2 评估段已修正措辞；`skills/.darwin-results.tsv` 补 errata 行。**W3 错峰净收益声明待本版（v3.4.3）之后新 run 验证。**
+- **CHECKPOINT 缺少可执行闭环（MEDIUM）**：①E1 版本校验纳入 `skills/full-company-analysis.md` + `git describe --tags` 目标版本比较，过期 checkout 阻断；②新增 CLI `budget-adjust`（只允许上调防静默降标，调整记入 events.jsonl）；③新增 CLI `event-log`（kind 白名单 `human_review`/`manual_rework`/`doctor_checkpoint`）；④`~/.workbuddy/...` 路径中立化表述。
+
+### ✅ 测试
+- 新增 3 个回归测试（allowlist 错峰 / budget-adjust / event-log）；runtime+CLI 34 tests OK，check.sh 全绿，三副本 SHA-256 一致。
+
+---
+
 ## [v3.4.2] — 2026-08-03
 
 > Darwin Skill 2.0 九维评估与优化（full-company-analysis 85.7 → 93.1）
@@ -17,12 +31,8 @@
 
 ### 📊 评估
 - Darwin 九维独立复评 **93.1/100**（dim3/dim9 满分档）——分数针对**当前 skill 文档终版文件**，不构成对 v3.4.2 运行行为的验证。
-- dim8 full_test 说明：复用绿的谐波 run-36fa1d00 实证**文档描述的端到端流程与真实产物一致**（13 单元全 PASS / audit 0 violation / REVIEW_PASSED）；该 run 的 contract_commit 为 `1ef23e8`（v3.3.11 时代，早于 v3.4.1/v3.4.2），**不验证错峰纪律的有效性**——W3 错峰的净收益声明待 v3.4.2 之后新 run 验证（见本版修复：`next-work --allowlist`）。
+- dim8 full_test 说明：复用绿的谐波 run-36fa1d00 实证**文档描述的端到端流程与真实产物一致**（13 单元全 PASS / audit 0 violation / REVIEW_PASSED）；该 run 的 contract_commit 为 `1ef23e8`（v3.3.11 时代，早于 v3.4.1/v3.4.2），**不验证错峰纪律的有效性**——W3 错峰的净收益声明见 v3.4.3 修复（`next-work --allowlist`）之后的新 run 验证。
 - 评估记录：`skills/.darwin-results.tsv`；产物：`local/darwin-evaluation/2026-08-02/`。
-
-### 🐛 修复 (Fixed)
-- **W3 错峰在 Runtime 层不可实现（HIGH）**：`next-work` 原无按 skill 选择租约的参数，`candidates[0]` 按契约顺序固定派发（investment-team → management-deep-dive → earnings-review → industry-research），要领到 earnings-review 必须先租出 management-deep-dive，错峰意图落空。新增 `--allowlist` 参数（逗号分隔 skill_id），白名单外的就绪单元本轮不派发，编排器可先领 W3a（investment-team+earnings-review）完成后再领 W3b。新增回归测试 `test_next_work_allowlist_enforces_w3_stagger`。
-- **CHECKPOINT 缺少可执行闭环（MEDIUM）**：E1 只 `git status` 四脚本不比较目标版本；budget 触顶「调高预算」无对应 CLI；doctor 人工结论写入 events.jsonl 无受支持入口。本版补齐（见下「新增」）。
 
 ---
 
