@@ -8,3 +8,4 @@ timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
 2026-08-03T00:06	654df2d	full-company-analysis	91.0	91.9	keep	dim4	增补两处非阻塞显性CHECKPOINT：budget触顶(必报用户)+doctor WARN(人工复核且复核结论记入events.jsonl)；共3处CHECKPOINT全为真实人工决策点且不违背全自动原则；check.sh全绿；体积+2.5%	full_test
 2026-08-03T00:08	163e292	full-company-analysis	91.9	92.3	keep	dim2	启动章节重构为6步编号流程：声明输入(公司名+代码+日期)/输出(run_root)+定基线/E1版本校验/启动/核对落盘/核对预算/E10兜底；dim2 11.4→11.8；check.sh全绿；体积+2.9%	full_test
 2026-08-03T00:15	re-score	full-company-analysis	-	93.1	re-eval	-	独立复评（不参考上次结果）：全新视角重读终版文件+全部指标重测；软化词0处/空话0处/触发词1/CHECKPOINT 3/红灯0/资源7项全可达/18命令CLI实测全一致；dim5 16.6、dim6 3.8、dim7 11.6 微调；总分 93.1（与上次 92.3 差 +0.8，系打分视角差异非文件变化）	full_test
+2026-08-03T07:55	errata	full-company-analysis	-	-	errata	dim8归因	勘误：fulltest 行验证对象为 v3.3.11 时代 run（contract_commit=1ef23e8），仅证明文档流程与产物一致，不验证错峰纪律；93.1 系文档终版评分。CHANGELOG v3.4.2 措辞已修正

@@ -216,6 +216,53 @@ def event(run_root: Path, kind: str, **payload: object) -> None:
         handle.write(json.dumps({"event_at": iso(now()), "type": kind, **payload}, ensure_ascii=False) + "\n")
 
 
+def budget_adjust(run_root: Path, *, stop_dispatch_at: int | None = None,
+                  hard_max: int | None = None, reason: str = "") -> dict:
+    """调高派发预算（budget 触顶 CHECKPOINT 的「调高预算继续」分支）。
+
+    只允许上调（防静默降标）；调整结果写入 events.jsonl 可追溯。
+    """
+    with runtime_lock(run_root):
+        state = load_state(run_root)
+        budget = state["budget"]
+        changes: dict[str, tuple[int, int]] = {}
+        if stop_dispatch_at is not None:
+            if stop_dispatch_at <= budget.get("stop_dispatch_at", 0):
+                raise RuntimeErrorState(
+                    f"stop_dispatch_at 只能上调（当前 {budget.get('stop_dispatch_at')}，收到 {stop_dispatch_at}）")
+            old = budget.get("stop_dispatch_at")
+            budget["stop_dispatch_at"] = stop_dispatch_at
+            changes["stop_dispatch_at"] = (old, stop_dispatch_at)
+        if hard_max is not None:
+            if hard_max <= budget.get("hard_max", 0):
+                raise RuntimeErrorState(
+                    f"hard_max 只能上调（当前 {budget.get('hard_max')}，收到 {hard_max}）")
+            old = budget.get("hard_max")
+            budget["hard_max"] = hard_max
+            changes["hard_max"] = (old, hard_max)
+        if not changes:
+            raise RuntimeErrorState("budget-adjust 至少提供 stop_dispatch_at 或 hard_max 之一")
+        save_state(run_root, state)
+        event(run_root, "budget_adjusted",
+              **{k: {"from": v[0], "to": v[1]} for k, v in changes.items()},
+              reason=reason or "budget 触顶人工调高")
+        return {"status": "OK", "adjusted": {k: {"from": v[0], "to": v[1]} for k, v in changes.items()}}
+
+
+def log_event(run_root: Path, *, kind: str, note: str = "") -> dict:
+    """受支持的人工事件写入入口（doctor CHECKPOINT 复核结论等）。
+
+    仅允许写入受信任的事件类型（拒绝任意注入），note 为复核结论文本。
+    """
+    allowed = {"human_review", "manual_rework", "doctor_checkpoint"}
+    if kind not in allowed:
+        raise RuntimeErrorState(
+            f"event-log 类型 {kind!r} 不在白名单 {sorted(allowed)} 内，请用受支持类型")
+    with runtime_lock(run_root):
+        event(run_root, kind, note=note, source="orchestrator")
+        return {"status": "OK", "kind": kind, "note": note}
+
+
 def initialize(run_root: Path) -> dict:
     with runtime_lock(run_root):
         return _initialize_locked(run_root)
@@ -418,12 +465,22 @@ def _lease_ttl_for_skill(skill: dict | None) -> int:
     return NON_FANOUT_LEASE_MINUTES
 
 
-def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:
+def next_work(run_root: Path, *, methodology_mode: str = "full",
+              allowlist: tuple[str, ...] | None = None) -> dict:
+    """领取下一个可派发 work unit。
+
+    allowlist：可选 skill_id 白名单。非空时只从白名单内的单元中挑选候选，
+    用于编排器实现 W3 错峰（先只领 investment-team+earnings-review，
+    完成后再领 management-deep-dive+industry-research），避免轻单元在重
+    单元研究期间租约过期被 sweep 误回收（宏景/沪电 run 实证）。
+    白名单内无就绪单元时按正常逻辑返回 NO_WORK。
+    """
     with runtime_lock(run_root):
-        return _next_work_locked(run_root, methodology_mode)
+        return _next_work_locked(run_root, methodology_mode, allowlist)
 
 
-def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
+def _next_work_locked(run_root: Path, methodology_mode: str = "full",
+                      allowlist: tuple[str, ...] | None = None) -> dict:
     state = load_state(run_root)
     budget = state["budget"]
     if budget["used"] >= budget["hard_max"]:
@@ -457,10 +514,19 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
             deps = [] if unit["skill_id"] == PIPELINE_ROOT else [PIPELINE_ROOT]
         if any(dep not in done_skills for dep in deps):
             continue
+        if allowlist and unit["skill_id"] not in allowlist:
+            # W3 错峰（v3.4.1+）：白名单外的就绪单元本轮不派发，
+            # 留待编排器完成当前小批后再次调用 next-work 领取。
+            continue
         candidates.append(unit)
     if not candidates:
         waiting = any(u["status"] in {"PENDING", "RETRY_WAIT"} for u in state["work_units"])
-        reason = "DEPENDENCIES_PENDING" if waiting else "QUEUE_EMPTY"
+        if allowlist and waiting:
+            reason = "ALLOWLIST_DEPENDENCIES_PENDING"
+        elif waiting:
+            reason = "DEPENDENCIES_PENDING"
+        else:
+            reason = "QUEUE_EMPTY"
         return {"status": "NO_WORK", "reason": reason}
     unit = candidates[0]
     # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）。

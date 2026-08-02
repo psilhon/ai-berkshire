@@ -59,9 +59,22 @@ def parser() -> argparse.ArgumentParser:
     doc.add_argument("--run-root", required=True); doc.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     doc.add_argument("--json", action="store_true"); doc.add_argument("--strict", action="store_true")
     doc.add_argument("--write", action="store_true")
+    # v3.4.2 fix（MEDIUM）：CHECKPOINT 可执行闭环
+    badj = sub.add_parser("budget-adjust", help="调高派发预算（budget 触顶 CHECKPOINT 用，只允许上调）")
+    badj.add_argument("--run-root", required=True)
+    badj.add_argument("--stop-dispatch-at", type=int, default=None, help="新的 stop_dispatch_at（仅上调）")
+    badj.add_argument("--hard-max", type=int, default=None, help="新的 hard_max（仅上调）")
+    badj.add_argument("--reason", default="", help="调整原因（写入 events.jsonl 可追溯）")
+    elog = sub.add_parser("event-log", help="人工事件写入（doctor CHECKPOINT 复核结论用）")
+    elog.add_argument("--run-root", required=True)
+    elog.add_argument("--kind", required=True, choices=["human_review", "manual_rework", "doctor_checkpoint"])
+    elog.add_argument("--note", default="", help="复核结论/说明文本")
     for name in ("next-work",):
         cmd = sub.add_parser(name, help=argparse.SUPPRESS); cmd.add_argument("--run-root", required=True)
         cmd.add_argument("--methodology-mode", default="full", choices=["full", "ref"])
+        # v3.4.2 fix：W3 错峰支持——只从白名单 skill 中派发（逗号分隔 skill_id 列表）
+        cmd.add_argument("--allowlist", default=None,
+                         help="逗号分隔的 skill_id 白名单；非空时只派发白名单内的就绪单元（W3 错峰用）")
     aud = sub.add_parser("audit", help=argparse.SUPPRESS)
     aud.add_argument("--run-root", required=True); aud.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     fin = sub.add_parser("finalize", help=argparse.SUPPRESS)
@@ -162,7 +175,14 @@ def main(argv=None) -> int:
         if args.command == "doctor":
             return doctor.run_and_render(root, Path(args.registry),
                                          as_json=args.json, write=args.write, strict=args.strict)
-        if args.command == "next-work": emit(runtime.next_work(root, methodology_mode=args.methodology_mode)); return 0
+        if args.command == "budget-adjust":
+            emit(runtime.budget_adjust(root, stop_dispatch_at=args.stop_dispatch_at,
+                                       hard_max=args.hard_max, reason=args.reason)); return 0
+        if args.command == "event-log":
+            emit(runtime.log_event(root, kind=args.kind, note=args.note)); return 0
+        if args.command == "next-work":
+            allowlist = tuple(s.strip() for s in args.allowlist.split(",")) if args.allowlist else None
+            emit(runtime.next_work(root, methodology_mode=args.methodology_mode, allowlist=allowlist)); return 0
         if args.command == "audit":
             report, code = audit_tool.audit(root, Path(args.registry)); emit(report); return code
         if args.command == "job-started": emit(runtime.job_started(root, args.work_unit_id, args.attempt_id, args.lease_nonce, args.agent_job_id)); return 0

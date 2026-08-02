@@ -32,10 +32,11 @@ This skill is generated from `skills/full-company-analysis.md` so Claude Code an
 2. **版本校验（E1，强制）**：执行仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）：
 
 ```bash
-cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py && git log -1 --oneline
+cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py skills/full-company-analysis.md && git log -1 --oneline && (git describe --tags --exact-match HEAD 2>/dev/null || echo "HEAD 无精确 tag")
 ```
 
-   - 若上述编排相关文件存在**未提交改动**：🔴 **CHECKPOINT（人工确认，不阻塞自动继续）**——先与用户确认「工作区契约/脚本是最新意图版本」再继续，确认后全自动推进；不得基于「会话早期印象」假设版本，必须实时读取。
+   - 若上述编排相关文件（**含 skill 文档本身**）存在**未提交改动**：🔴 **CHECKPOINT（人工确认，不阻塞自动继续）**——先与用户确认「工作区契约/脚本是最新意图版本」再继续，确认后全自动推进；不得基于「会话早期印象」假设版本，必须实时读取。
+   - **目标版本比较（v3.4.2 增强）**：`git describe --tags` 输出的 tag 若非预期发版 tag（如 `v3.4.2`），或 `git log -1` 的 HEAD 早于该 tag，视为 **checkout 过期**——干净但过期的 checkout 不得继续，须先切到目标 tag 再启动。
 3. **启动 run**：
 
 ```text
@@ -149,7 +150,7 @@ python3 scripts/full_analysis.py submit-result \
   --run-root <run_root> --result <attempt_dir>/result.json
 ```
 
-租约期间按需调用 `heartbeat`（长任务按上文「调度时序纪律」第 4 条**强制**）。Agent 失败调用 `record-failure`；429 在派发层按「调度时序纪律」第 5 条降级 lite 继续，runtime 侧的 429 冷却只约束 Agent job 预算，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。🔴 **CHECKPOINT（budget 触顶，必报用户）**：触顶即向用户报告「剩余工作单元 + 已 APPROVED 产物 + 触顶原因（429 持续 / 单元反复返工）」，由用户决定继续（调高预算）还是收口为 PARTIAL——不得静默降低产物标准继续。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
+租约期间按需调用 `heartbeat`（长任务按上文「调度时序纪律」第 4 条**强制**）。Agent 失败调用 `record-failure`；429 在派发层按「调度时序纪律」第 5 条降级 lite 继续，runtime 侧的 429 冷却只约束 Agent job 预算，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。🔴 **CHECKPOINT（budget 触顶，必报用户）**：触顶即向用户报告「剩余工作单元 + 已 APPROVED 产物 + 触顶原因（429 持续 / 单元反复返工）」，由用户决定继续还是收口为 PARTIAL。**继续分支（v3.4.2 闭环）**：用户同意调高预算后执行 `python3 scripts/full_analysis.py budget-adjust --run-root <run_root> --stop-dispatch-at <新值> --hard-max <新值> --reason "<原因>"`（只允许上调，防静默降标，调整记入 events.jsonl）；否则收口 PARTIAL。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
 
 ## 执行一致性纪律（防质量坍塌，强制）
 
@@ -217,7 +218,7 @@ python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 编排器派发 deep-summary Agent 时，指令必须包含：
 
 - **输入**：13 份正式产物的绝对路径（从 manifest 的 `skills[].artifact_records[].path` 取得）+ `as_of` 日期 + 公司名/代码。
-- **方法论**：遵循 deep-summary skill 的忠实熔炼纪律（`~/.workbuddy/skills/deep-summary/references/distillation-guide.md`，用户级安装路径；若该文件不存在，按「只读、只提炼、不 WebSearch、不取新数、不做新推理」原则执行）——只读、只提炼，不 WebSearch、不取新数、不做新推理。
+- **方法论**：遵循 deep-summary skill 的忠实熔炼纪律——引用其 `references/distillation-guide.md`（本仓库场景下位于 `~/.workbuddy/skills/deep-summary/references/`，即用户级 skill 安装目录；若该文件在所用 Runtime 的 skill 安装目录中不可达，按「只读、只提炼、不 WebSearch、不取新数、不做新推理」原则执行）——只读、只提炼，不 WebSearch、不取新数、不做新推理。
 - **输出格式**：必须包含 `register-summary` 要求的 8 个必需章节（核心结论速览 / 主干①·投资分析 / 主干②·财报研读 / 主干③·行业分析 / 补充与参考 / 产物索引 / 数据截止日 / 仅供学习研究），字节 ≥ 2500。
 - **产物索引**：必须逐条列出 13 份正式产物的完整相对路径，缺一即被 `register-summary` 拒收。
 - **写入路径**：`<run_root>/evidence/attempts/summary/summary.md`。
@@ -320,7 +321,7 @@ finalize 之后（或随时）执行质量体检：
 python3 scripts/full_analysis.py doctor --run-root <run_root>
 ```
 
-doctor 是**advisory 非阻断**诊断（不影响 APPROVE/FAIL），专门捕捉"过了 Gate 下限但仍可能坍塌"的执行退化指纹：①全部/大量分析单元贴线（字节仅略超 `min_bytes`，深度存疑）②零 heartbeat（疑似主上下文直写）③深度分化不足。**过下限 ≠ 同等深度**，下限只是地板。若 doctor 返回 WARN：🔴 **CHECKPOINT（人工复核，不阻塞收口）**——必须人工复核被点名的贴线单元与 10 号后单元，确认是真深度不足还是合法的快 run；确属坍塌的，按"返工路径"（重置目标单元为 PENDING + manifest 置 PARTIAL + 记录 `rework_initiated` 事件）重新派真子 Agent 返工，再重跑 audit+finalize。复核结论（确属坍塌 / 合法快 run）须记入 `evidence/events.jsonl` 备查。
+doctor 是**advisory 非阻断**诊断（不影响 APPROVE/FAIL），专门捕捉"过了 Gate 下限但仍可能坍塌"的执行退化指纹：①全部/大量分析单元贴线（字节仅略超 `min_bytes`，深度存疑）②零 heartbeat（疑似主上下文直写）③深度分化不足。**过下限 ≠ 同等深度**，下限只是地板。若 doctor 返回 WARN：🔴 **CHECKPOINT（人工复核，不阻塞收口）**——必须人工复核被点名的贴线单元与 10 号后单元，确认是真深度不足还是合法的快 run；确属坍塌的，按"返工路径"（重置目标单元为 PENDING + manifest 置 PARTIAL + 记录 `rework_initiated` 事件）重新派真子 Agent 返工，再重跑 audit+finalize。**复核结论落盘（v3.4.2 闭环）**：执行 `python3 scripts/full_analysis.py event-log --run-root <run_root> --kind doctor_checkpoint --note "复核结论：确属坍塌/合法快 run + 依据"`（kind 白名单：human_review/manual_rework/doctor_checkpoint），结论写入 `evidence/events.jsonl` 备查。
 
 重复运行 Benchmark 只比较同一公司、同一 `as_of`、同一 Contract digest 且全部 `APPROVED` 的 run；任一事实、计算或判断在某个 run 缺失都算不稳定，不得以空集合冒充 100% 一致。
 

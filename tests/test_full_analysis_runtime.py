@@ -256,6 +256,86 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(unit["status"], "RETRY_WAIT")
         self.assertEqual(unit["attempts"], 1)
 
+    def test_next_work_allowlist_enforces_w3_stagger(self):
+        # v3.4.2 fix（HIGH）：W3 错峰——契约顺序 investment-team(5) → mgmt(6) →
+        # earnings(7) → industry-research(8)，若无 allowlist，要领 earnings-review
+        # 必须先租出 management-deep-dive，错峰纪律在 Runtime 层不可实现。
+        # 本测试验证：--allowlist 只派发白名单内的就绪单元，白名单外单元被挡。
+        self.start()
+        # 完成 W1+W2 全部依赖，使 W3 四单元就绪
+        for skill in ("ashare-data", "financial-data", "quality-screen",
+                      "investment-checklist", "investment-research"):
+            self._set_unit_done(skill)
+        # 错峰第一批：只领 investment-team + earnings-review
+        leased = []
+        for _ in range(5):
+            result = json.loads(self.cli(
+                "next-work", "--run-root", self.run_root,
+                "--allowlist", "investment-team,earnings-review").stdout)
+            if result["status"] == "LEASED":
+                leased.append(result["skill_id"])
+            else:
+                break
+        self.assertEqual(set(leased), {"investment-team", "earnings-review"})
+        # management-deep-dive / industry-research 不得被白名单提前派发
+        state = self.state()
+        blocked = {u["skill_id"] for u in state["work_units"]
+                   if u["skill_id"] in {"management-deep-dive", "industry-research"}}
+        self.assertTrue(blocked)
+        for sid in blocked:
+            unit = next(u for u in state["work_units"] if u["skill_id"] == sid)
+            self.assertEqual(unit["status"], "PENDING", f"{sid} 不得在 W3a 阶段被派发")
+        # 白名单为空 allowlist（错误输入）退化为不过滤：可派发白名单外单元
+        result = json.loads(self.cli(
+            "next-work", "--run-root", self.run_root,
+            "--allowlist", "management-deep-dive").stdout)
+        self.assertEqual(result["status"], "LEASED")
+        self.assertEqual(result["skill_id"], "management-deep-dive")
+
+    def test_budget_adjust_only_raises_and_logs_event(self):
+        # v3.4.2 fix（MEDIUM）：budget 触顶 CHECKPOINT 的「调高预算继续」需要 CLI 闭环。
+        self.start()
+        state = self.state()
+        old_stop = state["budget"]["stop_dispatch_at"]
+        old_hard = state["budget"]["hard_max"]
+        # 上调 hard_max + stop_dispatch_at
+        result = self.cli("budget-adjust", "--run-root", self.run_root,
+                          "--stop-dispatch-at", str(old_stop + 10),
+                          "--hard-max", str(old_hard + 10),
+                          "--reason", "人工调高预算继续")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        body = json.loads(result.stdout)
+        self.assertEqual(body["status"], "OK")
+        state = self.state()
+        self.assertEqual(state["budget"]["stop_dispatch_at"], old_stop + 10)
+        self.assertEqual(state["budget"]["hard_max"], old_hard + 10)
+        # 事件已写入 events.jsonl
+        evs = (self.run_root / "evidence/events.jsonl").read_text()
+        self.assertIn("budget_adjusted", evs)
+        self.assertIn("人工调高预算继续", evs)
+        # 下调被拒（防静默降标）
+        down = self.cli("budget-adjust", "--run-root", self.run_root,
+                        "--hard-max", str(old_hard))
+        self.assertNotEqual(down.returncode, 0)
+        self.assertIn("只能上调", down.stdout + down.stderr)
+
+    def test_event_log_writes_whitelisted_kind(self):
+        # v3.4.2 fix（MEDIUM）：doctor CHECKPOINT 人工结论需要受支持的 events.jsonl 写入入口。
+        self.start()
+        ok = self.cli("event-log", "--run-root", self.run_root,
+                      "--kind", "doctor_checkpoint", "--note", "复核结论：确属坍塌，返工")
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        body = json.loads(ok.stdout)
+        self.assertEqual(body["status"], "OK")
+        evs = (self.run_root / "evidence/events.jsonl").read_text()
+        self.assertIn("doctor_checkpoint", evs)
+        self.assertIn("复核结论：确属坍塌，返工", evs)
+        # 非白名单类型被拒（argparse choices 在 CLI 层强制白名单）
+        bad = self.cli("event-log", "--run-root", self.run_root,
+                       "--kind", "arbitrary_injection", "--note", "x")
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("invalid choice", bad.stderr)
+
     def test_hard_budget_blocks_new_job_at_fifty(self):
         self.start()
         path = self.run_root / "evidence/runtime-state.json"

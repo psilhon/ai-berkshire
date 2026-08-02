@@ -16,8 +16,13 @@
 - **distillation-guide 绝对路径引用** + 缺失 fallback 原则。
 
 ### 📊 评估
-- Darwin 九维独立复评 **93.1/100**（dim3/dim9 满分档）；dim8 以绿的谐波 run-36fa1d00 实证升 full_test（13 单元全 PASS / audit 0 violation / REVIEW_PASSED）。
+- Darwin 九维独立复评 **93.1/100**（dim3/dim9 满分档）——分数针对**当前 skill 文档终版文件**，不构成对 v3.4.2 运行行为的验证。
+- dim8 full_test 说明：复用绿的谐波 run-36fa1d00 实证**文档描述的端到端流程与真实产物一致**（13 单元全 PASS / audit 0 violation / REVIEW_PASSED）；该 run 的 contract_commit 为 `1ef23e8`（v3.3.11 时代，早于 v3.4.1/v3.4.2），**不验证错峰纪律的有效性**——W3 错峰的净收益声明待 v3.4.2 之后新 run 验证（见本版修复：`next-work --allowlist`）。
 - 评估记录：`skills/.darwin-results.tsv`；产物：`local/darwin-evaluation/2026-08-02/`。
+
+### 🐛 修复 (Fixed)
+- **W3 错峰在 Runtime 层不可实现（HIGH）**：`next-work` 原无按 skill 选择租约的参数，`candidates[0]` 按契约顺序固定派发（investment-team → management-deep-dive → earnings-review → industry-research），要领到 earnings-review 必须先租出 management-deep-dive，错峰意图落空。新增 `--allowlist` 参数（逗号分隔 skill_id），白名单外的就绪单元本轮不派发，编排器可先领 W3a（investment-team+earnings-review）完成后再领 W3b。新增回归测试 `test_next_work_allowlist_enforces_w3_stagger`。
+- **CHECKPOINT 缺少可执行闭环（MEDIUM）**：E1 只 `git status` 四脚本不比较目标版本；budget 触顶「调高预算」无对应 CLI；doctor 人工结论写入 events.jsonl 无受支持入口。本版补齐（见下「新增」）。
 
 ---
 
