@@ -1,6 +1,6 @@
 ---
 name: full-company-analysis
-description: WorkBuddy 专用单公司全量分析适配器；由 WorkBuddy 原生 Agent 执行真实研究，Runtime 只负责租约、预算与恢复，Gate 负责确定性验收。
+description: WorkBuddy 专用单公司全量分析适配器。对一家公司执行 13 业务 skill 端到端全量研究（波次调度→审计→语义评审→finalize）。触发词：全量分析 <公司名>、/full-company-analysis <公司名>、全量跑 <公司名>。由 WorkBuddy 原生 Agent 执行真实研究，Runtime 只负责租约、预算与恢复，Gate 负责确定性验收。
 platform: workbuddy
 registry-schema: full-analysis-contract/v2
 result-schema: result-schema/v1
@@ -40,7 +40,7 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py && git log -1 --oneline
 ```
 
-- 若上述编排相关文件存在**未提交改动**：先与用户确认「工作区契约/脚本是最新意图版本」再继续；不得基于「会话早期印象」假设版本，必须实时读取。
+- 若上述编排相关文件存在**未提交改动**：🔴 **CHECKPOINT（人工确认，不阻塞自动继续）**——先与用户确认「工作区契约/脚本是最新意图版本」再继续，确认后全自动推进；不得基于「会话早期印象」假设版本，必须实时读取。
 - `start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
 - 启动后 `start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（13 项业务契约 + preflight）；数量异常视为版本错配，停止并核对。
 - **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
@@ -215,7 +215,7 @@ python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 编排器派发 deep-summary Agent 时，指令必须包含：
 
 - **输入**：13 份正式产物的绝对路径（从 manifest 的 `skills[].artifact_records[].path` 取得）+ `as_of` 日期 + 公司名/代码。
-- **方法论**：遵循 deep-summary skill 的忠实熔炼纪律（`references/distillation-guide.md`）——只读、只提炼，不 WebSearch、不取新数、不做新推理。
+- **方法论**：遵循 deep-summary skill 的忠实熔炼纪律（`~/.workbuddy/skills/deep-summary/references/distillation-guide.md`，用户级安装路径；若该文件不存在，按「只读、只提炼、不 WebSearch、不取新数、不做新推理」原则执行）——只读、只提炼，不 WebSearch、不取新数、不做新推理。
 - **输出格式**：必须包含 `register-summary` 要求的 8 个必需章节（核心结论速览 / 主干①·投资分析 / 主干②·财报研读 / 主干③·行业分析 / 补充与参考 / 产物索引 / 数据截止日 / 仅供学习研究），字节 ≥ 2500。
 - **产物索引**：必须逐条列出 13 份正式产物的完整相对路径，缺一即被 `register-summary` 拒收。
 - **写入路径**：`<run_root>/evidence/attempts/summary/summary.md`。
