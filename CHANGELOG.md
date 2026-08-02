@@ -5,6 +5,33 @@
 
 ---
 
+## [v3.4.2] — 2026-08-03
+
+> Darwin Skill 2.0 九维评估与优化（full-company-analysis 85.7 → 93.1）
+
+### ✨ 新增 (Added)
+- **description 触发词三枚**（全量分析 / 全量跑 / /full-company-analysis）。
+- **三处显性 🔴CHECKPOINT**（E1 版本校验 / budget 触顶 / doctor WARN），全部「不阻塞自动继续」，doctor 复核结论记入 `evidence/events.jsonl` 可追溯。
+- **启动流程步骤化**：6 步编号（定基线→E1→启动→核对落盘→核对预算→E10），声明输入/输出。
+- **distillation-guide 绝对路径引用** + 缺失 fallback 原则。
+
+### 📊 评估
+- Darwin 九维独立复评 **93.1/100**（dim3/dim9 满分档）；dim8 以绿的谐波 run-36fa1d00 实证升 full_test（13 单元全 PASS / audit 0 violation / REVIEW_PASSED）。
+- 评估记录：`skills/.darwin-results.tsv`；产物：`local/darwin-evaluation/2026-08-02/`。
+
+---
+
+## [v3.4.1] — 2026-08-02
+
+> 编排错峰纪律（W3 拆两部分 + W4 industry-funnel 单独运行）
+
+### ✨ 新增 (Added)
+- **W3 拆两部分（默认强制）**：W3a `investment-team`+`earnings-review`（扇出重单元并行）→ W3b `management-deep-dive`+`industry-research`（轻单元并行，W3a 全 DONE 后领）。根因：重扇出与轻单元混编并行，轻单元在重单元研究完成前租约过期被 sweep 误回收重跑（宏景/沪电 run 实证）。
+- **W4 `industry-funnel` 单独运行（默认强制）**：先单独派发 funnel，完成后再领 bottleneck-hunter+news-pulse 并行。
+- 同步三副本：skills/ = workbuddy-skills/ = ~/.workbuddy/skills/（SHA-256 一致），codex-skills 由 sync 生成。
+
+---
+
 ## [v3.3.8] — 2026-08-01
 
 > 沪电股份全量验证发现的 hotfix（2 处真实 bug）
