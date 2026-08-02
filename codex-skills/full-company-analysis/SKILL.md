@@ -147,7 +147,7 @@ python3 scripts/full_analysis.py submit-result \
   --run-root <run_root> --result <attempt_dir>/result.json
 ```
 
-租约期间按需调用 `heartbeat`（长任务按上文「调度时序纪律」第 4 条**强制**）。Agent 失败调用 `record-failure`；429 在派发层按「调度时序纪律」第 5 条降级 lite 继续，runtime 侧的 429 冷却只约束 Agent job 预算，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
+租约期间按需调用 `heartbeat`（长任务按上文「调度时序纪律」第 4 条**强制**）。Agent 失败调用 `record-failure`；429 在派发层按「调度时序纪律」第 5 条降级 lite 继续，runtime 侧的 429 冷却只约束 Agent job 预算，禁止手工绕过预算。达到 `stop_dispatch_at`（30 次）后停止非核心派生重试；达到 `hard_max`（33 次）立即停止新派发，生成 PARTIAL/SUMMARY，验收失败。🔴 **CHECKPOINT（budget 触顶，必报用户）**：触顶即向用户报告「剩余工作单元 + 已 APPROVED 产物 + 触顶原因（429 持续 / 单元反复返工）」，由用户决定继续（调高预算）还是收口为 PARTIAL——不得静默降低产物标准继续。预算参数以 Gate `budget_params` 为准，本处数字仅作人读说明。
 
 ## 执行一致性纪律（防质量坍塌，强制）
 
@@ -318,7 +318,7 @@ finalize 之后（或随时）执行质量体检：
 python3 scripts/full_analysis.py doctor --run-root <run_root>
 ```
 
-doctor 是**advisory 非阻断**诊断（不影响 APPROVE/FAIL），专门捕捉"过了 Gate 下限但仍可能坍塌"的执行退化指纹：①全部/大量分析单元贴线（字节仅略超 `min_bytes`，深度存疑）②零 heartbeat（疑似主上下文直写）③深度分化不足。**过下限 ≠ 同等深度**，下限只是地板。若 doctor 返回 WARN：必须人工复核被点名的贴线单元与 10 号后单元，确认是真深度不足还是合法的快 run；确属坍塌的，按"返工路径"（重置目标单元为 PENDING + manifest 置 PARTIAL + 记录 `rework_initiated` 事件）重新派真子 Agent 返工，再重跑 audit+finalize。
+doctor 是**advisory 非阻断**诊断（不影响 APPROVE/FAIL），专门捕捉"过了 Gate 下限但仍可能坍塌"的执行退化指纹：①全部/大量分析单元贴线（字节仅略超 `min_bytes`，深度存疑）②零 heartbeat（疑似主上下文直写）③深度分化不足。**过下限 ≠ 同等深度**，下限只是地板。若 doctor 返回 WARN：🔴 **CHECKPOINT（人工复核，不阻塞收口）**——必须人工复核被点名的贴线单元与 10 号后单元，确认是真深度不足还是合法的快 run；确属坍塌的，按"返工路径"（重置目标单元为 PENDING + manifest 置 PARTIAL + 记录 `rework_initiated` 事件）重新派真子 Agent 返工，再重跑 audit+finalize。复核结论（确属坍塌 / 合法快 run）须记入 `evidence/events.jsonl` 备查。
 
 重复运行 Benchmark 只比较同一公司、同一 `as_of`、同一 Contract digest 且全部 `APPROVED` 的 run；任一事实、计算或判断在某个 run 缺失都算不稳定，不得以空集合冒充 100% 一致。
 
