@@ -677,8 +677,19 @@ def _validate_result_lease(state: dict, bundle: dict, *, allow_expired: bool = F
         "agent_job_id": lease.get("agent_job_id"),
     }
     actual = {key: bundle.get(key) for key in expected}
-    if actual != expected or not all(expected.values()):
-        raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
+    # E15: 从未 job-started 的 LEASED 租约（编排器拿到空 Agent 返回、未能 job-started）
+    # 其 lease.agent_job_id 为 None——孤儿恢复/提交时不得用 None 与 bundle 中的自造 id
+    # 强比对（历史事故：W4 三单元 Agent 完成产物后返回为空，resume 孤儿恢复被拒，
+    # 租约过期卡死 run）。未 job-started 的租约只校验 attempt_id + lease_nonce 两个
+    # 强身份字段，agent_job_id 允许任意值（Gate 侧仍校验 bundle 自洽性）。
+    if lease.get("agent_job_id"):
+        if actual != expected or not all(expected.values()):
+            raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
+    else:
+        if actual["attempt_id"] != expected["attempt_id"] or not expected["attempt_id"]:
+            raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
+        if actual["lease_nonce"] != expected["lease_nonce"] or not expected["lease_nonce"]:
+            raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
     expires = parse_time(lease.get("expires_at"))
     if not allow_expired and expires and expires <= now():
         raise RuntimeErrorState("Result Bundle 对应租约已过期")

@@ -76,6 +76,7 @@ python3 scripts/full_analysis.py job-started \
 4. **长任务强制 heartbeat**：预计执行超过 10 分钟的 Agent（扇出单元、多模块研究单元），派发指令必须要求其每完成一个主要阶段调用一次 `heartbeat`（命令见 BUNDLE-SPEC，心跳按租约 TTL 续期）；全程零心跳的 run 会被 doctor 判「疑似主上下文直写」，需人工复核。
 5. **429 降级派发（E12）**：派发 Agent 遇模型 429 限流时，改派 `model:"lite"` 继续（不中止 run、不消耗 runtime 预算）；runtime 的 429 冷却仅约束 Agent job 预算侧，派发层的模型降级是编排器正常容错，两者不混淆。若 lite 亦连续失败，才走 `record-failure` 重试退避。
 6. **并行限流权衡（v3.3.10）**：峰值并行度受 `concurrency.max`（默认 4）约束，已从 1 起步调优。三个扇出单元（team/earnings/news）内部已是多角色独立上下文，叠加单元级并行峰值可达 8-10 Agent，易触发上游 429。纪律：数据类轻单元（ashare/financial/quality/checklist/research）大胆并行；重单元（team/earnings）在 W3 内可与轻单元（mgmt/ind-research）混编，若连续 429 则把重单元拆成下一小批错峰，配合本条第 5 项 lite 降级。
+7. **Agent 返回空/未 job-started 的兜底（E15，强制）**：若并行 Agent 返回**空结果**（拿不到真实 `agent_job_id`，五粮液 run W4 三单元卡死根因），**不要等待租约自然过期**——立即对对应单元执行 `resume`（`python3 scripts/full_analysis.py resume --run-root <run_root>`）。v3.3.12 起 runtime 对「从未 job-started 的 LEASED 租约 + 磁盘存在 result.json」支持孤儿恢复：只要 bundle 的 `attempt_id` + `lease_nonce` 与租约一致即接管为 DONE（agent_job_id 不作强校验，因为从未登记），产物合格则直接晋级、不合格才标 abandoned 重新排队。**注意**：Agent 自提交路径（Agent 内部完成 mk_result_bundle 后自行 submit-result）同样受此兜底——即使 Agent 忘了 job-started，submit 不再因 agent_job_id 缺失被拒。
 
 派发给 Agent 的指令必须包含注册表分配的精确正式产物路径，并要求其把中间文件放在：
 
@@ -117,7 +118,23 @@ Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短
 
 **多角色 skill 必须真扇出**：当 `fanout_required: true` 时，必须为 `roles.required_roles` 中每个角色（除 `integrator` 外）启动一个**独立原生 Agent**（用 Task 工具 fan-out），各自在 `evidence/attempts/<skill_id>/<attempt_id>/role-<role>.md` 产出独立分析备忘录（每个 ≥300 字节，且不得相互引用以保证独立性）；最后由整合 Agent 读取全部角色备忘录产出正式整合报告。缺少任一 `role-<role>.md` 时 Gate 会拒收。单 Agent skill 则由一个原生 Agent 按 methodology 完整执行。
 
-**result.json 优先写入**：Agent 完成分析后，第一步将 result.json 写入 attempt_dir，第二步再调用 submit-result。即使 submit-result 因会话中断失败，磁盘上的 result.json 可被 `resume` 的孤儿恢复机制接管（Runtime 会检查 `evidence/attempts/<skill_id>/<attempt_id>/result.json` 是否存在且 Gate 可接受）。
+**result.json 必须用确定性生成器构造（E16，强制，防手写 JSON 返工）**——**禁止子 Agent 手写 result.json**。Agent 完成报告后，**必须**运行：
+
+```text
+python3 scripts/mk_result_bundle.py \
+  --run-root <run_root> \
+  --skill-id <skill_id> --work-unit-id <wu-xxx> \
+  --attempt-id <attempt-xxx> --lease-nonce <nonce> \
+  --agent-job-id <真实 agent_job_id> \
+  --report <attempt_dir>/report.md \
+  --status PASS \
+  [--extra-evidence <facts.json>] [--extra-sources <sources.json>] \
+  [--limitation "code|detail"] [--pwl <pwl>] [--role-id <role>]
+```
+
+该工具自动：从 runtime-state 校验租约身份（attempt_id + lease_nonce 强校验；agent_job_id 仅在已登记时比对）、按 contract 的 `evidence_rules` 生成**最小合规证据**（facts/sources/calcs/judgments/role_runs/receipts/capabilities 缺一即自动补足且满足最低条数）、按 report 实际文件重算 bytes/sha256、核对全部必需章节标题与 min_bytes 并给出预检警告。Agent 只需把**真实调研产物**（fact 数值/来源/计算参数/判断）通过 `--extra-evidence`/`--extra-sources` 传入合并，机械性字段全部交给工具。**历史根因**：五粮液 run 中 Agent 手写 JSON 导致 4 类 schema 返工（fact 用 `sources` 字段而非 `source_ids`、source_type 枚举越界、calculation 缺 `calculation_id`、limitations 写成字符串数组），audit 前反复修补——E16 从源头消除。
+
+**result.json 优先写入**：Agent 完成分析后，第一步运行 mk_result_bundle 生成 result.json（写入 attempt_dir），第二步再调用 submit-result。即使 submit-result 因会话中断失败，磁盘上的 result.json 可被 `resume` 的孤儿恢复机制接管（Runtime 会检查 `evidence/attempts/<skill_id>/<attempt_id>/result.json` 是否存在且 Gate 可接受）。
 
 完成后调用：
 

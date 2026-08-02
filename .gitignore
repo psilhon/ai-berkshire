@@ -42,7 +42,6 @@ tools/_submit_helper.py
 tools/_tfwd_gen_specs.py
 tools/_tfwd_submit.py
 scripts/lease_keeper.py
-scripts/mk_result_bundle.py
 # 一次性修复脚本（fix_*.py）与备份文件（*.bak-*）
 fix_*.py
 *.bak-*

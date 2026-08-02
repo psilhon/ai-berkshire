@@ -309,6 +309,60 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(skill["status"], "PASS")
 
+    def test_resume_recovers_orphan_from_never_job_started_leased_unit(self):
+        """E15 回归：Agent 完成产物但从未 job-started（编排器拿到空返回）→
+        lease.agent_job_id 为 None → 孤儿恢复不得因 agent_job_id 强比对被拒。
+        历史事故：五粮液 run W4 三单元（industry-funnel/bottleneck/news-pulse）
+        产物齐全但提交链路断裂，resume 全部被拒，租约过期卡死整个 run。"""
+        self.start()
+        # 只 next-work 不 job-started：模拟 Agent 领取租约后返回为空、从未登记
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["status"], "LEASED")
+        # Agent 静默完成：bundle 里 agent_job_id 是 Agent 自造值（非租约登记值）
+        result_path = self.write_result(
+            leased, agent_job_id="agent-fake-job-id-from-agent")
+
+        resumed = self.cli("resume", "--run-root", self.run_root)
+
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+        payload = json.loads(resumed.stdout)
+        self.assertIn(leased["work_unit_id"], payload["recovered"])
+        unit = next(
+            item for item in self.state()["work_units"]
+            if item["work_unit_id"] == leased["work_unit_id"]
+        )
+        self.assertEqual(unit["status"], "DONE")
+        manifest = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
+        skill = next(
+            item for item in manifest["skills"]
+            if item["skill_id"] == leased["skill_id"]
+        )
+        self.assertEqual(skill["status"], "PASS")
+
+    def test_submit_result_accepts_never_job_started_bundle_with_matching_ids(self):
+        """E15 回归：从未 job-started 的 LEASED 租约直接 submit-result（Agent 自提交
+        路径：Agent 完成分析后自己 job-started 失败/跳过，直接提交），只要
+        attempt_id + lease_nonce 匹配即可接受，agent_job_id 不作强校验。"""
+        self.start()
+        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(leased["status"], "LEASED")
+        result_path = self.write_result(
+            leased, agent_job_id="agent-self-attested-job-id")
+
+        submitted = self.cli(
+            "submit-result", "--run-root", self.run_root,
+            "--registry", REGISTRY, "--result", result_path,
+        )
+
+        self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
+        self.assertEqual(json.loads(submitted.stdout)["status"], "DONE")
+        unit = next(
+            item for item in self.state()["work_units"]
+            if item["work_unit_id"] == leased["work_unit_id"]
+        )
+        self.assertEqual(unit["status"], "DONE")
+
     def test_concurrent_job_started_updates_are_serialized_without_lost_budget(self):
         self.start()
         # v3.3.10：依赖门禁下先完成 ashare，W2 四个单元就绪供并发 job-started 租用
