@@ -16,24 +16,26 @@ review-cadence: per-release
 
 ## 启动
 
-先执行本地 `date` 与 `uname -m`，把日期作为 `as_of` 基线。随后调用：
+**输入**：公司名 + 证券代码 + 日期。**输出**：`run_root`（后续所有命令的 `--run-root` 参数）。
 
-```text
-python3 scripts/full_analysis.py start --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
-```
-
-只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
-
-**启动前版本校验（E1，强制）**：编排器必须在 `start` 之前执行一次仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）：
+1. **定基线**：执行本地 `date` 与 `uname -m`，把日期作为 `as_of` 基线（不得用训练记忆假设日期）。
+2. **版本校验（E1，强制）**：执行仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）：
 
 ```bash
 cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py && git log -1 --oneline
 ```
 
-- 若上述编排相关文件存在**未提交改动**：🔴 **CHECKPOINT（人工确认，不阻塞自动继续）**——先与用户确认「工作区契约/脚本是最新意图版本」再继续，确认后全自动推进；不得基于「会话早期印象」假设版本，必须实时读取。
-- `start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
-- 启动后 `start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（13 项业务契约 + preflight）；数量异常视为版本错配，停止并核对。
-- **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
+   - 若上述编排相关文件存在**未提交改动**：🔴 **CHECKPOINT（人工确认，不阻塞自动继续）**——先与用户确认「工作区契约/脚本是最新意图版本」再继续，确认后全自动推进；不得基于「会话早期印象」假设版本，必须实时读取。
+3. **启动 run**：
+
+```text
+python3 scripts/full_analysis.py start --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
+```
+
+   - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
+4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
+5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（13 项业务契约 + preflight）；数量异常视为版本错配，停止并核对。
+6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
 ## Agent 调度纪律
 
