@@ -82,10 +82,13 @@ def main() -> int:
                 errors.append(f"{source.name}: 缺少必填字段 `{field}`")
                 continue
             if field == "name" and value != name:
-                # name should match the filename; -workbuddy suffix allowed for platform-bound skills
-                if not (value == f"{name}-workbuddy"):
+                # name 必须与文件名一致；仅当 frontmatter 声明 platform: workbuddy 时
+                # 允许 -workbuddy 后缀（平台绑定 skill 的命名约定），其余一律拒绝。
+                if not (value == f"{name}-workbuddy"
+                        and fields.get("platform", "").strip() == "workbuddy"):
                     errors.append(
                         f"{source.name}: frontmatter name `{value}` 与文件名 `{name}` 不一致"
+                        f"（-workbuddy 后缀需同时声明 platform: workbuddy）"
                     )
             if field == "category" and value not in ALLOWED_CATEGORIES:
                 errors.append(

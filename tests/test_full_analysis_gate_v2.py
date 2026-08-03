@@ -73,13 +73,47 @@ class GateV2Tests(unittest.TestCase):
         self.temp.cleanup()
 
     def init(self):
+        # tempdir 无 git 环境 → _git_stale_check 返回 stale=None；
+        # v3.4.9 起 None 也拒绝（fail-close），故测试 helper 显式 --allow-stale。
         result = run_gate(
             self.root, "init", "--registry", REGISTRY, "--repo-root", self.root,
             "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
             "--platform", "workbuddy",
-            "--run-root", self.run_root,
+            "--run-root", self.run_root, "--allow-stale",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_init_fail_close_on_stale_none_and_true(self):
+        # v3.4.9：E1 fail-close——stale=None（不可判定）与 stale=True（落后）均拒绝，
+        # 拒绝发生在任何落盘之前；唯一放行路径是显式 --allow-stale。
+        # 注：_git_stale_check 检查 Gate 脚本所在仓库，故用 mock 注入三态。
+        for stale_value, detail in ((None, "mock 不可判定"), (True, "mock 落后于最新 tag")):
+            with mock.patch.object(
+                gate_module, "_git_stale_check",
+                return_value={"stale": stale_value, "head": "x", "head_tag": None,
+                              "latest_tag": None, "detail": detail},
+            ):
+                rc = gate_module.main([
+                    "init", "--registry", str(REGISTRY), "--repo-root", str(self.root),
+                    "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+                    "--platform", "workbuddy", "--run-root", str(self.run_root),
+                ])
+            self.assertEqual(rc, 2, f"stale={stale_value} 应拒绝")
+            self.assertFalse(self.run_root.exists(), f"stale={stale_value} 不得落盘")
+        # --allow-stale 覆盖后放行
+        with mock.patch.object(
+            gate_module, "_git_stale_check",
+            return_value={"stale": None, "head": "x", "head_tag": None,
+                          "latest_tag": None, "detail": "mock 不可判定"},
+        ):
+            rc = gate_module.main([
+                "init", "--registry", str(REGISTRY), "--repo-root", str(self.root),
+                "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
+                "--platform", "workbuddy", "--run-root", str(self.run_root),
+                "--allow-stale",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertTrue((self.run_root / "evidence/00-analysis-manifest.json").is_file())
 
     def test_build_run_root_uses_canonical_company_directory(self):
         root = gate_module.build_run_root(

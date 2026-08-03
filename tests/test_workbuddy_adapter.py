@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-ADAPTER = REPO / "workbuddy-skills/full-company-analysis/SKILL.md"
+ADAPTER = REPO / "workbuddy-skills/full-company-analysis-workbuddy/SKILL.md"
 
 
 class WorkBuddyAdapterTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class WorkBuddyAdapterTests(unittest.TestCase):
         self.assertIn("不读取报告正文", text)
 
     def test_adapter_frontmatter_keeps_governance_metadata_in_sync(self):
-        canonical = (REPO / "skills/full-company-analysis.md").read_text(encoding="utf-8")
+        canonical = (REPO / "skills/full-company-analysis-workbuddy.md").read_text(encoding="utf-8")
         adapter = ADAPTER.read_text(encoding="utf-8")
         for field in ("owner", "category", "maturity", "review-cadence"):
             canonical_line = next((line for line in canonical.splitlines() if line.startswith(field + ":")), None)
@@ -34,7 +34,7 @@ class WorkBuddyAdapterTests(unittest.TestCase):
 
     def test_adapter_is_exact_copy_of_canonical_workflow(self):
         canonical = (
-            REPO / "skills/full-company-analysis.md"
+            REPO / "skills/full-company-analysis-workbuddy.md"
         ).read_text(encoding="utf-8")
         adapter = ADAPTER.read_text(encoding="utf-8")
         self.assertEqual(

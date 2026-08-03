@@ -38,11 +38,11 @@
 - 财报发布后：用 `earnings-review`；管理层判断仍是主要分歧时补 `management-deep-dive`。
 - 从行业找公司：先 `industry-research` 看结构，再用 `industry-funnel` 收敛候选；物理供给约束明显时补 `bottleneck-hunter`。
 - 股价突然异动：先 `news-pulse` 判断事件性质，再决定是否重跑公司研究或更新 `thesis-tracker`。
-- 需要完整单公司闭环：使用 `full-company-analysis`，不要手工串联后自行宣称“全量完成”。
+- 需要完整单公司闭环：使用 `full-company-analysis-workbuddy`，不要手工串联后自行宣称“全量完成”。
 
-## 编排 Skill：full-company-analysis
+## 编排 Skill：full-company-analysis-workbuddy
 
-`full-company-analysis` 是 WorkBuddy 生产入口，不是额外的业务分析方法。它按 Contract 调度 13 个业务单元，并强制执行以下闭环：
+`full-company-analysis-workbuddy` 是 WorkBuddy 生产入口，不是额外的业务分析方法。它按 Contract 调度 13 个业务单元，并强制执行以下闭环：
 
 1. `start` 创建运行目录、预算、授权信封和 13 个 work unit。
 2. `next-work` 租约注入完整方法论；独立 Agent 写入 attempt 目录。

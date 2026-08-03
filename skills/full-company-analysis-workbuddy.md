@@ -1,6 +1,6 @@
 ---
 name: full-company-analysis-workbuddy
-description: WorkBuddy 专用单公司全量分析适配器。对一家公司执行 13 业务 skill 端到端全量研究（波次调度→审计→语义评审→finalize）。触发词：全量分析 <公司名>、/full-company-analysis <公司名>、全量跑 <公司名>。由 WorkBuddy 原生 Agent 执行真实研究，Runtime 只负责租约、预算与恢复，Gate 负责确定性验收。
+description: WorkBuddy 专用单公司全量分析适配器。对一家公司执行 13 业务 skill 端到端全量研究（波次调度→审计→语义评审→finalize）。触发词：全量分析 <公司名>、/full-company-analysis-workbuddy <公司名>、全量跑 <公司名>。由 WorkBuddy 原生 Agent 执行真实研究，Runtime 只负责租约、预算与恢复，Gate 负责确定性验收。
 platform: workbuddy
 registry-schema: full-analysis-contract/v2
 result-schema: result-schema/v1
@@ -12,7 +12,7 @@ review-cadence: per-release
 
 # WorkBuddy 全量公司分析适配器
 
-> **Runtime 说明**：本 skill 为 WorkBuddy 原生编排器（`platform: workbuddy`），使用 WorkBuddy 原生 Agent/Task 工具 + `full_analysis.py` Runtime。其他 skills-compatible runtime（Claude Code / Codex / Cursor 等）可将 `codex-skills/` 副本作为参考工作流（租约/预算/Gate 机制须替换为对应 Runtime 等价物）。WorkBuddy 编排真源为仓库 `skills/full-company-analysis.md`。
+> **Runtime 说明**：本 skill 为 WorkBuddy 原生编排器（`platform: workbuddy`），使用 WorkBuddy 原生 Agent/Task 工具 + `full_analysis.py` Runtime。其他 skills-compatible runtime（Claude Code / Codex / Cursor 等）可将 `codex-skills/` 副本作为参考工作流（租约/预算/Gate 机制须替换为对应 Runtime 等价物）。WorkBuddy 编排真源为仓库 `skills/full-company-analysis-workbuddy.md`。
 
 这是生产入口，不是第二套业务编排器。它只服务"一家公司、一次完整运行"；`industry-funnel` 仍可在该公司上下文中执行其行业漏斗任务，不改变单公司边界。租约和预算的实现位于 `tools/full_analysis_runtime.py`，正式状态只由 `tools/full_analysis_gate.py` 写入。
 
@@ -24,7 +24,7 @@ review-cadence: per-release
 2. **版本校验（E1，强制）**：执行仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）。**机器门禁（v3.4.4 起）**：`start` 命令内置 `_git_stale_check()`——HEAD 落后于最新发版 tag 时**拒绝启动**（`E1 版本门禁`），须先 `git checkout <最新tag>` 或显式 `--allow-stale` 覆盖。文档自查命令（与门禁互补，查未提交改动）：
 
 ```bash
-cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py skills/full-company-analysis.md && git log -1 --oneline && git tag --list "v*" | sort -V | tail -1
+cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py skills/full-company-analysis-workbuddy.md && git log -1 --oneline && git tag --list "v*" | sort -V | tail -1
 ```
 
    - **预期 tag 来源（动态，v3.4.4 修正）**：预期版本 = `git tag --list "v*" | sort -V | tail -1`（最新发版 tag），**不硬编码具体版本号**——文档出现具体 tag 示例即视为过期。对比 `git log -1` 的 HEAD 与最新 tag：HEAD 落后（非最新 tag 祖先）即 checkout 过期，机器门禁拒绝；`--allow-stale` 仅用于人工确认目标版本无误的场景。
@@ -39,7 +39,7 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
-5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`（Gate 硬编码 `26`，与 13 项契约对应；文档数字仅作人读参考，以代码值为准）。`used` 在 preflight 与 job-started 时递增（summary/review 不计入 used）。数量异常视为版本错配，停止并核对。
+5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`。其唯一机器真源在 Gate `cmd_init`：`normal_target = 2 × 契约单元数`（当前 13 单元 → 26，即全员一次成功 + 一轮全员返工余量）。它只是启动时的版本错配核对信号，无运行时阻断逻辑；派发阻断由 `stop_dispatch_at`（软停非 core）与 `hard_max`（硬停全部）承担。`used` 仅在 preflight 与 job-started 时递增（summary/review 不计入 used）。数量异常视为版本错配，停止并核对。
 6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
 ## Agent 调度纪律

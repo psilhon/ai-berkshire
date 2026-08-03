@@ -3632,7 +3632,7 @@ def cmd_anomaly_pool(trade_date: str = None):
 # CLI 层的可执行投影。决策记录见 docs/ashare-data-tiered-upgrade-plan.md。
 #
 # 两条硬约束（勿回退）：
-#   1. 不提供 --level core。L1 CORE 由 full-company-analysis 编排器的 feeds
+#   1. 不提供 --level core。L1 CORE 由 full-company-analysis-workbuddy 编排器的 feeds
 #      映射按公司动态决定（实测 12–27 条），封装成固定清单会造成静默降级。
 #   2. run-level 只服务 standalone 快查，不进主管线。主管线走 gate 的
 #      run-ashare-command 逐条执行并冻结收据，命令级血缘一条都不能塌缩。
@@ -3663,7 +3663,7 @@ LEVEL_PENDING_LAYERS = {
 
 _CORE_REJECTION = (
     "run-level 不提供 --level core。\n"
-    "  L1 CORE 由 full-company-analysis 编排器的 feeds 映射动态决定"
+    "  L1 CORE 由 full-company-analysis-workbuddy 编排器的 feeds 映射动态决定"
     "（实测 12–27 条命令，随公司变化），\n"
     "  把它封装成一份固定清单会导致取数静默降级，并使命令级血缘塌缩。\n"
     "  管线取数请走 gate 的 run-ashare-command 逐条执行并冻结收据；\n"
@@ -3749,7 +3749,7 @@ def cmd_run_level(target: str, level: str = "quick"):
     print("=" * 60)
     print(f"取数级别: {LEVEL_LABELS[normalized]}")
     print("=" * 60)
-    print("⚠️ 本命令仅服务 standalone 快查，不用于 full-company-analysis 主管线。")
+    print("⚠️ 本命令仅服务 standalone 快查，不用于 full-company-analysis-workbuddy 主管线。")
     print("   管线取数走 gate 的 run-ashare-command 逐条执行并冻结收据。")
     if normalized != "quick":
         print("   L1 层由编排器 feeds 映射驱动，standalone 不可复现，本命令不代跑。")
@@ -4065,7 +4065,7 @@ def main():
     p_idxval.add_argument("index", nargs="?", default="hs300",
                           help="指数别名 hs300/zz500/sse/cyb… 或指数代码，默认 hs300")
 
-    # 取数级别串跑（仅 standalone 快查，不进 full-company-analysis 主管线）
+    # 取数级别串跑（仅 standalone 快查，不进 full-company-analysis-workbuddy 主管线）
     p_level = sub.add_parser(
         "run-level",
         help="按取数级别串跑已就位命令（standalone 快查专用，不支持 core）",

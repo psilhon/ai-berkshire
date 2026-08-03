@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CODEX_INSTALL = ROOT / "scripts" / "install-codex-skills.sh"
 CLAUDE_INSTALL = ROOT / "scripts" / "install-claude-commands.sh"
-SKILL_NAME = "full-company-analysis"
+SKILL_NAME = "full-company-analysis-workbuddy"
 
 
 def run_script(script, *args, env_extra=None):

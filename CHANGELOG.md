@@ -5,6 +5,25 @@
 
 ---
 
+## [v3.4.9] — 2026-08-03
+
+> review 二轮修复：改名全链路闭环 / E1 真 fail-close（--allow-stale 注册） / 契约最小 diff / normal_target 机器派生 / 校验器收紧
+
+### 🔧 变更 (Changed)
+- **改名闭环（全链路）**：`full-company-analysis` → `full-company-analysis-workbuddy` 在文件名、触发词、codex 生成目录、workbuddy-skills 目录、安装脚本、测试引用、ashare_data 注释、用户级 sync 脚本 EXCLUDE 全部落地；旧目录删除。三副本 SHA-256 一致。
+- **E1 真 fail-close**：`stale=None` 不再 WARN 放行，与 `stale=True` 一样 `GateError` 拒绝（注释与实现矛盾消除）；`--allow-stale` 参数正式注册到 argparse（此前文档宣称存在但从未注册）。
+- **契约最小 diff**：恢复 v3.4.7 原始紧凑格式（撤销 json.dump 重排），仅保留 `bottleneck-hunter` / `news-pulse` 两行依赖追加，末尾换行恢复。
+- **normal_target 机器派生**：`26` 魔数改为 `2 × len(registry["skills"])`（13 → 26），唯一真源在 Gate `cmd_init`；注释说明严格语义（全员一次成功 + 一轮返工余量）与阻断职责归属（stop_dispatch_at 软 / hard_max 硬）。
+- **frontmatter 校验器收紧**：`-workbuddy` 后缀放行须同时声明 `platform: workbuddy`，不再无条件放宽。
+- `.gitignore` 新增 `.superpowers/`（工具私有状态目录）。
+
+### ✅ 测试
+- 新增 `test_init_fail_close_on_stale_none_and_true`（mock 三态 × GateError 断言）
+- `test_start_initializes_budget_and_counts_preflight_once` 补 `normal_target = 2 × units` 断言
+- check.sh 全绿（含 frontmatter 收紧校验 + sync --check）
+
+---
+
 ## [v3.4.8] — 2026-08-03
 
 > P1 四件修复：改名 runtime-gate / 契约 W4 机器强制 / E1 全路径 fail-close / budget 语义对齐
@@ -13,7 +32,7 @@
 
 - **改名**：`name: full-company-analysis` → `full-company-analysis-workbuddy`。Darwin runtime-neutrality gate 要求名称绑定平台。
 - **契约 W4 依赖**：`bottleneck-hunter` / `news-pulse` 增加 `industry-funnel` 契约依赖。波次拓扑 5→6（W4a funnel 单独 → W4b bottleneck+news），**Runtime 机器强制** W4a→W4b 序次，不再仅靠文档纪律。
-- **E1 全路径 fail-close**：`git rev-parse HEAD` 失败时 `stale=False`（静默放行）→ `stale=None`（WARN）。三态完整：True 拒绝 / False 放行 / None WARN。
+- **E1 路径收口（部分）**：`git rev-parse HEAD` 失败时 `stale=False`（静默放行）→ `stale=None`（WARN）。当时 `stale=None` 仍放行，未达成 fail-close；真 fail-close 与 `--allow-stale` 注册见 v3.4.9。
 - **budget 语义**：移除虚假公式（`13×2+preflight`）；明确 `used` 仅在 preflight 与 job-started 递增，不含 summary/review。
 
 ### 📝 文档修正

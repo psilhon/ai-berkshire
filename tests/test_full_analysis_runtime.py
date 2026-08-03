@@ -109,6 +109,8 @@ class RuntimeTests(unittest.TestCase):
         state = self.state()
         self.assertEqual(state["budget"]["hard_max"], 33)
         self.assertEqual(state["budget"]["stop_dispatch_at"], 30)
+        # v3.4.9：normal_target 机器派生 = 2 × 契约单元数（13 → 26），非魔数
+        self.assertEqual(state["budget"]["normal_target"], 2 * len(state["work_units"]))
         self.assertEqual(state["budget"]["used"], 1)
         self.assertEqual(state["budget"]["preflight_count"], 1)
         self.assertEqual(len(state["work_units"]), 13)

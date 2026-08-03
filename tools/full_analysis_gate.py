@@ -176,7 +176,10 @@ def _git_stale_check() -> dict:
     """检测仓库 checkout 是否过期（HEAD 落后于最新发版 tag）。
 
     返回 {"stale": bool|None, "head": str, "head_tag": str|None, "latest_tag": str|None, "detail": str}。
-    stale=True 拒绝启动；stale=False 放行；stale=None（不可判定）WARN 不阻断。
+    三态语义（v3.4.9 起 cmd_init 对 True 与 None 均拒绝，即 fail-close）：
+    stale=False 放行（HEAD 为最新 tag 或领先）；stale=True 拒绝（HEAD 落后）；
+    stale=None 拒绝（无 git 环境/无 tag/命令异常，不可判定）。
+    唯一放行路径是显式 --allow-stale（人工确认目标版本无误后覆盖）。
     """
     repo = Path(__file__).resolve().parents[1]
     try:
@@ -615,16 +618,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     if dep_cycle:
         raise GateError(f"contract depends_on 存在依赖环: {' -> '.join(dep_cycle)}", 2)
     dep_waves = runtime_mod.compute_dependency_waves(dep_graph)
-    # v3.4.4：start 版本机器门禁（E1 机器化）——干净但过期的 checkout 不得启动新 run。
+    # v3.4.4：start 版本机器门禁（E1 机器化）——不确定或过期的 checkout 不得启动新 run。
     # 仅当显式 --allow-stale 才放行（人工确认目标版本后覆盖）。
     if not getattr(args, "allow_stale", False):
         stale = _git_stale_check()
-        if stale["stale"]:
+        if stale["stale"] is not False:  # True 落后 or None 不可判定 → 拒绝
+            reason = stale["detail"]
+            hint = f"（git checkout {stale['latest_tag']}）" if stale.get("latest_tag") else ""
             raise GateError(
-                f"E1 版本门禁：{stale['detail']}；请先切到最新发版 tag "
-                f"（git checkout {stale['latest_tag']}）再启动；确认目标版本无误可用 --allow-stale 覆盖", 2)
-        if stale["stale"] is None:
-            print(f"[E1] WARN: {stale['detail']}——版本门禁未生效，依赖文档纪律兜底", file=sys.stderr)
+                f"E1 版本门禁：{reason}{hint}；"
+                f"确认目标版本无误可用 --allow-stale 覆盖", 2)
     root = Path(args.run_root) if args.run_root else build_run_root(Path(args.repo_root), args.code, args.company)
     if root.exists() and any(root.iterdir()):
         raise GateError(f"run_root 已存在且非空: {root}", 2)
@@ -656,11 +659,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         "capabilities": {}, "events": [], "delivery": {"summary": None},
     }
     atomic_write_json(root / MANIFEST_REL, manifest)
+    # v3.4.9：normal_target 唯一机器真源 = 2 × 契约单元数（13 单元 → 26）：
+    # 全员一次成功（13）+ 一轮全员返工余量（13）。仅作编排器启动时的版本错配
+    # 核对信号，无运行时阻断逻辑——派发阻断由 stop_dispatch_at（软）与 hard_max（硬）承担。
+    # 历史口径（work+summary+preflight 各计一次）已废弃：summary/review 不计入 used，
+    # used 仅在 preflight 与 job-started 时递增。
+    budget_normal_target = 2 * len(registry["skills"])
     atomic_write_json(root / RUNTIME_STATE_REL, {
         "state_version": "runtime-state/v1",
         "run_id": run_id,
         "budget": {
-            "normal_target": 26, "stop_dispatch_at": 30, "hard_max": 33,
+            "normal_target": budget_normal_target, "stop_dispatch_at": 30, "hard_max": 33,
             "used": 0, "preflight_count": 0, "reserved": 0,
         },
         "concurrency": {"max": 4, "current": 0, "cooldown_until": None},
@@ -1569,6 +1578,10 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--as-of", required=True)
     init.add_argument("--platform", choices=["workbuddy"], required=True)
     init.add_argument("--run-root")
+    init.add_argument(
+        "--allow-stale", action="store_true", default=False,
+        help="人工确认目标版本无误后，覆盖 E1 版本门禁（stale=True/None 均拒绝，仅此开关放行）",
+    )
     ingest = sub.add_parser("ingest-result")
     ingest.add_argument("--run-root", required=True)
     ingest.add_argument("--registry", default=DEFAULT_REGISTRY)

@@ -6,6 +6,8 @@ __pycache__/
 .worktrees/
 /tmp/
 logs/command-log.jsonl
+# Superpowers 工具私有状态目录（本地使用，不入库）
+.superpowers/
 # 雪球爬虫登录态缓存（含 cookies，本地使用）
 /tmp/xueqiu_state.json
 

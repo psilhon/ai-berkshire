@@ -225,7 +225,7 @@ python3 scripts/full_analysis.py start \
 
 | Skill | 用途 | 适合场景 |
 |-------|------|---------|
-| [`/full-company-analysis`](skills/full-company-analysis.md) | 13 项单公司全量分析 | 需要 Runtime、Gate、Audit、Review 和总结报告完整闭环 |
+| [`/full-company-analysis-workbuddy`](skills/full-company-analysis-workbuddy.md) | 13 项单公司全量分析 | 需要 Runtime、Gate、Audit、Review 和总结报告完整闭环 |
 
 ---
 
@@ -352,7 +352,7 @@ cd ai-berkshire
 /financial-data 腾讯
 
 # 单公司全量分析
-/full-company-analysis 格力电器 000651.SZ
+/full-company-analysis-workbuddy 格力电器 000651.SZ
 ```
 
 在 Codex 中安装后重启 Codex，然后直接按 skill 名称描述任务，例如：
@@ -362,7 +362,7 @@ cd ai-berkshire
 使用 earnings-review 分析 PDD 2025年报
 使用 industry-funnel 筛选 AI算力
 使用 bottleneck-hunter 扫描 AI基础设施瓶颈
-使用 full-company-analysis 完整研究格力电器
+使用 full-company-analysis-workbuddy 完整研究格力电器
 ```
 
 如果安装了 Codex slash prompts，重启 Codex 后也可以在 `/` 菜单里搜索这些 prompt。Codex 官方的 custom prompt 入口通常显示为 `prompts:<name>`，例如：

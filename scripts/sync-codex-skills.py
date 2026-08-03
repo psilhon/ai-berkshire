@@ -11,8 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE_SKILLS = ROOT / "skills"
 CODEX_SKILLS = ROOT / "codex-skills"
-WORKBUDDY_SOURCE = CLAUDE_SKILLS / "full-company-analysis.md"
-WORKBUDDY_TARGET = ROOT / "workbuddy-skills/full-company-analysis/SKILL.md"
+WORKBUDDY_SOURCE = CLAUDE_SKILLS / "full-company-analysis-workbuddy.md"
+WORKBUDDY_TARGET = ROOT / "workbuddy-skills/full-company-analysis-workbuddy/SKILL.md"
 
 
 def split_frontmatter(text: str) -> tuple[str | None, str]:

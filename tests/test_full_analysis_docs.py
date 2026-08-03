@@ -10,8 +10,8 @@ ACTIVE_DOCS = (
     REPO / "README.md",
     REPO / "CLAUDE.md",
     REPO / "SKILLS-GUIDE.md",
-    REPO / "skills/full-company-analysis.md",
-    REPO / "workbuddy-skills/full-company-analysis/SKILL.md",
+    REPO / "skills/full-company-analysis-workbuddy.md",
+    REPO / "workbuddy-skills/full-company-analysis-workbuddy/SKILL.md",
 )
 REMOVED_SKILLS = (
     "deep-company-series",
@@ -46,7 +46,7 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
 
     def test_full_analysis_workflow_registers_summary_before_audit(self):
         text = (
-            REPO / "skills/full-company-analysis.md"
+            REPO / "skills/full-company-analysis-workbuddy.md"
         ).read_text(encoding="utf-8")
         register_at = text.index("register-summary")
         audit_at = text.index(" audit --run-root", register_at)

@@ -949,7 +949,7 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             ashare_data.cmd_run_level("600519", "quick")
         text = out.getvalue()
-        self.assertIn("不用于 full-company-analysis 主管线", text)
+        self.assertIn("不用于 full-company-analysis-workbuddy 主管线", text)
         self.assertIn("run-ashare-command", text)
 
     # --- 逐条呈现，不聚合 --------------------------------------------------
