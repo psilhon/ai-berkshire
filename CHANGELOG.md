@@ -5,6 +5,21 @@
 
 ---
 
+## [v3.4.4] — 2026-08-03
+
+> 修复目标轴四问题（review 发现：W3/W4 错峰未接线 + E1 非机器门禁 + budget 残留/倒置 + event-log 空 note/TSV 格式）
+
+### 🐛 修复 (Fixed)
+- **W3/W4 错峰未真正接线（HIGH）**：生产文档第 43 行仍循环调用裸 `next-work`，未传 `--allowlist`。本版文档给出逐字命令序列（W3a `--allowlist investment-team,earnings-review` → W3b `--allowlist management-deep-dive,industry-research` → W4a `--allowlist industry-funnel` → W4b `--allowlist bottleneck-hunter,news-pulse`），并明确「W3a 全 DONE 前不得领 W3b」屏障。新增测试 `test_w3b_not_leased_until_w3a_done` 钉住「屏障靠编排纪律」语义（allowlist 不越依赖，W3b 依赖满足即就绪，须由编排器遵守领取顺序）。
+- **E1 仍非「过期 checkout 阻断」（HIGH）**：`start` 新增机器门禁 `_git_stale_check()`——HEAD 落后于最新 `v*` tag 时拒绝启动（`E1 版本门禁`），显式 `--allow-stale` 覆盖；git 异常降级为 `stale=None` → WARN 不静默。文档预期 tag 改动态获取（`git tag --list "v*" | sort -V | tail -1`），不硬编码版本号（文档出现具体 tag 示例即视为过期）。新增 5 个单元测试。
+- **预算继续分支状态残留（MEDIUM）**：`budget-adjust` 成功后清除 `PARTIAL_REPORT.md`/`SUMMARY.md`（返回 `cleared_partial`，记入 events.jsonl）；新增交叉校验 `stop_dispatch_at < hard_max`（拒绝 `stop=133/hard=33` 倒置配置）。
+- **人工复核与证据账本不严谨（MEDIUM）**：`event-log` 的 `--note` 必填非空（复核结论不可留空）；`skills/.darwin-results.tsv` 第 6/11 行补 `eval_mode` 列恢复 9 列格式。
+
+### ✅ 测试
+- 新增 6 个回归测试（W3b 屏障 / stale check×5 场景）；runtime 34 + gate 5 tests OK，check.sh 全绿，三副本 SHA-256 一致。
+
+---
+
 ## [v3.4.3] — 2026-08-03
 
 > 三关键问题修复（review 发现：W3 错峰 Runtime 不可实现 + full-test 归因勘误 + CHECKPOINT 闭环）
