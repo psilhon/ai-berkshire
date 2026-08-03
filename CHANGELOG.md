@@ -5,6 +5,21 @@
 
 ---
 
+## [v3.4.7] — 2026-08-03
+
+> review 修复：normal_target 算术 / E1 fail-open / codex 真源 / W4 屏障 / review ingest / job-started 措辞
+
+### 🐛 修复 (Fixed)
+- **normal_target**：移除错误公式 `13×2+preflight`（27≠26），改为「代码硬编码 26」+ 以 Gate 为准。
+- **E1 门禁 fail-open**：`git tag --list` 返回空时 `stale=False` 静默放行 → `stale=None` 触发 WARN。
+- **codex 副本 Runtime 说明**：不再声称「本文件是 WorkBuddy 真源」→「WorkBuddy 编排真源为仓库 `skills/full-company-analysis.md`」。
+- **W4a→W4b 屏障**：禁-3 扩充为含 funnel 序次（W4a 单独跑完成后才领 W4b）。
+- **收口步骤 C**：补充 `review ingest`（prepare 后为每个 skill 逐个 ingest 再 summarize）。
+- **job-started 措辞**：「Agent 返回后」→「Agent 派发工具返回 `agent_job_id` 后」（防误解为任务完成）。
+- **[禁-N] 交叉索引**：移除「正文标注 `[禁-N]`」声明（实际 0 个），改为「原文位置列指向对应章节」。
+
+---
+
 ## [v3.4.6] — 2026-08-03
 
 > review 修复：Standards（清单去重补漏/禁-3窄化/round对齐/Runtime声明）+ Spec（硬编码/TSV损坏/时序矛盾/normal_target口径）
