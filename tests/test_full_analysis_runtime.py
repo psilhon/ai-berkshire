@@ -292,12 +292,63 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(result["status"], "LEASED")
         self.assertEqual(result["skill_id"], "management-deep-dive")
 
+    def test_w3b_not_leased_until_w3a_done(self):
+        # v3.4.4 fix（HIGH）：W3 错峰屏障——W3b（management-deep-dive+industry-research）
+        # 只能在 W3a（investment-team+earnings-review）全部 DONE 后领取。
+        # allowlist 只限制本轮可领集合，不越过依赖；W3b 单元依赖（W2）已满足时就绪，
+        # 因此「W3a 全 DONE 前不得领 W3b」必须由编排纪律执行——本测试钉住该语义：
+        # ① W3a 未 DONE 时 W3b 单元确实就绪（证明屏障只能靠编排，不能靠 runtime）；
+        # ② W3a 全部 DONE 后，W3b allowlist 可正常收齐。
+        self.start()
+        for skill in ("ashare-data", "financial-data", "quality-screen",
+                      "investment-checklist", "investment-research"):
+            self._set_unit_done(skill)
+        # 领出 W3a 两单元（不 DONE）
+        w3a = []
+        for _ in range(5):
+            result = json.loads(self.cli(
+                "next-work", "--run-root", self.run_root,
+                "--allowlist", "investment-team,earnings-review").stdout)
+            if result["status"] == "LEASED":
+                w3a.append(result["skill_id"])
+            else:
+                break
+        self.assertEqual(set(w3a), {"investment-team", "earnings-review"})
+        # ① 编排器若误用 W3b allowlist（W3a 未 DONE），W3b 单元因依赖已满足而就绪——
+        #    证明屏障必须由编排纪律执行（文档「W3a 全 DONE 后领 W3b」是硬前置条件）
+        leaked = json.loads(self.cli(
+            "next-work", "--run-root", self.run_root,
+            "--allowlist", "management-deep-dive,industry-research").stdout)
+        self.assertEqual(leaked["status"], "LEASED")
+        self.assertIn(leaked["skill_id"],
+                      {"management-deep-dive", "industry-research"})
+        # ② 正确顺序：W3a 全部 DONE 后，W3b allowlist 收齐剩余单元
+        for sid in w3a:
+            self._set_unit_done(sid)
+        # 上面误领了一个 W3b 单元，先把它也 DONE，再验证 W3b 可完整收齐
+        self._set_unit_done(leaked["skill_id"])
+        w3b = []
+        for _ in range(5):
+            result = json.loads(self.cli(
+                "next-work", "--run-root", self.run_root,
+                "--allowlist", "management-deep-dive,industry-research").stdout)
+            if result["status"] == "LEASED":
+                w3b.append(result["skill_id"])
+            else:
+                break
+        self.assertEqual(len(w3b), 1)  # 剩余 1 个 W3b 单元
+        self.assertIn(w3b[0], {"management-deep-dive", "industry-research"})
+        self.assertNotEqual(w3b[0], leaked["skill_id"])
+
     def test_budget_adjust_only_raises_and_logs_event(self):
         # v3.4.2 fix（MEDIUM）：budget 触顶 CHECKPOINT 的「调高预算继续」需要 CLI 闭环。
         self.start()
         state = self.state()
         old_stop = state["budget"]["stop_dispatch_at"]
         old_hard = state["budget"]["hard_max"]
+        # 先模拟触顶产生的 PARTIAL 残留（v3.4.4：budget-adjust 成功后须清除）
+        (self.run_root / "PARTIAL_REPORT.md").write_text("stale")
+        (self.run_root / "SUMMARY.md").write_text("stale")
         # 上调 hard_max + stop_dispatch_at
         result = self.cli("budget-adjust", "--run-root", self.run_root,
                           "--stop-dispatch-at", str(old_stop + 10),
@@ -306,18 +357,27 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         body = json.loads(result.stdout)
         self.assertEqual(body["status"], "OK")
+        # v3.4.4：PARTIAL 残留已清除
+        self.assertIn("cleared_partial", body)
+        self.assertFalse((self.run_root / "PARTIAL_REPORT.md").exists())
+        self.assertFalse((self.run_root / "SUMMARY.md").exists())
         state = self.state()
         self.assertEqual(state["budget"]["stop_dispatch_at"], old_stop + 10)
         self.assertEqual(state["budget"]["hard_max"], old_hard + 10)
         # 事件已写入 events.jsonl
         evs = (self.run_root / "evidence/events.jsonl").read_text()
         self.assertIn("budget_adjusted", evs)
+        # 倒置配置被拒（v3.4.4）：stop_dispatch_at >= hard_max 时拒绝
+        inverted = self.cli("budget-adjust", "--run-root", self.run_root,
+                            "--stop-dispatch-at", "133", "--hard-max", "33")
+        self.assertNotEqual(inverted.returncode, 0)
+        self.assertIn("倒置", inverted.stdout + inverted.stderr)
         self.assertIn("人工调高预算继续", evs)
-        # 下调被拒（防静默降标）
+        # 下调被拒（防静默降标）——old_hard=33 < old_stop+10=40，先命中倒置校验
         down = self.cli("budget-adjust", "--run-root", self.run_root,
                         "--hard-max", str(old_hard))
         self.assertNotEqual(down.returncode, 0)
-        self.assertIn("只能上调", down.stdout + down.stderr)
+        self.assertIn("倒置", down.stdout + down.stderr)
 
     def test_event_log_writes_whitelisted_kind(self):
         # v3.4.2 fix（MEDIUM）：doctor CHECKPOINT 人工结论需要受支持的 events.jsonl 写入入口。
@@ -335,6 +395,11 @@ class RuntimeTests(unittest.TestCase):
                        "--kind", "arbitrary_injection", "--note", "x")
         self.assertNotEqual(bad.returncode, 0)
         self.assertIn("invalid choice", bad.stderr)
+        # 空 note 被拒（v3.4.4）：复核结论不可留空
+        empty = self.cli("event-log", "--run-root", self.run_root,
+                         "--kind", "doctor_checkpoint", "--note", "")
+        self.assertNotEqual(empty.returncode, 0)
+        self.assertIn("必填", empty.stdout + empty.stderr)
 
     def test_hard_budget_blocks_new_job_at_fifty(self):
         self.start()

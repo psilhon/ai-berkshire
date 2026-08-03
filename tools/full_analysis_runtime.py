@@ -220,12 +220,20 @@ def budget_adjust(run_root: Path, *, stop_dispatch_at: int | None = None,
                   hard_max: int | None = None, reason: str = "") -> dict:
     """调高派发预算（budget 触顶 CHECKPOINT 的「调高预算继续」分支）。
 
-    只允许上调（防静默降标）；调整结果写入 events.jsonl 可追溯。
+    只允许上调（防静默降标），且强制 stop_dispatch_at < hard_max（防倒置配置）；
+    调整成功后清除 PARTIAL_REPORT.md/SUMMARY.md（恢复派发后不得残留 PARTIAL 状态声明），
+    调整结果写入 events.jsonl 可追溯。
     """
     with runtime_lock(run_root):
         state = load_state(run_root)
         budget = state["budget"]
         changes: dict[str, tuple[int, int]] = {}
+        # 先求生效后的值，统一做交叉校验（防 stop=133/hard=33 倒置）
+        new_stop = stop_dispatch_at if stop_dispatch_at is not None else budget.get("stop_dispatch_at", 0)
+        new_hard = hard_max if hard_max is not None else budget.get("hard_max", 0)
+        if new_stop >= new_hard:
+            raise RuntimeErrorState(
+                f"预算配置倒置：stop_dispatch_at({new_stop}) 必须 < hard_max({new_hard})")
         if stop_dispatch_at is not None:
             if stop_dispatch_at <= budget.get("stop_dispatch_at", 0):
                 raise RuntimeErrorState(
@@ -242,11 +250,20 @@ def budget_adjust(run_root: Path, *, stop_dispatch_at: int | None = None,
             changes["hard_max"] = (old, hard_max)
         if not changes:
             raise RuntimeErrorState("budget-adjust 至少提供 stop_dispatch_at 或 hard_max 之一")
+        # 清除 PARTIAL 残留：预算恢复派发后，PARTIAL_REPORT.md/SUMMARY.md 不得继续宣称 PARTIAL
+        cleared = []
+        for stale in (PARTIAL_REPORT, SUMMARY_REPORT):
+            p = Path(run_root) / stale
+            if p.exists():
+                p.unlink()
+                cleared.append(stale)
         save_state(run_root, state)
         event(run_root, "budget_adjusted",
               **{k: {"from": v[0], "to": v[1]} for k, v in changes.items()},
-              reason=reason or "budget 触顶人工调高")
-        return {"status": "OK", "adjusted": {k: {"from": v[0], "to": v[1]} for k, v in changes.items()}}
+              reason=reason or "budget 触顶人工调高",
+              cleared_partial=cleared)
+        return {"status": "OK", "adjusted": {k: {"from": v[0], "to": v[1]} for k, v in changes.items()},
+                "cleared_partial": cleared}
 
 
 def log_event(run_root: Path, *, kind: str, note: str = "") -> dict:
@@ -258,9 +275,11 @@ def log_event(run_root: Path, *, kind: str, note: str = "") -> dict:
     if kind not in allowed:
         raise RuntimeErrorState(
             f"event-log 类型 {kind!r} 不在白名单 {sorted(allowed)} 内，请用受支持类型")
+    if not note or not note.strip():
+        raise RuntimeErrorState(f"event-log --note 必填且非空（{kind} 的结论/说明不可留空）")
     with runtime_lock(run_root):
-        event(run_root, kind, note=note, source="orchestrator")
-        return {"status": "OK", "kind": kind, "note": note}
+        event(run_root, kind, note=note.strip(), source="orchestrator")
+        return {"status": "OK", "kind": kind, "note": note.strip()}
 
 
 def initialize(run_root: Path) -> dict:

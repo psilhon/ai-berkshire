@@ -51,6 +51,9 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--code", required=True)
     start.add_argument("--as-of", required=True)
     start.add_argument("--run-root")
+    # v3.4.4：E1 机器门禁——HEAD 落后于最新发版 tag 时拒绝启动；显式 --allow-stale 覆盖
+    start.add_argument("--allow-stale", action="store_true",
+                       help="跳过 E1 版本门禁（HEAD 落后于最新 tag 时仍启动，仅确认目标版本后使用）")
     for name in ("status", "resume"):
         cmd = sub.add_parser(name, help=f"{name} 运行"); cmd.add_argument("--run-root", required=True)
     cleanup = sub.add_parser("cleanup", help="只读清理预览")

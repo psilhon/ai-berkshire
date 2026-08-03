@@ -172,6 +172,51 @@ def _git_head_commit() -> str | None:
         return None
 
 
+def _git_stale_check() -> dict:
+    """检测仓库 checkout 是否过期（HEAD 落后于最新发版 tag）。
+
+    返回 {"stale": bool, "head": str, "head_tag": str|None, "latest_tag": str|None, "detail": str}。
+    无 git 环境 / 无 tag 时视为不可判定（stale=False），由 E1 文档纪律兜底。
+    """
+    repo = Path(__file__).resolve().parents[1]
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                              timeout=5, cwd=repo)
+        if head.returncode != 0:
+            return {"stale": False, "head": "", "head_tag": None, "latest_tag": None,
+                    "detail": "无 git 环境，跳过版本门禁"}
+        head_sha = head.stdout.strip()
+        # HEAD 是否恰为某 tag（精确匹配）
+        exact = subprocess.run(["git", "describe", "--tags", "--exact-match", "HEAD"],
+                               capture_output=True, text=True, timeout=5, cwd=repo)
+        head_tag = exact.stdout.strip() if exact.returncode == 0 else None
+        # 最新发版 tag（语义化排序）
+        tags = subprocess.run(["git", "tag", "--list", "v*"],
+                              capture_output=True, text=True, timeout=5, cwd=repo)
+        tag_list = [t for t in tags.stdout.split() if t]
+        if not tag_list:
+            return {"stale": False, "head": head_sha, "head_tag": head_tag,
+                    "latest_tag": None, "detail": "仓库无 v* tag，跳过版本门禁"}
+        latest = sorted(tag_list, key=lambda t: [int(x) for x in t.lstrip("v").split(".")])
+        latest_tag = latest[-1]
+        if head_tag == latest_tag:
+            return {"stale": False, "head": head_sha, "head_tag": head_tag,
+                    "latest_tag": latest_tag, "detail": f"HEAD 恰为最新发版 tag {latest_tag}"}
+        # HEAD 未精确命中最新 tag：检查 HEAD 是否可到达 latest_tag（即落后于它）
+        is_ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", latest_tag, "HEAD"],
+            capture_output=True, text=True, timeout=5, cwd=repo)
+        if is_ancestor.returncode == 0:
+            return {"stale": False, "head": head_sha, "head_tag": head_tag,
+                    "latest_tag": latest_tag, "detail": f"HEAD 包含最新 tag {latest_tag}（领先或平级）"}
+        return {"stale": True, "head": head_sha, "head_tag": head_tag,
+                "latest_tag": latest_tag,
+                "detail": f"HEAD({head_sha[:8]}) 落后于最新发版 tag {latest_tag}：checkout 过期"}
+    except Exception as exc:  # 检测异常：不静默放行，标记不确定由调用方决定
+        return {"stale": None, "head": "", "head_tag": None, "latest_tag": None,
+                "detail": f"版本检测异常跳过: {exc}"}
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -570,6 +615,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     if dep_cycle:
         raise GateError(f"contract depends_on 存在依赖环: {' -> '.join(dep_cycle)}", 2)
     dep_waves = runtime_mod.compute_dependency_waves(dep_graph)
+    # v3.4.4：start 版本机器门禁（E1 机器化）——干净但过期的 checkout 不得启动新 run。
+    # 仅当显式 --allow-stale 才放行（人工确认目标版本后覆盖）。
+    if not getattr(args, "allow_stale", False):
+        stale = _git_stale_check()
+        if stale["stale"]:
+            raise GateError(
+                f"E1 版本门禁：{stale['detail']}；请先切到最新发版 tag "
+                f"（git checkout {stale['latest_tag']}）再启动；确认目标版本无误可用 --allow-stale 覆盖", 2)
+        if stale["stale"] is None:
+            print(f"[E1] WARN: {stale['detail']}——版本门禁未生效，依赖文档纪律兜底", file=sys.stderr)
     root = Path(args.run_root) if args.run_root else build_run_root(Path(args.repo_root), args.code, args.company)
     if root.exists() and any(root.iterdir()):
         raise GateError(f"run_root 已存在且非空: {root}", 2)

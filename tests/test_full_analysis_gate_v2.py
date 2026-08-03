@@ -989,5 +989,75 @@ class GateV2Tests(unittest.TestCase):
         self.assertIn("2 处问题", combined)             # 聚合计数
 
 
+class StaleCheckTests(unittest.TestCase):
+    """v3.4.4：E1 机器门禁 _git_stale_check 的四种场景。"""
+
+    @staticmethod
+    def _mock_git(results):
+        calls = iter(results)
+
+        def fake_run(cmd, **kw):
+            rc, out = next(calls)
+            return mock.Mock(returncode=rc, stdout=out)
+
+        return mock.patch("full_analysis_gate.subprocess.run", side_effect=fake_run)
+
+    def test_head_is_latest_tag_not_stale(self):
+        from full_analysis_gate import _git_stale_check
+        with self._mock_git([
+            (0, "abc123\n"),                                # rev-parse HEAD
+            (0, "v3.4.3\n"),                                # describe exact-match
+            (0, "v3.3.1\nv3.4.1\nv3.4.2\nv3.4.3\n"),        # tag list
+        ]):
+            r = _git_stale_check()
+        self.assertFalse(r["stale"])
+        self.assertEqual(r["head_tag"], "v3.4.3")
+        self.assertEqual(r["latest_tag"], "v3.4.3")
+
+    def test_head_ahead_of_latest_not_stale(self):
+        from full_analysis_gate import _git_stale_check
+        with self._mock_git([
+            (0, "def456\n"),                                # rev-parse
+            (1, ""),                                        # describe 失败（非 tag）
+            (0, "v3.4.3\n"),                                # tag list
+            (0, "0"),                                       # merge-base ancestor OK
+        ]):
+            r = _git_stale_check()
+        self.assertFalse(r["stale"])
+        self.assertEqual(r["head_tag"], None)
+        self.assertEqual(r["latest_tag"], "v3.4.3")
+
+    def test_head_behind_latest_is_stale(self):
+        # 核心场景（review 问题 2）：干净的过期 checkout（HEAD=v3.4.2，最新=v3.4.3）
+        from full_analysis_gate import _git_stale_check
+        with self._mock_git([
+            (0, "abc123\n"),                                # rev-parse
+            (0, "v3.4.2\n"),                                # describe → 旧 tag
+            (0, "v3.3.1\nv3.4.1\nv3.4.2\nv3.4.3\n"),        # tag list
+            (1, ""),                                        # merge-base: v3.4.3 非 HEAD 祖先
+        ]):
+            r = _git_stale_check()
+        self.assertTrue(r["stale"])
+        self.assertEqual(r["head_tag"], "v3.4.2")
+        self.assertEqual(r["latest_tag"], "v3.4.3")
+        self.assertIn("落后于", r["detail"])
+
+    def test_no_git_env_not_stale(self):
+        from full_analysis_gate import _git_stale_check
+        with self._mock_git([(1, "")]):
+            r = _git_stale_check()
+        self.assertFalse(r["stale"])
+        self.assertIn("无 git 环境", r["detail"])
+
+    def test_git_error_returns_none_not_false(self):
+        # 检测异常不得静默放行（stale=None 由 cmd_init 转 WARN）
+        from full_analysis_gate import _git_stale_check
+        with mock.patch("full_analysis_gate.subprocess.run",
+                        side_effect=RuntimeError("git broken")):
+            r = _git_stale_check()
+        self.assertIsNone(r["stale"])
+        self.assertIn("异常", r["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

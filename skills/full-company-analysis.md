@@ -19,19 +19,21 @@ review-cadence: per-release
 **输入**：公司名 + 证券代码 + 日期。**输出**：`run_root`（后续所有命令的 `--run-root` 参数）。
 
 1. **定基线**：执行本地 `date` 与 `uname -m`，把日期作为 `as_of` 基线（不得用训练记忆假设日期）。
-2. **版本校验（E1，强制）**：执行仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）：
+2. **版本校验（E1，强制）**：执行仓库状态核验，防止「基于过期编排启动的 run」被继续推进（历史事故根因）。**机器门禁（v3.4.4 起）**：`start` 命令内置 `_git_stale_check()`——HEAD 落后于最新发版 tag 时**拒绝启动**（`E1 版本门禁`），须先 `git checkout <最新tag>` 或显式 `--allow-stale` 覆盖。文档自查命令（与门禁互补，查未提交改动）：
 
 ```bash
-cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py skills/full-company-analysis.md && git log -1 --oneline && (git describe --tags --exact-match HEAD 2>/dev/null || echo "HEAD 无精确 tag")
+cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/full_analysis.py tools/full_analysis_gate.py tools/full_analysis_runtime.py skills/full-company-analysis.md && git log -1 --oneline && git tag --list "v*" | sort -V | tail -1
 ```
 
+   - **预期 tag 来源（动态，v3.4.4 修正）**：预期版本 = `git tag --list "v*" | sort -V | tail -1`（最新发版 tag），**不硬编码具体版本号**——文档出现具体 tag 示例即视为过期。对比 `git log -1` 的 HEAD 与最新 tag：HEAD 落后（非最新 tag 祖先）即 checkout 过期，机器门禁拒绝；`--allow-stale` 仅用于人工确认目标版本无误的场景。
    - 若上述编排相关文件（**含 skill 文档本身**）存在**未提交改动**：🔴 **CHECKPOINT（人工确认，不阻塞自动继续）**——先与用户确认「工作区契约/脚本是最新意图版本」再继续，确认后全自动推进；不得基于「会话早期印象」假设版本，必须实时读取。
-   - **目标版本比较（v3.4.2 增强）**：`git describe --tags` 输出的 tag 若非预期发版 tag（如 `v3.4.2`），或 `git log -1` 的 HEAD 早于该 tag，视为 **checkout 过期**——干净但过期的 checkout 不得继续，须先切到目标 tag 再启动。
 3. **启动 run**：
 
 ```text
 python3 scripts/full_analysis.py start --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
 ```
+
+   - 启动被 `E1 版本门禁` 拒绝时：先 `git checkout v3.4.4`（当前最新 tag）再重试；确认目标版本无误且必须基于当前 HEAD 启动时，追加 `--allow-stale`。
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
@@ -40,19 +42,31 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
 ## Agent 调度纪律
 
-循环调用 `python3 scripts/full_analysis.py next-work --run-root <run_root>`。自 v3.3.10 起 runtime 按 **depends_on 依赖波次**调度：只有上游全 DONE 的单元才会返回 `LEASED`，跨波单元被挡（返回 `NO_WORK/DEPENDENCIES_PENDING`）直到上游完成。每次返回 `LEASED` 后，必须直接使用 **WorkBuddy 原生 Agent** 完成该 work unit；不得由 Python、shell 或旧版 orchestrator 再创建 Agent。
+**领单元命令（v3.4.4 起必须带 --allowlist 实现错峰，禁止裸调用）**：
+
+```text
+# 普通波次（W1/W2/W5 或无需错峰的单元）：允许裸 next-work
+python3 scripts/full_analysis.py next-work --run-root <run_root>
+# 错峰波次（W3/W4）：必须带 --allowlist 指定本轮可领的 skill 集合
+python3 scripts/full_analysis.py next-work --run-root <run_root> --allowlist investment-team,earnings-review
+```
+
+自 v3.3.10 起 runtime 按 **depends_on 依赖波次**调度：只有上游全 DONE 的单元才会返回 `LEASED`，跨波单元被挡（返回 `NO_WORK/DEPENDENCIES_PENDING`）直到上游完成。每次返回 `LEASED` 后，必须直接使用 **WorkBuddy 原生 Agent** 完成该 work unit；不得由 Python、shell 或旧版 orchestrator 再创建 Agent。
 
 **波次并行派发（v3.3.10，强制）**——依赖波次的墙钟收益来自"一波内多单元并行"，而非逐个串行：
 
-1. **收齐一波**：连续调用 `next-work` 直到返回 `NO_WORK`（`CONCURRENCY_LIMIT` 或 `DEPENDENCIES_PENDING`），把这批 `LEASED` 单元收为一个波次批次（并发上限 `concurrency.max`，默认 4）。
+1. **收齐一波**：连续调用 `next-work` 直到返回 `NO_WORK`（`CONCURRENCY_LIMIT` 或 `DEPENDENCIES_PENDING`），把这批 `LEASED` 单元收为一个波次批次（并发上限 `concurrency.max`，默认 4）。**错峰波次用带 `--allowlist` 的调用收齐（见第 5 条具体命令），白名单外的就绪单元不会在本轮被领。**
 2. **并行派发**：把该批次的每个单元作为**独立前台 Agent**，在**同一条消息里一次性全部派发**（多个 Agent 工具调用并发运行）。禁止逐个前台串行（那会把波次退化为全串行，浪费依赖图的 ~90 分收益）。
 3. **并行 job-started**：所有 Agent 返回 `agent_job_id` 后，为每个单元调用 `job-started`。
 4. **收尾与下一波**：各 Agent 完成即 `submit-result`；全部提交后回到第 1 步领取下一波。
-5. **错峰（W3 拆两部分 + W4 industry-funnel 单独，v3.3.13 起强制）**——波次内若混编「扇出重单元（TTL 80min）」与「轻单元（TTL 40min）」，轻单元在重单元研究（取数+WebSearch+写作常 >40min）完成前租约即过期被 sweep 误回收，导致重跑（宏景/沪电 run 实证）。**默认分派纪律**：
-   - **W3 拆成两小批**：第一批 `investment-team` + `earnings-review`（扇出重单元，同批内并行）；第二批 `management-deep-dive` + `industry-research`（轻单元，同批内并行）。两小批**错峰派发**（先领第一批、全部 DONE 后再领第二批），同一小批内仍并行。
-   - **W4 的 `industry-funnel` 单独运行**：`next-work` 先只领 `industry-funnel` 一个单元单独派发，完成后再领 `bottleneck-hunter` + `news-pulse` 并行（funnel 需全市场候选池取数+多轮 WebSearch，单独跑可避免与扇出/数据重单元争并发与 429）。
+5. **错峰（W3 拆两部分 + W4 industry-funnel 单独，v3.4.4 起带 allowlist 执行）**——波次内若混编「扇出重单元（TTL 80min）」与「轻单元（TTL 40min）」，轻单元在重单元研究（取数+WebSearch+写作常 >40min）完成前租约即过期被 sweep 误回收，导致重跑（宏景/沪电 run 实证）。**默认分派纪律（具体命令，逐字执行）**：
+   - **W3a**：循环 `next-work --allowlist investment-team,earnings-review` 收齐两单元 → 并行派发 → 全部 DONE 前**不得**进入 W3b。
+   - **W3b（W3a 全 DONE 后）**：循环 `next-work --allowlist management-deep-dive,industry-research` 收齐两单元 → 并行派发。
+   - **W4a**：`next-work --allowlist industry-funnel` 单独派发（funnel 需全市场候选池取数+多轮 WebSearch，单独跑可避免与扇出/数据重单元争并发与 429）。
+   - **W4b（funnel DONE 后）**：循环 `next-work --allowlist bottleneck-hunter,news-pulse` 收齐两单元 → 并行派发。
+   - **屏障**：W3b 只能在 W3a 两单元全部 DONE 后领取（`--allowlist` 只限制本轮可领集合，**不能**凭白名单越过依赖——W3b 单元依赖已满足时会就绪，故编排器必须以「W3a 全 DONE」为 W3b 领取的前置条件，不得提前调用 W3b 的 allowlist）；若误在 W3a 未完成时领 W3b，轻单元会重蹈租约过期覆辙。
    - 若上游连续 429，配合下方 E12 lite 降级继续。
-6. **波次墙钟（错峰后实测）**：W1→W5 关键路径 ≈ 42-50 分（并行波次）；W3 拆分后墙钟略增（约 +8-10 分）但轻单元零重跑，净收益为正。
+6. **波次墙钟（错峰后实测）**：W1→W5 关键路径 ≈ 42-50 分（并行波次）；W3 拆分后墙钟略增（约 +8-10 分）但轻单元零重跑，净收益为正（待 v3.4.4 后 run 复验）。
 
 当前 13 单元的波次（契约 depends_on 的拓扑分层，**编排默认分派**）：W1 `ashare-data` → W2 `financial-data`/`quality-screen`/`investment-checklist`/`investment-research`（×4 并行）→ **W3 拆两部分**：W3a `investment-team`+`earnings-review`（扇出重单元并行）→ W3b `management-deep-dive`+`industry-research`（轻单元并行，W3a 全部 DONE 后领）→ **W4 先单独跑 `industry-funnel`**，完成后再并行 `bottleneck-hunter`/`news-pulse` → W5 `thesis-tracker`。关键路径墙钟 ≈ 42-50 分（vs 串行 ~142 分）。
 
