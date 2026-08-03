@@ -5,6 +5,23 @@
 
 ---
 
+## [v3.4.8] — 2026-08-03
+
+> P1 四件修复：改名 runtime-gate / 契约 W4 机器强制 / E1 全路径 fail-close / budget 语义对齐
+
+### 🔧 变更 (Changed)
+
+- **改名**：`name: full-company-analysis` → `full-company-analysis-workbuddy`。Darwin runtime-neutrality gate 要求名称绑定平台。
+- **契约 W4 依赖**：`bottleneck-hunter` / `news-pulse` 增加 `industry-funnel` 契约依赖。波次拓扑 5→6（W4a funnel 单独 → W4b bottleneck+news），**Runtime 机器强制** W4a→W4b 序次，不再仅靠文档纪律。
+- **E1 全路径 fail-close**：`git rev-parse HEAD` 失败时 `stale=False`（静默放行）→ `stale=None`（WARN）。三态完整：True 拒绝 / False 放行 / None WARN。
+- **budget 语义**：移除虚假公式（`13×2+preflight`）；明确 `used` 仅在 preflight 与 job-started 递增，不含 summary/review。
+
+### 📝 文档修正
+- job-started 措辞精确化："Agent 返回" → "Agent 派发工具返回 job_id"
+- W4b 增加"契约强制"说明 + 禁-3 扩充含 W4a→W4b 序次
+
+---
+
 ## [v3.4.7] — 2026-08-03
 
 > review 修复：normal_target 算术 / E1 fail-open / codex 真源 / W4 屏障 / review ingest / job-started 措辞
