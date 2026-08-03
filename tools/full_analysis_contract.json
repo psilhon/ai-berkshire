@@ -429,7 +429,9 @@
     },
     {
       "skill_id": "financial-data",
-      "depends_on": ["ashare-data"],
+      "depends_on": [
+        "ashare-data"
+      ],
       "category": "01-data-screen",
       "stage_dir": "01-data-screen",
       "spec_source": "skills/financial-data.md",
@@ -554,7 +556,9 @@
     },
     {
       "skill_id": "quality-screen",
-      "depends_on": ["ashare-data"],
+      "depends_on": [
+        "ashare-data"
+      ],
       "category": "01-data-screen",
       "stage_dir": "01-data-screen",
       "spec_source": "skills/quality-screen.md",
@@ -675,7 +679,9 @@
     },
     {
       "skill_id": "investment-checklist",
-      "depends_on": ["ashare-data"],
+      "depends_on": [
+        "ashare-data"
+      ],
       "category": "01-data-screen",
       "stage_dir": "01-data-screen",
       "spec_source": "skills/investment-checklist.md",
@@ -806,7 +812,9 @@
     },
     {
       "skill_id": "investment-research",
-      "depends_on": ["ashare-data"],
+      "depends_on": [
+        "ashare-data"
+      ],
       "category": "02-company-earnings",
       "stage_dir": "02-company-earnings",
       "spec_source": "skills/investment-research.md",
@@ -937,7 +945,11 @@
     },
     {
       "skill_id": "investment-team",
-      "depends_on": ["ashare-data", "financial-data", "quality-screen"],
+      "depends_on": [
+        "ashare-data",
+        "financial-data",
+        "quality-screen"
+      ],
       "category": "02-company-earnings",
       "stage_dir": "02-company-earnings",
       "spec_source": "skills/investment-team.md",
@@ -1075,7 +1087,11 @@
     },
     {
       "skill_id": "management-deep-dive",
-      "depends_on": ["ashare-data", "financial-data", "quality-screen"],
+      "depends_on": [
+        "ashare-data",
+        "financial-data",
+        "quality-screen"
+      ],
       "category": "02-company-earnings",
       "stage_dir": "02-company-earnings",
       "spec_source": "skills/management-deep-dive.md",
@@ -1208,7 +1224,11 @@
     },
     {
       "skill_id": "earnings-review",
-      "depends_on": ["ashare-data", "financial-data", "quality-screen"],
+      "depends_on": [
+        "ashare-data",
+        "financial-data",
+        "quality-screen"
+      ],
       "category": "02-company-earnings",
       "stage_dir": "02-company-earnings",
       "spec_source": "skills/earnings-review.md",
@@ -1374,7 +1394,10 @@
     },
     {
       "skill_id": "industry-research",
-      "depends_on": ["ashare-data", "investment-research"],
+      "depends_on": [
+        "ashare-data",
+        "investment-research"
+      ],
       "category": "03-industry-opportunity",
       "stage_dir": "03-industry-opportunity",
       "spec_source": "skills/industry-research.md",
@@ -1505,7 +1528,10 @@
     },
     {
       "skill_id": "industry-funnel",
-      "depends_on": ["industry-research", "investment-research"],
+      "depends_on": [
+        "industry-research",
+        "investment-research"
+      ],
       "category": "03-industry-opportunity",
       "stage_dir": "03-industry-opportunity",
       "spec_source": "skills/industry-funnel.md",
@@ -1626,7 +1652,10 @@
     },
     {
       "skill_id": "bottleneck-hunter",
-      "depends_on": ["industry-research"],
+      "depends_on": [
+        "industry-research",
+        "industry-funnel"
+      ],
       "category": "03-industry-opportunity",
       "stage_dir": "03-industry-opportunity",
       "spec_source": "skills/bottleneck-hunter.md",
@@ -1769,7 +1798,11 @@
     },
     {
       "skill_id": "news-pulse",
-      "depends_on": ["ashare-data", "earnings-review"],
+      "depends_on": [
+        "ashare-data",
+        "earnings-review",
+        "industry-funnel"
+      ],
       "category": "03-industry-opportunity",
       "stage_dir": "03-industry-opportunity",
       "spec_source": "skills/news-pulse.md",
@@ -1918,7 +1951,14 @@
     },
     {
       "skill_id": "thesis-tracker",
-      "depends_on": ["investment-team", "management-deep-dive", "earnings-review", "industry-funnel", "bottleneck-hunter", "news-pulse"],
+      "depends_on": [
+        "investment-team",
+        "management-deep-dive",
+        "earnings-review",
+        "industry-funnel",
+        "bottleneck-hunter",
+        "news-pulse"
+      ],
       "category": "04-thesis-boundary",
       "stage_dir": "04-thesis-boundary",
       "spec_source": "skills/thesis-tracker.md",

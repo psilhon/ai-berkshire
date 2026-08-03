@@ -1,5 +1,5 @@
 ---
-name: full-company-analysis
+name: full-company-analysis-workbuddy
 description: WorkBuddy 专用单公司全量分析适配器。对一家公司执行 13 业务 skill 端到端全量研究（波次调度→审计→语义评审→finalize）。触发词：全量分析 <公司名>、/full-company-analysis <公司名>、全量跑 <公司名>。由 WorkBuddy 原生 Agent 执行真实研究，Runtime 只负责租约、预算与恢复，Gate 负责确定性验收。
 platform: workbuddy
 registry-schema: full-analysis-contract/v2
@@ -39,7 +39,7 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
-5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`（代码硬编码 `26`，对应 13 项业务契约的正常派发总量上限，含 work/summary/rework 等各阶段）。数量异常视为版本错配，停止并核对。具体值以 Gate `budget_params` 为准，此处数字仅作人读参考。
+5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`（Gate 硬编码 `26`，与 13 项契约对应；文档数字仅作人读参考，以代码值为准）。`used` 在 preflight 与 job-started 时递增（summary/review 不计入 used）。数量异常视为版本错配，停止并核对。
 6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
 ## Agent 调度纪律
@@ -59,13 +59,13 @@ python3 scripts/full_analysis.py next-work --run-root <run_root> --allowlist inv
 
 1. **收齐一波**：连续调用 `next-work` 直到返回 `NO_WORK`（`CONCURRENCY_LIMIT` 或 `DEPENDENCIES_PENDING`），把这批 `LEASED` 单元收为一个波次批次（并发上限 `concurrency.max`，默认 4）。**错峰波次用带 `--allowlist` 的调用收齐（见第 5 条具体命令），白名单外的就绪单元不会在本轮被领。**
 2. **并行派发**：把该批次的每个单元作为**独立前台 Agent**，在**同一条消息里一次性全部派发**（多个 Agent 工具调用并发运行）。禁止逐个前台串行（那会把波次退化为全串行，浪费依赖图的 ~90 分收益）。
-3. **并行 job-started**：所有 Agent 返回 `agent_job_id` 后，为每个单元调用 `job-started`。
+3. **并行 job-started**：所有 Agent 派发工具返回 `agent_job_id` 后，为每个单元调用 `job-started`。
 4. **收尾与下一波**：各 Agent 完成即 `submit-result`；全部提交后回到第 1 步领取下一波。
 5. **错峰（W3 拆两部分 + W4 industry-funnel 单独，v3.4.4 起带 allowlist 执行）**——波次内若混编「扇出重单元（TTL 80min）」与「轻单元（TTL 40min）」，轻单元在重单元研究（取数+WebSearch+写作常 >40min）完成前租约即过期被 sweep 误回收，导致重跑（宏景/沪电 run 实证）。**默认分派纪律（具体命令，逐字执行）**：
    - **W3a**：循环 `next-work --allowlist investment-team,earnings-review` 收齐两单元 → 并行派发 → 全部 DONE 前**不得**进入 W3b。
    - **W3b（W3a 全 DONE 后）**：循环 `next-work --allowlist management-deep-dive,industry-research` 收齐两单元 → 并行派发。
    - **W4a**：`next-work --allowlist industry-funnel` 单独派发（funnel 需全市场候选池取数+多轮 WebSearch，单独跑可避免与扇出/数据重单元争并发与 429）。
-   - **W4b（funnel DONE 后）**：循环 `next-work --allowlist bottleneck-hunter,news-pulse` 收齐两单元 → 并行派发。
+   - **W4b（funnel DONE 后）**：循环 `next-work --allowlist bottleneck-hunter,news-pulse` 收齐两单元 → 并行派发。**契约强制**：`bottleneck-hunter` 与 `news-pulse` 在契约中依赖 `industry-funnel`，Runtime 在 funnel 完成前不会派发 W4b 单元，与 `--allowlist` 双重保险。
    - **屏障**：W3b 只能在 W3a 两单元全部 DONE 后领取（`--allowlist` 只限制本轮可领集合，**不能**凭白名单越过依赖——W3b 单元依赖已满足时会就绪，故编排器必须以「W3a 全 DONE」为 W3b 领取的前置条件，不得提前调用 W3b 的 allowlist）；若误在 W3a 未完成时领 W3b，轻单元会重蹈租约过期覆辙。
    - 若上游连续 429，配合下方 E12 lite 降级继续。
 6. **波次墙钟（错峰后实测）**：W1→W5 关键路径 ≈ 42-50 分（并行波次）；W3 拆分后墙钟略增（约 +8-10 分）但轻单元零重跑，净收益为正（待 v3.4.4 后 run 复验）。
@@ -84,7 +84,7 @@ python3 scripts/full_analysis.py job-started \
 **调度时序纪律（E2，强制）**——非扇出单元租约默认 40 分钟过期（宏景 run 实证：mgmt ~35min、ind-research ~25min，旧 20 分钟频繁被 sweep 误回收）；扇出单元自动倍增（= 20 × 独立角色数，如 team/earnings 4 角色 = 80 分钟）；heartbeat 按派发时的租约 TTL 续期。租约过期后 submit 被拒、只能走 resume 孤儿恢复（requeue 会丢失已完工作）。以下顺序不可颠倒：
 
 1. **前台并行派发 Agent**（Agent 工具默认模式），从每个返回结果取真实 `agent_job_id`；一波内的多个单元在**同一条消息里并行派发**（见上「波次并行派发」）。**禁止后台派发**（`run_in_background` 不返回 job id，Agent 完成后无法及时 job-started，租约过期即触发 requeue 灾难）——并行用"一条消息多个前台 Agent"实现，不用后台。
-2. 所有并行 Agent 返回后**立即**为每个单元调用 `job-started`（60 秒内），各自完成后 `submit-result`；不要把提交拖到下一个波次之后。
+2. 所有并行 Agent 派发工具返回后**立即**为每个单元调用 `job-started`（60 秒内），各自完成后 `submit-result`；不要把提交拖到下一个波次之后。
 3. 若提交被拒（身份不匹配/实质校验/预提交门禁），当场修复 result.json 或报告后重提，**不要留到收口阶段批量处理**——批量返工会使整条返工链（audit→prepare→评审→ingest→summarize）连锁重跑。
 4. **长任务强制 heartbeat**：预计执行超过 10 分钟的 Agent（扇出单元、多模块研究单元），派发指令必须要求其每完成一个主要阶段调用一次 `heartbeat`（命令见 BUNDLE-SPEC，心跳按租约 TTL 续期）；全程零心跳的 run 会被 doctor 判「疑似主上下文直写」，需人工复核。
 5. **429 降级派发（E12）**：派发 Agent 遇模型 429 限流时，改派 `model:"lite"` 继续（不中止 run、不消耗 runtime 预算）；runtime 的 429 冷却仅约束 Agent job 预算侧，派发层的模型降级是编排器正常容错，两者不混淆。若 lite 亦连续失败，才走 `record-failure` 重试退避。

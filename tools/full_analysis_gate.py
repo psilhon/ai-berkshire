@@ -175,16 +175,16 @@ def _git_head_commit() -> str | None:
 def _git_stale_check() -> dict:
     """检测仓库 checkout 是否过期（HEAD 落后于最新发版 tag）。
 
-    返回 {"stale": bool, "head": str, "head_tag": str|None, "latest_tag": str|None, "detail": str}。
-    无 git 环境 / 无 tag 时视为不可判定（stale=False），由 E1 文档纪律兜底。
+    返回 {"stale": bool|None, "head": str, "head_tag": str|None, "latest_tag": str|None, "detail": str}。
+    stale=True 拒绝启动；stale=False 放行；stale=None（不可判定）WARN 不阻断。
     """
     repo = Path(__file__).resolve().parents[1]
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                               timeout=5, cwd=repo)
         if head.returncode != 0:
-            return {"stale": False, "head": "", "head_tag": None, "latest_tag": None,
-                    "detail": "无 git 环境，跳过版本门禁"}
+            return {"stale": None, "head": "", "head_tag": None, "latest_tag": None,
+                    "detail": "git rev-parse HEAD 失败，版本门禁未生效"}
         head_sha = head.stdout.strip()
         # HEAD 是否恰为某 tag（精确匹配）
         exact = subprocess.run(["git", "describe", "--tags", "--exact-match", "HEAD"],

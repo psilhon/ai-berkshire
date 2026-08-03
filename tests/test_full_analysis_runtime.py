@@ -743,12 +743,12 @@ class DependencyGraphTests(unittest.TestCase):
         graph = {"ashare-data": [], "a": ["ashare-data"], "b": ["ashare-data", "a"]}
         self.assertIsNone(rt.detect_dependency_cycle(graph))
 
-    def test_compute_waves_matches_expected_five_waves(self):
-        # 用真实契约验证分层精确涌现 W1-W5
+    def test_compute_waves_matches_expected_six_waves(self):
+        # v3.4.8: bottleneck-hunter + news-pulse 依赖 industry-funnel → W4 拆为 W4a+W4b，共 6 波
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
         graph = rt.build_dependency_graph(registry["skills"])
         waves = rt.compute_dependency_waves(graph)
-        self.assertEqual(len(waves), 5, f"应为 5 波，实际 {waves}")
+        self.assertEqual(len(waves), 6, f"应为 6 波，实际 {waves}")
         wave_sets = [set(w) for w in waves]
         self.assertEqual(wave_sets[0], {"ashare-data"})
         self.assertEqual(wave_sets[1],
@@ -757,9 +757,9 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertEqual(wave_sets[2],
                          {"investment-team", "management-deep-dive",
                           "earnings-review", "industry-research"})
-        self.assertEqual(wave_sets[3],
-                         {"industry-funnel", "bottleneck-hunter", "news-pulse"})
-        self.assertEqual(wave_sets[4], {"thesis-tracker"})
+        self.assertEqual(wave_sets[3], {"industry-funnel"})
+        self.assertEqual(wave_sets[4], {"bottleneck-hunter", "news-pulse"})
+        self.assertEqual(wave_sets[5], {"thesis-tracker"})
 
     # ---- 端到端：init 持久化依赖图、拒绝有环契约 ----
 
@@ -773,7 +773,7 @@ class DependencyGraphTests(unittest.TestCase):
         state = json.loads((self.run_root / "evidence/runtime-state.json").read_text())
         self.assertIn("dependency_graph", state)
         self.assertIn("dependency_waves", state)
-        self.assertEqual(len(state["dependency_waves"]), 5)
+        self.assertEqual(len(state["dependency_waves"]), 6)  # v3.4.8: W4 拆为 W4a+W4b
         # 每个 work_unit 带 depends_on
         by_id = {u["work_unit_id"]: u for u in state["work_units"]}
         self.assertEqual(by_id["wu-financial-data"].get("depends_on"), ["ashare-data"])

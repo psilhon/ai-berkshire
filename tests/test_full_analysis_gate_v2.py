@@ -1042,12 +1042,13 @@ class StaleCheckTests(unittest.TestCase):
         self.assertEqual(r["latest_tag"], "v3.4.3")
         self.assertIn("落后于", r["detail"])
 
-    def test_no_git_env_not_stale(self):
+    def test_no_git_env_returns_none(self):
+        # v3.4.7: git rev-parse 失败 → stale=None（WARN），不再静默放行
         from full_analysis_gate import _git_stale_check
         with self._mock_git([(1, "")]):
             r = _git_stale_check()
-        self.assertFalse(r["stale"])
-        self.assertIn("无 git 环境", r["detail"])
+        self.assertIsNone(r["stale"])
+        self.assertIn("git rev-parse", r["detail"])
 
     def test_git_error_returns_none_not_false(self):
         # 检测异常不得静默放行（stale=None 由 cmd_init 转 WARN）
