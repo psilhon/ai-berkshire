@@ -22,7 +22,9 @@ This skill is generated from `skills/full-company-analysis.md` so Claude Code an
 
 # WorkBuddy 全量公司分析适配器
 
-这是生产入口，不是第二套业务编排器。它只服务“一家公司、一次完整运行”；`industry-funnel` 仍可在该公司上下文中执行其行业漏斗任务，不改变单公司边界。租约和预算的实现位于 `tools/full_analysis_runtime.py`，正式状态只由 `tools/full_analysis_gate.py` 写入。
+> **Runtime 说明**：本 skill 为 WorkBuddy 原生编排器（`platform: workbuddy`），使用 WorkBuddy 原生 Agent/Task 工具 + `full_analysis.py` Runtime。其他 skills-compatible runtime（Claude Code / Codex / Cursor 等）可安装 `codex-skills/full-company-analysis/SKILL.md` 作为参考工作流，但租约/预算/Gate 机制须替换为对应 Runtime 的等价物。本文件是 WorkBuddy 真源，不可降级为通用 skill。
+
+这是生产入口，不是第二套业务编排器。它只服务"一家公司、一次完整运行"；`industry-funnel` 仍可在该公司上下文中执行其行业漏斗任务，不改变单公司边界。租约和预算的实现位于 `tools/full_analysis_runtime.py`，正式状态只由 `tools/full_analysis_gate.py` 写入。
 
 ## 启动
 
@@ -43,11 +45,11 @@ cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/f
 python3 scripts/full_analysis.py start --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
 ```
 
-   - 启动被 `E1 版本门禁` 拒绝时：先 `git checkout v3.4.4`（当前最新 tag）再重试；确认目标版本无误且必须基于当前 HEAD 启动时，追加 `--allow-stale`。
+   - 启动被 `E1 版本门禁` 拒绝时：执行 `git tag --list "v*" | sort -V | tail -1` 获取最新 tag，`git checkout <该tag>` 后重试；确认目标版本无误且必须基于当前 HEAD 启动时，追加 `--allow-stale`。
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
-5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（13 项业务契约 + preflight）；数量异常视为版本错配，停止并核对。
+5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（代码默认 `26` = 13 项业务契约 ×2（work + summary 各一次派发）+ preflight，非 13——若文档口述「13 项契约 + preflight」而代码值为 26，以代码为准因为 summary 与 preflight 各算一次独立派发）；数量异常视为版本错配，停止并核对。
 6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
 ## Agent 调度纪律
@@ -80,7 +82,7 @@ python3 scripts/full_analysis.py next-work --run-root <run_root> --allowlist inv
 
 当前 13 单元的波次（契约 depends_on 的拓扑分层，**编排默认分派**）：W1 `ashare-data` → W2 `financial-data`/`quality-screen`/`investment-checklist`/`investment-research`（×4 并行）→ **W3 拆两部分**：W3a `investment-team`+`earnings-review`（扇出重单元并行）→ W3b `management-deep-dive`+`industry-research`（轻单元并行，W3a 全部 DONE 后领）→ **W4 先单独跑 `industry-funnel`**，完成后再并行 `bottleneck-hunter`/`news-pulse` → W5 `thesis-tracker`。关键路径墙钟 ≈ 42-50 分（vs 串行 ~142 分）。
 
-启动原生 Agent 前调用：
+Agent 返回 `agent_job_id` 后立即调用（不可在 Agent 启动前调用，因为 `agent-job-id` 参数尚未取得）：
 
 ```text
 python3 scripts/full_analysis.py job-started \
@@ -134,7 +136,7 @@ Agent 必须返回 Result Bundle v1（`schema_version=result-schema/v1`）和短
   - `conditional_command_operations.capability`：逐字给出 capability 名（如 `tushare_configured`），要求 capability_records 含该名且 `available: true`。
   - `min_judgments_with_falsification`：要求每条第 `falsification` 非空数组，条数 ≥ n。
 - **result.json 结构红线**：command_receipts 每条只允许 `receipt_id/operation/status/detail/reason` 五键；fact_updates/source_records/judgments 等列表对象 `additionalProperties=false`，不得携带扩展字段（如 `detail`/`skill_id`）；评审维度 `dimensions` 必须是数组 `[{dimension, verdict}]` 而非 dict。
-- **calc 表达式红线**：`financial_rigor.py calc` 只支持纯四则运算（白名单 `0123456789.+-*/() eE`），**禁止 `round(...)` 与 `^` 幂运算**（会被判「不安全的表达式」导致 Audit 重放失败）；需要取整/幂时提交不含 round/^ 的表达式（如 `(1-59.46/86.11)*100`）。
+- **calc 表达式红线**：`financial_rigor.py calc` 只支持纯四则运算（白名单 `0123456789.+-*/() eE`）+ `round(EXPR, N)` 取整辅助（展开为 quantize 字面量，`ROUND_HALF_UP` 四舍五入），**禁止 `^` 幂运算**（会被判「不安全的表达式」导致 Audit 重放失败）；需要幂时提交不含 ^ 的乘法展开。
 - **fact_id/receipt_id 命名纪律（防跨单元覆盖，强制）**：所有 `fact_updates[].fact_id` 和 `command_receipts[].receipt_id` **必须以本 skill 的 `skill_id` 作为前缀**，格式为 `fact-<skill_id>-<descriptor>` 和 `rcpt-<skill_id>-<descriptor>`。**禁止通用编号**（如 `fact-001`、`fact-price-301396`、`rcpt-quote-301396`）。**根因**：gate ingest 按 `fact_id`/`receipt_id` 做 last-write-wins 合并，不同 skill 使用相同 ID 会覆盖 `skill_id` 归属，导致 audit 缺字段（宏景 run 因 ID 冲突触发 3 轮 correction 修复）。示例：ashare-data 用 `fact-ashare-data-price`、`rcpt-ashare-data-quote`；thesis-tracker 用 `fact-thesis-tracker-price`、`rcpt-thesis-tracker-quote`；financial-data 用 `fact-financial-data-revenue`、`rcpt-financial-data-income-stmt`。
 
 **多角色 skill 必须真扇出**：当 `fanout_required: true` 时，必须为 `roles.required_roles` 中每个角色（除 `integrator` 外）启动一个**独立原生 Agent**（用 Task 工具 fan-out），各自在 `evidence/attempts/<skill_id>/<attempt_id>/role-<role>.md` 产出独立分析备忘录（每个 ≥300 字节，且不得相互引用以保证独立性）；最后由整合 Agent 读取全部角色备忘录产出正式整合报告。缺少任一 `role-<role>.md` 时 Gate 会拒收。单 Agent skill 则由一个原生 Agent 按 methodology 完整执行。
@@ -176,9 +178,9 @@ python3 scripts/full_analysis.py submit-result \
 
 ---
 
-## 🚫 禁止事项清单（红灯规则全集）
+## 🚫 禁止事项清单（红灯规则参考，原文标注 `[禁-N]`）
 
-> **用途**：快速扫描「绝对不能做的事」。每条禁令在原文中有完整上下文和根因解释，编号对应下文 `[禁-N]` 标注。
+> **用途**：快速扫描「绝对不能做的事」。每条禁令在原文中有完整上下文和根因解释。清单与正文维护同步，正文中禁止规则旁标注 `[禁-N]` 以便交叉索引。
 
 ### A. 派发与并行纪律
 
@@ -186,7 +188,7 @@ python3 scripts/full_analysis.py submit-result \
 |---|------|------|---------|
 | 禁-1 | **禁止后台派发** Agent（`run_in_background`） | 不返回 job_id → 无法 job-started → 租约过期 requeue 灾难 | Agent 调度纪律 §1 |
 | 禁-2 | **禁止逐个前台串行**派发（同波单元必须在一条消息里并行） | 波次退化为全串行，浪费依赖图 ~90 分收益 | Agent 调度纪律 §2 |
-| 禁-3 | **禁止裸调用 next-work**（W3/W4 必须带 `--allowlist`） | 重扇出与轻单元混编 → 轻单元租约过期被 sweep 误回收重跑 | Agent 调度纪律 §5 |
+| 禁-3 | **W3/W4 禁止裸调用 next-work**（必须带 `--allowlist`；W1/W2/W5 允许裸调用） | 重扇出与轻单元混编 → 轻单元租约过期被 sweep 误回收重跑 | Agent 调度纪律 §5 |
 | 禁-4 | **禁止**用 Python/shell/旧版 orchestrator 再创建 Agent | 绕过 Runtime 租约/预算管控，导致状态不一致 | Agent 调度纪律 |
 | 禁-5 | **不得**提前调用 W3b 的 allowlist（必须在 W3a 全 DONE 后） | 轻单元会重蹈租约过期覆辙 | Agent 调度纪律 §5 屏障 |
 | 禁-6 | **不得**由主上下文直接撰写分析正文 | 主上下文无新鲜窗口/外部调研 → 深度坍塌 | 执行一致性纪律 |
@@ -200,7 +202,7 @@ python3 scripts/full_analysis.py submit-result \
 | 禁-9 | **严禁**使用 `section_id`（如 `data_cutoff`），必须用 heading 原文（如「数据截止日」） | Gate 按 heading 精确匹配，用 section_id 整份报告被拒收 | 派发前必读规范 |
 | 禁-10 | **禁止**用中文名填 fact_updates 的 `field`（如「毛利率」→ 必须用 `gross_margin`） | Audit 按契约 field 精确匹配失败 → violation | 派发模板 E3 |
 | 禁-11 | **禁止**通用编号 fact_id/receipt_id（如 `fact-001`、`rcpt-quote-301396`），必须带 skill_id 前缀 | 跨单元 last-write-wins 覆盖 → audit 缺字段（宏景 run 3 轮返工） | 派发模板 E3 |
-| 禁-12 | **禁止** `round()` 与 `^` 幂运算在 calc 表达式中 | `financial_rigor.py` 判「不安全表达式」→ Audit 重放失败 | 派发模板 E3 |
+| 禁-12 | **禁止 `^` 幂运算**在 calc 表达式中（`round(EXPR, N)` 允许，展开为 quantize 字面量） | `financial_rigor.py` 判「不安全表达式」→ Audit 重放失败 | 派发模板 E3 |
 | 禁-13 | **禁止子 Agent 手写 result.json**（必须用 `mk_result_bundle.py` 确定性生成器） | Schema 返工 4 类（sources/source_type/calculation_id/limitations） | E16 纪律 |
 | 禁-14 | **不得**携带扩展字段（fact_updates/source_records/judgments 等 `additionalProperties=false`） | Schema 校验失败 → Audit 拒收 | 派发模板 E3 |
 | 禁-15 | **不得**仅凭 skill 名称凭记忆发挥（必须完整落地 `methodology_text`） | 章节/证据缺失 → Audit violation | 派发前必读规范 |
@@ -214,29 +216,31 @@ python3 scripts/full_analysis.py submit-result \
 | 禁-18 | **禁止** correction-bundle 携带报告路径 | correction 只修账本，带报告会被拒 | 返工协议 §1 |
 | 禁-19 | **不得**以 override 评审代替修正（凡 high/medium finding 必须先修源文件再重走全链路） | 评审价值被架空，语义缺陷残留 | 语义评审纪律 |
 | 禁-20 | **不得**编造 evidence_refs（必须真实存在于归因账本或报告正文） | 虚假引用 → 评审误判 PASS | 语义评审纪律 |
-| 禁-21 | **禁止**单 Agent "扮演"多角色后自称已扇出（`fanout_required` 必须真扇出独立 Agent） | role-*.md 缺失 → Gate 拒收 | 多角色 skill 纪律 |
+| 禁-21 | **Agent 不得自证计算**（只能提交 operation/args，重放结果由 Audit Job 调 `financial_rigor.py` 生成） | 自算结果与重放不一致 → Audit 失败 | Agent 派发规范 |
+| 禁-22 | **角色备忘录不得相互引用**（各 role-*.md ≥300B 且独立产出以保证多角色分析独立性） | 角色间交叉污染 → 扇出形同虚设，Gate 拒收 | 多角色 skill 纪律 |
 
 ### D. 数据与基线
 
 | # | 禁令 | 后果 | 原文位置 |
 |---|------|------|---------|
-| 禁-22 | **不得**用训练记忆假设日期（必须执行本地 `date`） | 数据截止日错位 → 全 run 信息基线错误 | 启动 §1 |
-| 禁-23 | **不得**基于「会话早期印象」假设版本（必须实时读契约文件） | 过期编排启动 → E10 finalize 拒出 | 启动 §2 |
-| 禁-24 | **禁止**伪造 token 为 0（提供商不返回时记 `null`） | 成本基准失真 → benchmark 不可比 | usage 回传协议 |
-| 禁-25 | **禁止**手工绕过 429 预算冷却（runtime 429 冷却约束 Agent job 预算） | 预算形同虚设 → hard_max 被破 → 无法收口 | Agent 调度纪律 §5 |
-| 禁-26 | **不得**引入新数据/新推理/新结论（deep-summary Agent 只读只提炼） | 总结报告不再是忠实综合 → 与底层产物矛盾 | 总结产出纪律 |
+| 禁-23 | **不得**用训练记忆假设日期（必须执行本地 `date`） | 数据截止日错位 → 全 run 信息基线错误 | 启动 §1 |
+| 禁-24 | **不得**基于「会话早期印象」假设版本（必须实时读契约文件） | 过期编排启动 → E10 finalize 拒出 | 启动 §2 |
+| 禁-25 | **禁止**伪造 token 为 0（提供商不返回时记 `null`） | 成本基准失真 → benchmark 不可比 | usage 回传协议 |
+| 禁-26 | **禁止**手工绕过 429 预算冷却（runtime 429 冷却约束 Agent job 预算） | 预算形同虚设 → hard_max 被破 → 无法收口 | Agent 调度纪律 §5 |
+| 禁-27 | **不得**引入新数据/新推理/新结论（deep-summary Agent 只读只提炼） | 总结报告不再是忠实综合 → 与底层产物矛盾 | 总结产出纪律 |
+| 禁-28 | **deep-summary Agent 不得调用** `register-summary`/`audit`/`finalize`（这些由编排器执行） | 越权准出 → 绕过 Gate 校验 | 总结产出纪律 |
 
 ### E. 路径与格式细节
 
 | # | 禁令 | 后果 | 原文位置 |
 |---|------|------|---------|
-| 禁-27 | **不得**重新计算/改写 digest（必须从简报逐字复制） | ingest 摘要不匹配拒收 | 语义评审纪律 |
-| 禁-28 | **不得**写成 `name`/`result` 之类别名（维度项必须用 `dimension`/`verdict` 键名） | JSON schema 校验失败 | 语义评审纪律 |
-| 禁-29 | **禁止**用相对路径传 `register-summary` / `review ingest` | 双重拼接报错 | 语义评审纪律 |
-| 禁-30 | **不要**把提交拖到下一个波次之后（Agent 返回后 60 秒内 job-started） | 租约过期 → submit 被拒 | 调度时序纪律 §2 |
-| 禁-31 | **不要**留到收口阶段批量处理 submit 被拒（当场修复或报告后重提） | 批量返工使 audit→prepare→评审→ingest→summarize 连锁重跑 | 调度时序纪律 §3 |
-| 禁-32 | **不要**等待租约自然过期（Agent 返回空 → 立即 resume） | 五粮液 run W4 三单元卡死根因 | E15 兜底 |
-| 禁-33 | **不要**在本适配器中复制契约清单（注册表是唯一真源） | 副本过时 → 派发信息错位 | 启动 §3 |
+| 禁-29 | **不得**重新计算/改写 digest（必须从简报逐字复制） | ingest 摘要不匹配拒收 | 语义评审纪律 |
+| 禁-30 | **不得**写成 `name`/`result` 之类别名（维度项必须用 `dimension`/`verdict` 键名） | JSON schema 校验失败 | 语义评审纪律 |
+| 禁-31 | **禁止**用相对路径传 `register-summary` / `review ingest` | 双重拼接报错 | 语义评审纪律 |
+| 禁-32 | **不要**把提交拖到下一个波次之后（Agent 返回后 60 秒内 job-started） | 租约过期 → submit 被拒 | 调度时序纪律 §2 |
+| 禁-33 | **不要**留到收口阶段批量处理 submit 被拒（当场修复或报告后重提） | 批量返工使 audit→prepare→评审→ingest→summarize 连锁重跑 | 调度时序纪律 §3 |
+| 禁-34 | **不要**等待租约自然过期（Agent 返回空 → 立即 resume） | 五粮液 run W4 三单元卡死根因 | E15 兜底 |
+| 禁-35 | **不要**在本适配器中复制契约清单（注册表是唯一真源） | 副本过时 → 派发信息错位 | 启动 §3 |
 
 ---
 
