@@ -22,7 +22,7 @@ This skill is generated from `skills/full-company-analysis.md` so Claude Code an
 
 # WorkBuddy 全量公司分析适配器
 
-> **Runtime 说明**：本 skill 为 WorkBuddy 原生编排器（`platform: workbuddy`），使用 WorkBuddy 原生 Agent/Task 工具 + `full_analysis.py` Runtime。其他 skills-compatible runtime（Claude Code / Codex / Cursor 等）可安装 `codex-skills/full-company-analysis/SKILL.md` 作为参考工作流，但租约/预算/Gate 机制须替换为对应 Runtime 的等价物。本文件是 WorkBuddy 真源，不可降级为通用 skill。
+> **Runtime 说明**：本 skill 为 WorkBuddy 原生编排器（`platform: workbuddy`），使用 WorkBuddy 原生 Agent/Task 工具 + `full_analysis.py` Runtime。其他 skills-compatible runtime（Claude Code / Codex / Cursor 等）可将 `codex-skills/` 副本作为参考工作流（租约/预算/Gate 机制须替换为对应 Runtime 等价物）。WorkBuddy 编排真源为仓库 `skills/full-company-analysis.md`。
 
 这是生产入口，不是第二套业务编排器。它只服务"一家公司、一次完整运行"；`industry-funnel` 仍可在该公司上下文中执行其行业漏斗任务，不改变单公司边界。租约和预算的实现位于 `tools/full_analysis_runtime.py`，正式状态只由 `tools/full_analysis_gate.py` 写入。
 
@@ -49,7 +49,7 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
-5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target` 与当前注册表 skill 数是否匹配（代码默认 `26` = 13 项业务契约 ×2（work + summary 各一次派发）+ preflight，非 13——若文档口述「13 项契约 + preflight」而代码值为 26，以代码为准因为 summary 与 preflight 各算一次独立派发）；数量异常视为版本错配，停止并核对。
+5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`（代码硬编码 `26`，对应 13 项业务契约的正常派发总量上限，含 work/summary/rework 等各阶段）。数量异常视为版本错配，停止并核对。具体值以 Gate `budget_params` 为准，此处数字仅作人读参考。
 6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
 ## Agent 调度纪律
@@ -82,7 +82,7 @@ python3 scripts/full_analysis.py next-work --run-root <run_root> --allowlist inv
 
 当前 13 单元的波次（契约 depends_on 的拓扑分层，**编排默认分派**）：W1 `ashare-data` → W2 `financial-data`/`quality-screen`/`investment-checklist`/`investment-research`（×4 并行）→ **W3 拆两部分**：W3a `investment-team`+`earnings-review`（扇出重单元并行）→ W3b `management-deep-dive`+`industry-research`（轻单元并行，W3a 全部 DONE 后领）→ **W4 先单独跑 `industry-funnel`**，完成后再并行 `bottleneck-hunter`/`news-pulse` → W5 `thesis-tracker`。关键路径墙钟 ≈ 42-50 分（vs 串行 ~142 分）。
 
-Agent 返回 `agent_job_id` 后立即调用（不可在 Agent 启动前调用，因为 `agent-job-id` 参数尚未取得）：
+Agent 派发工具返回 `agent_job_id` 后立即调用（不可在派发前调用，因 `agent-job-id` 参数尚未取得；不等 Agent 任务完成）：
 
 ```text
 python3 scripts/full_analysis.py job-started \
@@ -178,9 +178,9 @@ python3 scripts/full_analysis.py submit-result \
 
 ---
 
-## 🚫 禁止事项清单（红灯规则参考，原文标注 `[禁-N]`）
+## 🚫 禁止事项清单（红灯规则参考）
 
-> **用途**：快速扫描「绝对不能做的事」。每条禁令在原文中有完整上下文和根因解释。清单与正文维护同步，正文中禁止规则旁标注 `[禁-N]` 以便交叉索引。
+> **用途**：快速扫描「绝对不能做的事」。每条禁令在原文中有完整上下文和根因解释。清单与正文须同步维护；原文位置列指向对应章节，确保可回链。
 
 ### A. 派发与并行纪律
 
@@ -188,7 +188,7 @@ python3 scripts/full_analysis.py submit-result \
 |---|------|------|---------|
 | 禁-1 | **禁止后台派发** Agent（`run_in_background`） | 不返回 job_id → 无法 job-started → 租约过期 requeue 灾难 | Agent 调度纪律 §1 |
 | 禁-2 | **禁止逐个前台串行**派发（同波单元必须在一条消息里并行） | 波次退化为全串行，浪费依赖图 ~90 分收益 | Agent 调度纪律 §2 |
-| 禁-3 | **W3/W4 禁止裸调用 next-work**（必须带 `--allowlist`；W1/W2/W5 允许裸调用） | 重扇出与轻单元混编 → 轻单元租约过期被 sweep 误回收重跑 | Agent 调度纪律 §5 |
+| 禁-3 | **W3/W4 禁止裸调用 next-work**（必须带 `--allowlist`；W1/W2/W5 允许裸调用；W3a→W3b 错峰，W4a funnel 单独跑完成后再领 W4b） | 重扇出与轻单元混编 / funnel 全市场取数争并发 → 租约过期误回收重跑 | Agent 调度纪律 §5 |
 | 禁-4 | **禁止**用 Python/shell/旧版 orchestrator 再创建 Agent | 绕过 Runtime 租约/预算管控，导致状态不一致 | Agent 调度纪律 |
 | 禁-5 | **不得**提前调用 W3b 的 allowlist（必须在 W3a 全 DONE 后） | 轻单元会重蹈租约过期覆辙 | Agent 调度纪律 §5 屏障 |
 | 禁-6 | **不得**由主上下文直接撰写分析正文 | 主上下文无新鲜窗口/外部调研 → 深度坍塌 | 执行一致性纪律 |
@@ -281,7 +281,8 @@ python3 scripts/full_analysis.py render-html --run-root <run_root>
 # 步骤 C：审计 + 语义评审 + 准出
 python3 scripts/full_analysis.py audit --run-root <run_root>
 python3 scripts/full_analysis.py review prepare --run-root <run_root>
-# 为 scope 内每个 skill 派独立评审 Agent（见语义评审纪律）
+# 为 scope 内每个 skill 派独立评审 Agent，产出 review-result 后逐个 ingest（见语义评审纪律）
+#   python3 scripts/full_analysis.py review ingest --run-root <run_root> --review <run_root>/evidence/review/review-result-<skill>.json
 python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 

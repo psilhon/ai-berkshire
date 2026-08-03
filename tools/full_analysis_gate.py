@@ -195,8 +195,8 @@ def _git_stale_check() -> dict:
                               capture_output=True, text=True, timeout=5, cwd=repo)
         tag_list = [t for t in tags.stdout.split() if t]
         if not tag_list:
-            return {"stale": False, "head": head_sha, "head_tag": head_tag,
-                    "latest_tag": None, "detail": "仓库无 v* tag，跳过版本门禁"}
+            return {"stale": None, "head": head_sha, "head_tag": head_tag,
+                    "latest_tag": None, "detail": "仓库无 v* tag（未 fetch tags？），版本门禁未生效"}
         latest = sorted(tag_list, key=lambda t: [int(x) for x in t.lstrip("v").split(".")])
         latest_tag = latest[-1]
         if head_tag == latest_tag:
