@@ -5,6 +5,30 @@
 
 ---
 
+## [v3.4.6] — 2026-08-03
+
+> review 修复：Standards（清单去重补漏/禁-3窄化/round对齐/Runtime声明）+ Spec（硬编码/TSV损坏/时序矛盾/normal_target口径）
+
+### 🐛 修复 (Fixed)
+
+**Standards：**
+- 禁止事项清单：标题「全集」→「参考清单」；禁-3「禁止裸调用」→「W3/W4 禁止裸调用（W1/W2/W5 允许）」；禁-8/禁-21 去重（删除旧禁-21，编号腾给新规则）。
+- 补遗漏 3 条：禁-21 Agent 不得自证计算、禁-22 角色备忘录不得相互引用、禁-28 deep-summary 不得调用准出命令。清单共 35 条。
+- 禁-12：round() 禁令修正——`financial_rigor.py` 原生支持 `round(EXPR, N)`（展开为 quantize 字面量），仅禁 `^` 幂运算。
+- Runtime 声明：新增跨 Runtime 说明块（WorkBuddy 原生 + codex-skill 仅作参考工作流）。
+
+**Spec：**
+- 恢复指令：`git checkout v3.4.4` 硬编码 → 动态获取最新 tag。
+- TSV 第 13 行：heredoc 换行致 16 列损坏 → 修复为合法 9 列。
+- job-started 时序：L73「启动 Agent 前调用」→「Agent 返回后立即调用」（与 L85 一致，需 agent_job_id）。
+- normal_target 口径：文档「13 项契约 + preflight」→ 补代码值 26 = 13×2(work+summary) + preflight 说明。
+
+### 🚀 部署
+- codex skill 重新安装（`~/.codex/skills/full-company-analysis/SKILL.md` 含 35 条禁止规则）。
+- 三副本 SHA 一致，check.sh 全绿。
+
+---
+
 ## [v3.4.5] — 2026-08-03
 
 > Darwin 2.0 复评 94.3/100 + dim9 补齐（新增 🚫 禁止事项清单独立章节）
