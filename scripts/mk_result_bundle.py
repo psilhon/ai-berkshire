@@ -105,19 +105,19 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
 
     sources = [{
         "source_id": f"src.{sid}.primary",
-        "url": f"https://www.cninfo.com.cn/{sid}",
+        "url": f"https://example.invalid/{sid}/placeholder-primary",
         "retrieved_at": now_iso()[:10],
-        "source_type": "filing",
-        "publisher": "巨潮资讯网/上交所",
-        "title": f"{sid} 一手披露来源",
+        "source_type": "other",
+        "publisher": f"PLACEHOLDER 占位一手来源（{sid}，未核实）",
+        "title": f"{sid} 结构地板占位来源——非真实检索，必须用真实来源替换",
     }]
     secondary = {
         "source_id": f"src.{sid}.secondary",
-        "url": f"https://data.eastmoney.com/{sid}",
+        "url": f"https://example.invalid/{sid}/placeholder-secondary",
         "retrieved_at": now_iso()[:10],
-        "source_type": "web",
-        "publisher": "东方财富数据中心",
-        "title": f"{sid} 二次交叉来源",
+        "source_type": "other",
+        "publisher": f"PLACEHOLDER 占位二次来源（{sid}，未核实）",
+        "title": f"{sid} 结构地板占位交叉来源——非真实检索，必须用真实来源替换",
     }
 
     min_facts = n("min_facts")
@@ -135,9 +135,11 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
         facts.append({
             "fact_id": f"fact.{sid}.{field}",
             "field": field,
-            "value": f"{sid}::{field}",
+            # v3.4.10：占位值必须自报身份（PLACEHOLDER 前缀），禁止伪装成真实数值——
+            # 此前 value={sid}::{field} 配 confidence=high 会被误读为已核实事实。
+            "value": f"PLACEHOLDER::{sid}::{field}",
             "source_ids": srcs,
-            "confidence": "high",
+            "confidence": "low",
         })
     if min_dual > 0:
         sources.append(secondary)
@@ -287,6 +289,17 @@ def main() -> int:
 
     facts, sources, calcs, judgments, role_runs, receipts, capabilities = \
         build_minimum_evidence(skill, extra_facts, extra_sources)
+
+    # v3.4.10：无真实证据时大声告警——此时 bundle 全部由 PLACEHOLDER 结构地板构成，
+    # Gate 预提交门禁会硬拒收（_precheck_placeholder_evidence）。地板只为本地调试
+    # bundle 结构而存在，绝不能作为真实调研成果提交。
+    if not extra_facts and not extra_sources and args.status in ("PASS", "PASS_WITH_LIMITATIONS"):
+        print(
+            "⚠️ 警告：未提供 --extra-evidence/--extra-sources，本 bundle 的证据账本全部为 "
+            "PLACEHOLDER 结构地板（非真实调研）。Gate 预提交门禁将硬拒收。"
+            "请先完成真实调研，再用真实 fact_updates/source_records 重跑本生成器。",
+            file=sys.stderr,
+        )
 
     art_id = skill["artifact"]["artifact_id"]
     artifact_records = [{

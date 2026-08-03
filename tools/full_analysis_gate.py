@@ -413,6 +413,10 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
         # 聚合为一次抛错，Agent 一轮看全所有问题、原地修完再交，不进 audit、不耗 attempt。
         preflight_errors = _precheck_calculation_params(bundle)
         preflight_errors += _precheck_command_receipts(bundle, skill)
+        # v3.4.10：占位证据水印拒收——mk_result_bundle 的「结构地板」只用于本地打通
+        # 结构，不得进正式账本。任何带 PLACEHOLDER 水印的 fact/source 出现在 PASS bundle
+        # 中即拦截（水印是确定性字符串，误报为零）。真实证据必须替换全部占位字段。
+        preflight_errors += _precheck_placeholder_evidence(bundle)
         if preflight_errors:
             raise GateError(
                 f"{bundle['skill_id']} 预提交门禁拦截 {len(preflight_errors)} 处问题"
@@ -541,6 +545,34 @@ def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
     ]
 
 
+def _precheck_placeholder_evidence(bundle: dict) -> list:
+    """拒收 mk_result_bundle「结构地板」生成的 PLACEHOLDER 水印证据（v3.4.10）。
+
+    返回错误消息列表（空=通过），由 validate_result_bundle 聚合抛出。
+    水印是确定性字符串（PLACEHOLDER 前缀），只可能来自生成器地板，误报为零。
+    背景：生成器为让 bundle 过结构校验会补最低条数的占位 fact/source（此前还
+    伪装成「巨潮资讯网」等权威来源 + confidence=high）；若不拦截，未做真实调研
+    的 bundle 也能把占位证据写进正式事实/来源账本，污染生产可信度。
+    """
+    errors = []
+    for fact in bundle.get("fact_updates") or []:
+        if "PLACEHOLDER" in str(fact.get("value", "")):
+            errors.append(
+                f"  - [占位证据] fact {fact.get('fact_id')} 的 value 为 PLACEHOLDER 水印"
+                f"（生成器结构地板，非真实调研）；请用真实数值替换，"
+                f"并通过 --extra-evidence 提供真实 fact_updates。"
+            )
+    for src in bundle.get("source_records") or []:
+        if "PLACEHOLDER" in str(src.get("publisher", "")) \
+                or "PLACEHOLDER" in str(src.get("title", "")):
+            errors.append(
+                f"  - [占位证据] source {src.get('source_id')} 为 PLACEHOLDER 占位来源"
+                f"（生成器结构地板，非真实检索）；请用真实检索来源替换，"
+                f"并通过 --extra-sources 提供真实 source_records。"
+            )
+    return errors
+
+
 def _validate_not_applicable(bundle: dict, skill: dict, manifest: dict) -> None:
     proof = bundle.get("not_applicable")
     if not isinstance(proof, dict):
@@ -659,12 +691,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         "capabilities": {}, "events": [], "delivery": {"summary": None},
     }
     atomic_write_json(root / MANIFEST_REL, manifest)
-    # v3.4.9：normal_target 唯一机器真源 = 2 × 契约单元数（13 单元 → 26）：
-    # 全员一次成功（13）+ 一轮全员返工余量（13）。仅作编排器启动时的版本错配
-    # 核对信号，无运行时阻断逻辑——派发阻断由 stop_dispatch_at（软）与 hard_max（硬）承担。
-    # 历史口径（work+summary+preflight 各计一次）已废弃：summary/review 不计入 used，
-    # used 仅在 preflight 与 job-started 时递增。
-    budget_normal_target = 2 * len(registry["skills"])
+    # v3.4.10：normal_target 唯一机器真源 = 2 × 契约单元数 + 1（13 单元 → 27）：
+    # preflight（1，计入 used 一次）+ 全员一次成功（13）+ 一轮全员返工余量（13）。
+    # 口径与 runtime 的 used 计数严格对齐（used 在 preflight 与每次 job-started 各 +1），
+    # 仅作编排器启动时的版本错配核对信号，无运行时阻断逻辑——派发阻断由
+    # stop_dispatch_at（软停非 core）与 hard_max（硬停全部）承担。
+    # 历史口径：v3.4.9 前为 2N（26），漏计 preflight 导致与 used 实际计数差 1。
+    budget_normal_target = 2 * len(registry["skills"]) + 1
     atomic_write_json(root / RUNTIME_STATE_REL, {
         "state_version": "runtime-state/v1",
         "run_id": run_id,

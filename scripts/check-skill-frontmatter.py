@@ -75,6 +75,20 @@ def main() -> int:
             continue
 
         fields = parse_fields(frontmatter)
+        platform = fields.get("platform", "").strip()
+
+        # v3.4.10：平台绑定双向规则（独立于 name 匹配，防 name==stem 时漏检）：
+        # 文件名带 -workbuddy 后缀 ⟺ frontmatter 必须声明 platform: workbuddy。
+        if name.endswith("-workbuddy") and platform != "workbuddy":
+            errors.append(
+                f"{source.name}: 文件名含 -workbuddy 后缀但 frontmatter 未声明 "
+                f"`platform: workbuddy`（当前 platform={platform or '缺失'}）"
+            )
+        if platform == "workbuddy" and not name.endswith("-workbuddy"):
+            errors.append(
+                f"{source.name}: 声明 `platform: workbuddy` 但文件名缺少 "
+                f"-workbuddy 后缀（平台绑定 skill 必须以 -workbuddy 命名）"
+            )
 
         for field in REQUIRED_FIELDS:
             value = fields.get(field, "").strip()
@@ -82,14 +96,12 @@ def main() -> int:
                 errors.append(f"{source.name}: 缺少必填字段 `{field}`")
                 continue
             if field == "name" and value != name:
-                # name 必须与文件名一致；仅当 frontmatter 声明 platform: workbuddy 时
-                # 允许 -workbuddy 后缀（平台绑定 skill 的命名约定），其余一律拒绝。
-                if not (value == f"{name}-workbuddy"
-                        and fields.get("platform", "").strip() == "workbuddy"):
-                    errors.append(
-                        f"{source.name}: frontmatter name `{value}` 与文件名 `{name}` 不一致"
-                        f"（-workbuddy 后缀需同时声明 platform: workbuddy）"
-                    )
+                # v3.4.10：name 必须严格等于文件名 stem（无豁免）。
+                # 平台绑定 skill 的命名约定由文件名本身承载（-workbuddy 后缀），
+                # 不再在 name 匹配上开后门。
+                errors.append(
+                    f"{source.name}: frontmatter name `{value}` 与文件名 `{name}` 不一致"
+                )
             if field == "category" and value not in ALLOWED_CATEGORIES:
                 errors.append(
                     f"{source.name}: category `{value}` 非法，应为 {sorted(ALLOWED_CATEGORIES)}"

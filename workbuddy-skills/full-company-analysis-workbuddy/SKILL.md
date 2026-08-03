@@ -39,7 +39,7 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
-5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`。其唯一机器真源在 Gate `cmd_init`：`normal_target = 2 × 契约单元数`（当前 13 单元 → 26，即全员一次成功 + 一轮全员返工余量）。它只是启动时的版本错配核对信号，无运行时阻断逻辑；派发阻断由 `stop_dispatch_at`（软停非 core）与 `hard_max`（硬停全部）承担。`used` 仅在 preflight 与 job-started 时递增（summary/review 不计入 used）。数量异常视为版本错配，停止并核对。
+5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`。其唯一机器真源在 Gate `cmd_init`：`normal_target = 2 × 契约单元数 + 1`（当前 13 单元 → 27；+1 = preflight，它计入 used 一次；其余为全员一次成功 + 一轮全员返工余量）。口径与 runtime 的 `used` 计数严格对齐。它只是启动时的版本错配核对信号，无运行时阻断逻辑；派发阻断由 `stop_dispatch_at`（软停非 core）与 `hard_max`（硬停全部）承担。`used` 仅在 preflight 与 job-started 时递增（summary/review 不计入 used）。数量异常视为版本错配，停止并核对。
 6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
 ## Agent 调度纪律

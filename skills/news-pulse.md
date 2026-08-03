@@ -284,7 +284,7 @@ review-cadence: per-release
 | `north-hold` | 北向持股趋势 | 外资对该标的的中长期态度 | 可选 |
 
 > **数据源优先级**：Tushare（可审计可冻结） > 东财/腾讯（基础层） > WebSearch（补充层）。异动归因中资金面数据优先使用 Tushare 结构化数据，不应仅依赖 WebSearch 搜索新闻。
-> **执行方式**：在 `full-company-analysis` 流程中，本 skill 的数据通过 `tushare-enrich` 冻结收据后使用。
+> **执行方式**：在 `full-company-analysis-workbuddy` 流程中，本 skill 的数据通过 `tushare-enrich` 冻结收据后使用。
 
 **热度旁证（零依赖，无需 Tushare）**：`ths-hot` 已落地为零依赖命令，热度维度可独立于 Tushare 取数，作异动归因的热度旁证：
 

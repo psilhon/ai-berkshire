@@ -312,7 +312,7 @@ python3 tools/report_audit.py verdict \
 | `repurchase` | 股票回购 | 股东回报行为 | 可选 |
 
 > **数据源优先级**：Tushare（可审计可冻结） > 东财/腾讯（基础层） > WebSearch（补充层）。Tushare 与任何源冲突时以 Tushare 为准。
-> **执行方式**：在 `full-company-analysis` 流程中，本 skill 的数据通过 `run-ashare-command` 或 `tushare-enrich` 冻结收据后使用。
+> **执行方式**：在 `full-company-analysis-workbuddy` 流程中，本 skill 的数据通过 `run-ashare-command` 或 `tushare-enrich` 冻结收据后使用。
 > **研报免费源**：`report-list <代码>`（东财 reportapi，零鉴权）可独立于 Tushare 拉取个股/行业研报（评级/目标价/EPS），作 `analyst-reports` 的免费源补充；`reportapi` 只认纯 6 位代码，北交所老号段需先迁 920 码。
 
 ## 依赖与资源清单

@@ -5,6 +5,28 @@
 
 ---
 
+## [v3.4.10] — 2026-08-03
+
+> review 三轮修复：改名真闭环（README 死链 + 4 业务 skill + 链接测试）/ frontmatter 真强制（双向 platform 规则 + 7 回归测试）/ normal_target 口径对齐（2N+1）/ 占位证据水印护栏
+
+### 🔧 变更 (Changed)
+- **改名真闭环**：README.md:173 死链（workbuddy-skills/full-company-analysis/SKILL.md → -workbuddy）修复；ashare-data(9 处)/earnings-review/investment-research/news-pulse 旧标识清零（skills/ 活跃真源裸旧 ID = 0）。
+- **README 链接测试扩展**：从只匹配 `skills/` 前缀扩为覆盖全部相对 .md 链接（local/ 除外——本地私有区不入库，CI 无法解析）；顺带发现并修复 README:551 四个已删除 funnel 报告的死链（改为指向 INDEX.md）。
+- **frontmatter 真强制**：v3.4.9 的"收紧"实测可绕过（删 platform 后 name==stem 不触发 name 分支）。改为独立双向规则：文件名带 -workbuddy 后缀 ⟺ 必须声明 platform: workbuddy（两个方向都拦）；name 严格等于文件名 stem，无豁免后门。新增 7 个回归测试（含 v3.4.9 漏检复现用例）。
+- **normal_target 口径对齐**：2N（26）→ 2N+1（27）。+1 = preflight，它计入 used 一次，与 runtime 的 used 实际计数严格对齐（此前差 1 会误报版本错配）。测试断言与 skill 文档同步。
+- **CLI 帮助补三态**：--allow-stale help 覆盖 stale=None（无 git/无 tag/命令异常）场景，不再只说"HEAD 落后 tag"。
+
+### 🛡️ 占位证据水印护栏（遗留高风险项缓解）
+- **生成器水印**：mk_result_bundle 的「结构地板」占位证据不再伪装权威来源（"巨潮资讯网/上交所"→ `PLACEHOLDER 占位来源（未核实）`，url → example.invalid），fact value 加 `PLACEHOLDER::` 前缀 + confidence high→low。
+- **Gate 硬拒收**：新增 `_precheck_placeholder_evidence`——PASS/PWL bundle 中任何带 PLACEHOLDER 水印的 fact/source 在 ingest 时被确定性拦截（水印是确定性字符串，误报为零），并入预提交门禁聚合抛错。
+- **大声告警**：生成器未提供 --extra-evidence/--extra-sources 时输出 stderr 警告（地板仅为本地调试 bundle 结构，绝不能作为真实调研成果提交）。
+- 新增 PlaceholderEvidenceTests 4 例（含全 13 skill 地板水印完整性断言）。
+
+### ✅ 测试
+- check.sh 全绿；frontmatter 7 回归 + 水印 4 回归 + README 链接测试全过；三副本 SHA-256 一致。
+
+---
+
 ## [v3.4.9] — 2026-08-03
 
 > review 二轮修复：改名全链路闭环 / E1 真 fail-close（--allow-stale 注册） / 契约最小 diff / normal_target 机器派生 / 校验器收紧

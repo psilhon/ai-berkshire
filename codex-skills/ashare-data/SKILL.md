@@ -80,7 +80,7 @@ This skill is generated from `skills/ashare-data.md` so Claude Code and Codex us
 | 级别 | 含义 | 命令集 | 定义方式 | 触发方 |
 |------|------|--------|---------|--------|
 | **L0 QUICK** | 快查 | `quote` `valuation` `financials`（概览三件套） | **静态清单** | 对话内快查 / standalone 默认行为 |
-| **L1 CORE** | 默认级别 | 由编排器 feeds 映射**动态**决定（实测 12–27 条，稳定含概览三件套 + `history` `equity-history` `signals` `announcements` `ratios` `mainbz` `managers` `peers`） | **动态，非固定清单** | `full-company-analysis` / `investment-research` 管线 |
+| **L1 CORE** | 默认级别 | 由编排器 feeds 映射**动态**决定（实测 12–27 条，稳定含概览三件套 + `history` `equity-history` `signals` `announcements` `ratios` `mainbz` `managers` `peers`） | **动态，非固定清单** | `full-company-analysis-workbuddy` / `investment-research` 管线 |
 | **L2 ENHANCED** | 增强信号 | L1 + 涨停生态(`limit-pool`)/监管监控(`monitor-pool`)/异动(`anomaly-pool`) + 热度层(`ths-hot`) | **已就位**（三件套 + 热度层 ths-hot 已建，curl 优先 + Tushare 备用） | 人工 standalone 情绪与治理扫描 |
 | **L3 FULL** | 全量侦察 | L2 + 一手定性(`ird-interact`)/快讯(`cls-telegraph`)/研报(`report-list`)层 | **部分就位**（三件套已建，零鉴权免费源，由消费方 skill 调用） | 人工 standalone 深度调研 |
 
@@ -88,13 +88,13 @@ This skill is generated from `skills/ashare-data.md` so Claude Code and Codex us
 
 **两条硬约束（勿回退）**：
 
-1. **L1 绝不是一份固定命令清单。** 全量分析语境下取数范围由编排器 feeds 映射按公司动态决定。曾有版本把 L1 钉成 7 条固定命令，实测会漏掉 `ratios`/`mainbz`/`managers`/`peers`，导致 full-company-analysis **静默降级**。
+1. **L1 绝不是一份固定命令清单。** 全量分析语境下取数范围由编排器 feeds 映射按公司动态决定。曾有版本把 L1 钉成 7 条固定命令，实测会漏掉 `ratios`/`mainbz`/`managers`/`peers`，导致 full-company-analysis-workbuddy **静默降级**。
 2. **`run-level` 只服务 standalone 快查，不进主管线。** CLI 层不提供 `--level core`。主管线维持 gate 逐条 `run-ashare-command` 执行并冻结收据，命令级血缘一条不丢；聚合执行会使血缘塌缩、`signals` 部分成功语义丢失。
 
 **跨级步骤 `search`**：输入为公司名时自动前置定码，输入为六位代码时不触发。它是**输入归一化**，不属于任何级别。
 
 ```bash
-# standalone 快查（仅人工触发，不用于 full-company-analysis）
+# standalone 快查（仅人工触发，不用于 full-company-analysis-workbuddy）
 python3 tools/ashare_data.py run-level 600519 --level quick
 python3 tools/ashare_data.py run-level 贵州茅台 --level quick   # 公司名自动前置 search 定码
 ```
@@ -109,7 +109,7 @@ python3 tools/ashare_data.py run-level 贵州茅台 --level quick   # 公司名�
 2. 输入是公司名 → 先 `python3 tools/ashare_data.py search {关键词}` 定码；多个匹配列出候选让用户确认。
 3. 用户没指定数据类型 → 默认取概览三件套（quote + valuation + financials，即 **L0 QUICK**），**不要默默把八个命令全跑一遍**。
 
-🔴 STOP / 检查点：在按用户未明确指定的范围自动扩展取数（如默默把八个命令全跑一遍、或在 full-company-analysis 中自动触发 Tushare 增强集）前，必须先向用户确认（给出明确选项：如"仅取概览三件套""按研究需要取指定命令""触发 Tushare 交叉验证"），获得明确同意后再继续；未经确认不得自主扩大取数范围。
+🔴 STOP / 检查点：在按用户未明确指定的范围自动扩展取数（如默默把八个命令全跑一遍、或在 full-company-analysis-workbuddy 中自动触发 Tushare 增强集）前，必须先向用户确认（给出明确选项：如"仅取概览三件套""按研究需要取指定命令""触发 Tushare 交叉验证"），获得明确同意后再继续；未经确认不得自主扩大取数范围。
 
 ### 第二步：按需取数
 
@@ -149,9 +149,9 @@ python3 tools/ashare_data.py signals <代码>
 
 🔴 STOP / 检查点：在把取数结果写入报告文件、artifact 记录或对外发布/外发前，必须先向用户确认（给出明确选项：如"仅对话内呈现不落盘""确认写入并标注来源""暂不发布"），获得明确同意后再继续；未经确认不得自主落盘或外发。
 
-### full-company-analysis 集成
+### full-company-analysis-workbuddy 集成
 
-在 `full-company-analysis` 中不得只粘贴命令文本：基础命令由 gate 的 `run-ashare-command` 实际执行并冻结收据；随后至少登记三个可复用核心事实 `price`、`market_cap`、`revenue`。每条事实使用 gate 的 `fact_id/field/subject/period/unit/value/tolerance_pct/sources` 封闭结构，来源保留 publisher、document/URL、acquisition chain 与访问时间；取不到就记录限制，禁止默认值或估算填充。
+在 `full-company-analysis-workbuddy` 中不得只粘贴命令文本：基础命令由 gate 的 `run-ashare-command` 实际执行并冻结收据；随后至少登记三个可复用核心事实 `price`、`market_cap`、`revenue`。每条事实使用 gate 的 `fact_id/field/subject/period/unit/value/tolerance_pct/sources` 封闭结构，来源保留 publisher、document/URL、acquisition chain 与访问时间；取不到就记录限制，禁止默认值或估算填充。
 
 ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 command IDs 连接到 `assigned_artifacts` 中的 artifact ID。注册表 `conditional_command_operations.values` 指定的下游 `feeds` 必须引用同一 artifact ID 和对应 command ID，不得复制文本后丢失血缘。
 
@@ -207,7 +207,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 
 ## 扩展 Tushare 命令参考（47 个条件命令）
 
-以下命令仅在 `TUSHARE_TOKEN` 配置时可用，由 `full-company-analysis` 流程中的 `tushare-enrich` 自动按合约 feeds 映射执行。各 consuming skill 的 SKILL.md 中有详细引用表。
+以下命令仅在 `TUSHARE_TOKEN` 配置时可用，由 `full-company-analysis-workbuddy` 流程中的 `tushare-enrich` 自动按合约 feeds 映射执行。各 consuming skill 的 SKILL.md 中有详细引用表。
 
 **财务深度**：`income-stmt` `balance-sheet` `cash-flow` `ratios` `mainbz` `audit` `express` `consensus`
 **估值**：`pe-band` `kline` `weekly` `monthly` `stk-factor` `factors`
@@ -246,7 +246,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 - 不要用推测填充空数据：任何命令失败或返回空，宁标"数据不足"，不得用估算值伪装成功。
 - 不要在对话、命令参数、报告或仓库中粘贴 TUSHARE_TOKEN 或任何凭据。
 - 不要在用户未明确授权时把取数结果落盘为报告或对外发布：本 skill 只产数据证据，落盘/发布须过 D4 检查点。
-- 🔴 **全量分析语境下取全量数据**：在全量公司分析（full-company-analysis）中，取数范围由编排器决定——包括 quote/financials/valuation/history/equity-history/announcements/signals 全部模块，报告必须覆盖所有已取模块，不得只写概览。
+- 🔴 **全量分析语境下取全量数据**：在全量公司分析（full-company-analysis-workbuddy）中，取数范围由编排器决定——包括 quote/financials/valuation/history/equity-history/announcements/signals 全部模块，报告必须覆盖所有已取模块，不得只写概览。
 - 🔴 **报告必须覆盖所有已执行命令**：evidence/commands/ 中有 stdout 的每条命令，报告中必须有对应的完整章节（含数据表、来源标注、Tushare 交叉验证结果），不得丢弃数据。
 
 ---
@@ -291,7 +291,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 
 > **数据源优先级**：Tushare（可审计可冻结） > 东财/腾讯（基础层） > WebSearch（补充层）。
 > Tushare 与任何源冲突时以 Tushare 为准。
-> **执行方式**：在 `full-company-analysis` 流程中，本 skill 的数据通过
+> **执行方式**：在 `full-company-analysis-workbuddy` 流程中，本 skill 的数据通过
 > `tushare-enrich` 或 `finish-skill` 自动补跑冻结收据后使用。
 ```
 

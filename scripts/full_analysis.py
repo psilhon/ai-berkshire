@@ -51,9 +51,12 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--code", required=True)
     start.add_argument("--as-of", required=True)
     start.add_argument("--run-root")
-    # v3.4.4：E1 机器门禁——HEAD 落后于最新发版 tag 时拒绝启动；显式 --allow-stale 覆盖
+    # v3.4.10：E1 机器门禁三态（fail-close）——stale=True（HEAD 落后最新 tag）与
+    # stale=None（无 git 环境 / 无任何 tag / git 命令异常，不可判定）均拒绝启动；
+    # 仅 stale=False（HEAD 为最新 tag 或领先）放行。显式 --allow-stale 是唯一覆盖路径。
     start.add_argument("--allow-stale", action="store_true",
-                       help="跳过 E1 版本门禁（HEAD 落后于最新 tag 时仍启动，仅确认目标版本后使用）")
+                       help="跳过 E1 版本门禁（HEAD 落后最新 tag，或无 git/tag/命令异常导致不可判定时仍启动；"
+                            "仅在人工确认目标版本无误后使用）")
     for name in ("status", "resume"):
         cmd = sub.add_parser(name, help=f"{name} 运行"); cmd.add_argument("--run-root", required=True)
     cleanup = sub.add_parser("cleanup", help="只读清理预览")

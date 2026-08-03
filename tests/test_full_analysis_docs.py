@@ -34,9 +34,19 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
             self.assertNotIn(skill_id, combined)
 
     def test_readme_skill_links_resolve(self):
+        # v3.4.10：覆盖 README 全部仓库相对 .md 链接（不只 skills/ 前缀）——
+        # v3.4.9 改名后 workbuddy-skills/ 旧路径死链正是只匹配 skills/ 前缀漏掉的。
         text = (REPO / "README.md").read_text(encoding="utf-8")
-        for rel in re.findall(r"\]\((skills/[^)#]+\.md)\)", text):
-            self.assertTrue((REPO / rel).is_file(), rel)
+        links = re.findall(r"\]\(([^)#\s]+\.md)\)", text)
+        self.assertTrue(links, "README 应至少包含一个相对 .md 链接")
+        for rel in links:
+            if rel.startswith(("http://", "https://")):
+                continue
+            # local/ 整体不入库（.gitignore），CI 环境无法解析其链接；
+            # 入库目录（skills/ workbuddy-skills/ docs/ 等）的死链必须报错。
+            if rel.startswith("local/"):
+                continue
+            self.assertTrue((REPO / rel).is_file(), f"README 死链: {rel}")
 
     def test_active_docs_use_canonical_company_run_path(self):
         for path in (REPO / "README.md", REPO / "CLAUDE.md"):

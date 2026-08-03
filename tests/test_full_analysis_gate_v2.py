@@ -1094,5 +1094,59 @@ class StaleCheckTests(unittest.TestCase):
         self.assertIn("异常", r["detail"])
 
 
+class PlaceholderEvidenceTests(unittest.TestCase):
+    """v3.4.10：PLACEHOLDER 水印证据必须被预提交门禁拒收（防占位证据污染正式账本）。"""
+
+    def test_watermarked_fact_rejected(self):
+        from full_analysis_gate import _precheck_placeholder_evidence
+        bundle = {"fact_updates": [{
+            "fact_id": "fact.x.f1", "field": "price",
+            "value": "PLACEHOLDER::x::price", "source_ids": ["src.x.primary"],
+        }], "source_records": []}
+        errors = _precheck_placeholder_evidence(bundle)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("占位证据", errors[0])
+
+    def test_watermarked_source_rejected(self):
+        from full_analysis_gate import _precheck_placeholder_evidence
+        bundle = {"fact_updates": [], "source_records": [{
+            "source_id": "src.x.primary",
+            "url": "https://example.invalid/x/placeholder-primary",
+            "publisher": "PLACEHOLDER 占位一手来源（x，未核实）",
+            "title": "x 结构地板占位来源——非真实检索",
+        }]}
+        errors = _precheck_placeholder_evidence(bundle)
+        self.assertEqual(len(errors), 1)
+
+    def test_real_evidence_passes(self):
+        from full_analysis_gate import _precheck_placeholder_evidence
+        bundle = {"fact_updates": [{
+            "fact_id": "fact.x.f1", "field": "price",
+            "value": 12.34, "source_ids": ["src.real"],
+        }], "source_records": [{
+            "source_id": "src.real", "url": "https://www.cninfo.com.cn/x",
+            "publisher": "巨潮资讯网", "title": "x 2025 年报",
+        }]}
+        self.assertEqual(_precheck_placeholder_evidence(bundle), [])
+
+    def test_generator_floor_is_watermarked(self):
+        # 生成器地板证据必须全部带水印（否则 Gate 拒收形同虚设）
+        import sys as _sys
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "mkb", str(REPO / "scripts" / "mk_result_bundle.py"))
+        mkb = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mkb)
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for skill in registry["skills"]:
+            with self.subTest(skill=skill["skill_id"]):
+                facts, sources, *_ = mkb.build_minimum_evidence(skill, [], [])
+                for fact in facts:
+                    self.assertIn("PLACEHOLDER", str(fact["value"]))
+                    self.assertEqual(fact.get("confidence"), "low")
+                for src in sources:
+                    self.assertIn("PLACEHOLDER", str(src["publisher"]))
+
+
 if __name__ == "__main__":
     unittest.main()

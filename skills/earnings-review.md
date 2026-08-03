@@ -415,7 +415,7 @@ python3 tools/report_audit.py verdict \
 | `disclosure-calendar` | 财报披露日期表 | 确认财报发布日期、避免使用未披露季度的数据 | 可选 |
 
 > **数据源优先级**：Tushare income 原始报表 > 东财 financials 聚合数据 > WebSearch。东财和 Tushare 的利润数据存在差异时以 Tushare 为准。
-> **执行方式**：在 `full-company-analysis` 流程中，`income-stmt` 通过 `tushare-enrich` 在 L2 执行前补跑。`express`/`consensus`/`disclosure-calendar` 同为条件 Tushare 操作。
+> **执行方式**：在 `full-company-analysis-workbuddy` 流程中，`income-stmt` 通过 `tushare-enrich` 在 L2 执行前补跑。`express`/`consensus`/`disclosure-calendar` 同为条件 Tushare 操作。
 
 ## 依赖与资源清单
 

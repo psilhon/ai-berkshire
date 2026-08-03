@@ -170,7 +170,7 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 ### 单公司全量分析（WorkBuddy）
 
-无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis/SKILL.md`](workbuddy-skills/full-company-analysis/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 13 项业务契约。Runtime 负责租约、重试、恢复与 33 次硬预算；Gate 负责 Result Bundle v1、N/A 负向验收、正式产物与总结报告原子晋级、共享 Audit、语义 Review 和最终准出。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
+无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis-workbuddy/SKILL.md`](workbuddy-skills/full-company-analysis-workbuddy/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 13 项业务契约。Runtime 负责租约、重试、恢复与 33 次硬预算；Gate 负责 Result Bundle v1、N/A 负向验收、正式产物与总结报告原子晋级、共享 Audit、语义 Review 和最终准出。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
 
 ```bash
 python3 scripts/full_analysis.py start \
@@ -548,7 +548,7 @@ cd ai-berkshire
 
 **关键发现**：AI 应用层最大赢家不是 AI Native 公司，而是有渠道+数据+工作流嵌入度的成熟巨头——这呼应了 1995-2000 互联网泡沫"卖铲子"的历史规律（亚马逊和苹果赢，Pets.com 输）。
 
-完整报告：[AI 算力](local/reports/AI算力-funnel-20260509.md) · [AI 模型](local/reports/AI模型-funnel-20260509.md) · [AI 应用](local/reports/AI应用-funnel-20260509.md) · [AI 基建电力](local/reports/AI基建电力-funnel-20260509.md)
+完整报告：当时的四份 funnel 产物已随 local/ 清理移除；现行报告清单见 [local/reports/INDEX.md](local/reports/INDEX.md)。
 
 ---
 
