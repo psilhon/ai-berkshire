@@ -82,10 +82,11 @@ def main() -> int:
                 errors.append(f"{source.name}: 缺少必填字段 `{field}`")
                 continue
             if field == "name" and value != name:
-                # name should match the filename for a predictable slash command id
-                errors.append(
-                    f"{source.name}: frontmatter name `{value}` 与文件名 `{name}` 不一致"
-                )
+                # name should match the filename; _workbuddy suffix allowed for platform-bound skills
+                if not (value == f"{name}_workbuddy"):
+                    errors.append(
+                        f"{source.name}: frontmatter name `{value}` 与文件名 `{name}` 不一致"
+                    )
             if field == "category" and value not in ALLOWED_CATEGORIES:
                 errors.append(
                     f"{source.name}: category `{value}` 非法，应为 {sorted(ALLOWED_CATEGORIES)}"
