@@ -570,6 +570,32 @@ def _precheck_placeholder_evidence(bundle: dict) -> list:
                 f"（生成器结构地板，非真实检索）；请用真实检索来源替换，"
                 f"并通过 --extra-sources 提供真实 source_records。"
             )
+    # v3.4.13：占位预检此前只覆盖 fact/source，导致生成器自动签发的 calculation/
+    # judgment/command_receipt 完全不受检——ashare-data 一个单元就能凭空产出 51 条
+    # status=PASS 的"命令已成功执行"回执并被接受为 DONE（未跑任何命令）。
+    # 证据账本的每一类都必须受同一水印口径约束，否则"自动自证"路径依然通畅。
+    for calc in bundle.get("calculation_requests") or []:
+        if "PLACEHOLDER" in str(calc.get("calculation_id", "")):
+            errors.append(
+                f"  - [占位证据] calculation {calc.get('calculation_id')} 为生成器结构地板"
+                f"（非真实验算）；请通过 --extra-calculations 提供真实 calculation_requests。"
+            )
+    for judgment in bundle.get("judgments") or []:
+        blob = f"{judgment.get('judgment_id', '')}{judgment.get('conclusion', '')}"
+        if "PLACEHOLDER" in blob:
+            errors.append(
+                f"  - [占位证据] judgment {judgment.get('judgment_id')} 为生成器结构地板"
+                f"（非真实判断）；请通过 --extra-judgments 提供真实 judgments。"
+            )
+    for rcpt in bundle.get("command_receipts") or []:
+        blob = (f"{rcpt.get('receipt_id', '')}{rcpt.get('reason', '')}"
+                f"{rcpt.get('detail', '')}")
+        if "PLACEHOLDER" in blob:
+            errors.append(
+                f"  - [占位证据] command_receipt {rcpt.get('receipt_id')} 为生成器结构地板"
+                f"（命令未实际执行）；请通过 --extra-receipts 提供真实回执，"
+                f"或如实标注 UNAVAILABLE/FAIL + reason。"
+            )
     return errors
 
 

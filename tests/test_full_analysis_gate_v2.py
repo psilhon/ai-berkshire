@@ -1137,15 +1137,64 @@ class PlaceholderEvidenceTests(unittest.TestCase):
             "mkb", str(REPO / "scripts" / "mk_result_bundle.py"))
         mkb = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mkb)
+        from full_analysis_gate import _precheck_placeholder_evidence
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
         for skill in registry["skills"]:
             with self.subTest(skill=skill["skill_id"]):
-                facts, sources, *_ = mkb.build_minimum_evidence(skill, [], [])
+                facts, sources, calcs, judgments, _roles, receipts, caps = (
+                    mkb.build_evidence_ledger(skill, [], []))
                 for fact in facts:
                     self.assertIn("PLACEHOLDER", str(fact["value"]))
                     self.assertEqual(fact.get("confidence"), "low")
                 for src in sources:
                     self.assertIn("PLACEHOLDER", str(src["publisher"]))
+                # v3.4.13：地板绝不代签成功证明
+                for rcpt in receipts:
+                    self.assertNotEqual(
+                        rcpt["status"], "PASS",
+                        f"{skill['skill_id']} 地板回执伪造了 PASS（未执行命令却自证成功）")
+                    self.assertIn("PLACEHOLDER", f"{rcpt['receipt_id']}{rcpt.get('reason','')}")
+                for calc in calcs:
+                    self.assertIn("PLACEHOLDER", calc["calculation_id"])
+                for judgment in judgments:
+                    self.assertIn(
+                        "PLACEHOLDER",
+                        f"{judgment['judgment_id']}{judgment['conclusion']}")
+                for cap in caps:
+                    self.assertFalse(
+                        cap["available"],
+                        f"{skill['skill_id']} 地板未验证能力却自称 available=true")
+                # 全地板 bundle 必须被 Gate 占位预检拒收（每一类都要有拒收理由）
+                errors = _precheck_placeholder_evidence({
+                    "fact_updates": facts, "source_records": sources,
+                    "calculation_requests": calcs, "judgments": judgments,
+                    "command_receipts": receipts,
+                })
+                self.assertTrue(
+                    errors,
+                    f"{skill['skill_id']} 全地板 bundle 未被占位预检拒收")
+
+    def test_precheck_rejects_each_evidence_category(self):
+        """v3.4.13：占位预检必须覆盖五类账本，缺任一类即留下自证通道。"""
+        from full_analysis_gate import _precheck_placeholder_evidence
+        cases = {
+            "fact": {"fact_updates": [
+                {"fact_id": "fact-x-1", "value": "PLACEHOLDER::x"}]},
+            "source": {"source_records": [
+                {"source_id": "src-x-1", "publisher": "PLACEHOLDER 占位"}]},
+            "calculation": {"calculation_requests": [
+                {"calculation_id": "calculation-x-PLACEHOLDER-1"}]},
+            "judgment": {"judgments": [
+                {"judgment_id": "judgment-x-PLACEHOLDER-1", "conclusion": "x"}]},
+            "receipt": {"command_receipts": [
+                {"receipt_id": "rcpt-x-PLACEHOLDER-1", "operation": "quote",
+                 "status": "UNAVAILABLE", "reason": "PLACEHOLDER::未执行"}]},
+        }
+        for name, bundle in cases.items():
+            with self.subTest(category=name):
+                self.assertTrue(
+                    _precheck_placeholder_evidence(bundle),
+                    f"{name} 类占位证据未被拒收——自证通道仍然存在")
 
 
 if __name__ == "__main__":

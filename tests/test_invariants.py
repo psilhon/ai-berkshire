@@ -30,10 +30,27 @@ OWN_CLIS = {
     "full_analysis_gate.py": ROOT / "tools" / "full_analysis_gate.py",
 }
 
-# 历史档案：允许保留旧的标识符写法（评分记录/发版记录/历史规划文档）
+# 历史档案豁免：**file-level allowlist，不是目录豁免**（v3.4.13）。
+# 目录级豁免（此前的 `docs/` 整体排除）会让未来新增的 docs 文件自动逃逸扫描——
+# 那不是"扫描有边界"，那是"扫描有黑洞"。改为逐文件登记：默认全仓纳入扫描，
+# 想豁免必须在此显式列出并写明理由，新增文件一律先红再决定。
 LEGACY_ALLOWLIST = {
-    "skills/.darwin-results.tsv",
-    "CHANGELOG.md",
+    "CHANGELOG.md": "发版记录：历史版本条目必须保留当时的真实标识",
+    "skills/.darwin-results.tsv": "Darwin 评分档案：历史行按当时的 skill_id 记录",
+    "docs/ashare-data-tiered-upgrade-plan.md": "历史规划档案（改名前）",
+    "docs/skill-system-analysis.md": "历史分析档案（改名前）",
+    "docs/superpowers/plans/2026-07-18-full-company-analysis-review-fixes.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-19-tushare-market-precedence.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-19-tushare-verification-source.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-20-ashare-full-analysis-integrity-fixes.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-20-full-analysis-true-multiagent-orchestration.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-23-full-analysis-unattended-reliability.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-25-full-analysis-quality-closure.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-07-30-full-analysis-token-cost.md": "dated plan 史实",
+    "docs/superpowers/plans/2026-08-01-full-analysis-wave-scheduling-and-preflight.md": "dated plan 史实",
+    "docs/superpowers/specs/2026-07-17-full-company-analysis-skill-design.md": "dated spec 史实",
+    "docs/superpowers/specs/2026-07-19-tushare-verification-source-design.md": "dated spec 史实",
+    "docs/superpowers/specs/2026-07-23-full-analysis-unattended-reliability-design.md": "dated spec 史实",
 }
 
 # 守卫自身的源码路径：不得把守卫源码当活跃真源来扫描，否则会自我误报（v3.4.11 自红根因）
@@ -57,42 +74,106 @@ def has_bare_legacy_id(text: str) -> bool:
     return bool(BARE_LEGACY_RX.search(text))
 
 
-class Invariant1RenameConsistency(unittest.TestCase):
-    """活跃真源中不得存在裸旧编排标识（必须带 -workbuddy 后缀）。"""
+def _is_binary(raw: bytes) -> bool:
+    """git 同款启发式：前 8KB 出现 NUL 即判为二进制（图片/字体等，天然不可文本扫描）。"""
+    return b"\x00" in raw[:8192]
 
-    def test_no_bare_legacy_id_in_tracked_active_files(self):
+
+def scan_bare_legacy_ids(files: list, root: Path = ROOT) -> tuple:
+    """扫描给定文件列表，返回 (含裸旧标识的文件, 无法解码的文本文件)。
+
+    解码策略（v3.4.13）：**strict 解码，绝不 errors="replace"**。
+    replace 会把坏字节静默换成 U+FFFD——若坏字节正好落在标识串中间，匹配失效而扫描
+    仍报"通过"，等于给自己发假的合规证明。现在：二进制文件（含 NUL）明确跳过，
+    其余文件一旦解码失败就作为**独立故障**上报，让坏字节变响而不是变哑。
+    """
+    offenders, undecodable = [], []
+    for rel in files:
+        path = root / rel
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if _is_binary(raw):
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            undecodable.append(f"{rel}: {exc}")
+            continue
+        if has_bare_legacy_id(text):
+            offenders.append(rel)
+    return offenders, undecodable
+
+
+class Invariant1RenameConsistency(unittest.TestCase):
+    """全仓 tracked 文件中不得存在裸旧编排标识（必须带 -workbuddy 后缀）。
+
+    v3.4.13：扫描面由「白名单目录」改为「全仓 tracked 减去 file-level 豁免」——
+    此前 docs/ 被整目录排除，新增的 docs 文件会自动逃逸；现在默认全扫，豁免须登记。
+    """
+
+    def _scan_targets(self) -> list:
         tracked = subprocess.run(
             ["git", "-C", str(ROOT), "ls-files"],
             capture_output=True, text=True, check=True).stdout.splitlines()
-        # 活跃面：代码/skill/文档真源；排除 local/（gitignore 本就不可见）与历史档案。
-        # 注意：docs/ 是历史设计档案（dated plans/specs/ROADMAP，含 superpowers/ 下 40+ 篇），
-        # 引用旧名是当时史实，不在活跃真源范畴——扫描它会逼着重写历史，故显式排除
-        # （与 CHANGELOG/.darwin-results.tsv 同属档案豁免）。
-        active = [
-            f for f in tracked
-            if re.match(r"^(skills/|workbuddy-skills/|codex-skills/|scripts/|tools/|tests/)", f)
-            or f in ("README.md", "CLAUDE.md", "SKILLS-GUIDE.md", "AGENTS.md")
-        ]
-        active = [
-            f for f in active
-            if f not in LEGACY_ALLOWLIST and f not in GUARD_SELF
-            and not f.endswith(".pyc") and ".darwin" not in f and "superpowers" not in f
-        ]
-        offenders = []
-        for rel in active:
-            # errors="replace"：解码错误显式标成替换符，而非静默吞掉（可能吞掉匹配串）
-            text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
-            if has_bare_legacy_id(text):
-                offenders.append(rel)
+        return [f for f in tracked
+                if f not in LEGACY_ALLOWLIST and f not in GUARD_SELF
+                and not f.endswith(".pyc")]
+
+    def test_no_bare_legacy_id_in_tracked_files(self):
+        offenders, undecodable = scan_bare_legacy_ids(self._scan_targets())
         self.assertEqual(
             offenders, [],
-            f"以下活跃文件仍含裸旧编排标识（改名不变量被破坏）: {offenders}")
+            f"以下文件仍含裸旧编排标识（改名不变量被破坏）: {offenders}")
+        self.assertEqual(
+            undecodable, [],
+            f"以下文本文件无法按 UTF-8 解码，扫描结果不可信（坏字节可能吞掉标识串）: "
+            f"{undecodable}")
 
-    # —— 故障注入：直接验证判定谓词对裸标识敏感、对带后缀不敏感 ——
+    def test_allowlist_entries_all_exist_and_are_still_needed(self):
+        """豁免清单必须保持"活的"：条目既不能指向已删文件（腐化），
+        也不能豁免一个其实已经合规的文件（借豁免掩盖扫描面收缩）。"""
+        stale, needless = [], []
+        for rel, reason in LEGACY_ALLOWLIST.items():
+            self.assertTrue(reason, f"{rel} 豁免缺理由说明")
+            path = ROOT / rel
+            if not path.is_file():
+                stale.append(rel)
+                continue
+            if not has_bare_legacy_id(path.read_text(encoding="utf-8")):
+                needless.append(rel)
+        self.assertEqual(stale, [], f"豁免清单指向不存在的文件（应删除条目）: {stale}")
+        self.assertEqual(
+            needless, [],
+            f"以下文件已无裸旧标识，豁免属多余（应从清单移除，纳入扫描）: {needless}")
+
+    def test_docs_are_actually_scanned(self):
+        """回归守护：docs/ 必须真的在扫描面内（此前整目录被排除）。
+        非豁免的 docs 文件若混入旧标识，必须被抓。"""
+        targets = self._scan_targets()
+        scanned_docs = [f for f in targets if f.startswith("docs/")]
+        self.assertTrue(scanned_docs, "docs/ 未进入扫描面——目录级黑洞回归")
+
+    # —— 故障注入：判定谓词 + 扫描器（含解码失败上报）都必须真能变红 ——
     # 注：本文件已被 GUARD_SELF 排除出自身扫描，故此处可安全写入裸标识字面量做注入。
     def test_predicate_detects_bare_legacy_id(self):
         self.assertTrue(has_bare_legacy_id("README 仍引用 full-company-analysis 旧名"))
         self.assertFalse(has_bare_legacy_id("已改名 full-company-analysis-workbuddy 合规"))
+
+    def test_scanner_reports_offender_and_undecodable_separately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "bad.md").write_text("引用 full-company-analysis 旧名", encoding="utf-8")
+            (root / "ok.md").write_text("full-company-analysis-workbuddy", encoding="utf-8")
+            # 无 NUL 但非 UTF-8（GBK 中文）：必须被显式上报，而不是被 replace 静默吞掉
+            (root / "gbk.md").write_bytes("旧名说明".encode("gbk"))
+            # 含 NUL 的二进制：跳过，不得污染结果
+            (root / "font.woff").write_bytes(b"wOFF\x00\x00\x00\x00binary")
+            offenders, undecodable = scan_bare_legacy_ids(
+                ["bad.md", "ok.md", "gbk.md", "font.woff"], root=root)
+            self.assertEqual(offenders, ["bad.md"])
+            self.assertEqual(len(undecodable), 1)
+            self.assertTrue(undecodable[0].startswith("gbk.md:"), undecodable)
 
 
 # ---------------------------------------------------------------------------
@@ -111,18 +192,34 @@ INVOKE_RX = {
 }
 
 
+FLAG_RX = re.compile(r"--[a-z][a-z0-9-]*")
+INLINE_CODE_RX = re.compile(r"`+([^`\n]+)`+")
+FENCED_RX = re.compile(r"```.*?```", re.S)
+# 裸文散命令的作用域终止符：命令后接中文标点/管道/连接符即视为命令结束，
+# 防止把同一行里 git/gh 的 flag 误挂到自有 CLI 上。
+PROSE_CUT_RX = re.compile(r"[。；;，,、）)]|\|\||&&|\s\|\s")
+
+
+def _attribute(cmd: str, claims: dict) -> None:
+    """若 cmd 是对某自有 CLI 的真实调用，则把其中所有 --flag 归属该 CLI。"""
+    for name in OWN_CLIS:
+        if INVOKE_RX[name].search(cmd):
+            claims[name].update(FLAG_RX.findall(cmd))
+
+
 def _doc_flag_claims(doc_text: str) -> dict:
     """从文档提取 {cli文件名: 该 CLI 被文档要求支持的 flag 集合}。
 
-    提取两类上下文：
-    1) 以 `python3 (scripts|tools)/<cli>.py` 真正调用的命令行（含 \\ 续行），其全部
-       --flag 归属该 CLI；同一代码块里的 git/rm 命令（CLI 仅作路径参数）一律忽略；
-    2) 同一段落内显式点名某自有 CLI 的散列 --flag（行内代码），且只抓「单独用反引号
-       包裹」的 flag（如 `` `--allow-stale` ``），不抓 `git tag --list` 这种整段反引号。
+    提取四类上下文（v3.4.13 新增第 3、4 类：**行内完整命令**）：
+    1) 围栏代码块内、以 `python3 (scripts|tools)/<cli>.py` 真正调用的命令行（含 \\ 续行）；
+    2) 段落级点名某自有 CLI 后、单独用反引号包裹的散列 flag（如 `` `--allow-stale` ``）；
+    3) 行内代码 span 里的**完整命令**（如 `` `python3 scripts/full_analysis.py x --y` ``）
+       ——此前只抓「单独包裹的 flag」，整条命令写在一对反引号里时其 flag 全部漏检；
+    4) 未加反引号、直接写在正文里的完整命令（截断到句读/管道，避免吞掉 git 的 flag）。
     不在任何自有 CLI 上下文中的散列 flag（如 git/gh 的 flag）一律忽略，避免误报。
     """
     claims = {name: set() for name in OWN_CLIS}
-    # 1) 代码块：按命令行（含续行）提取，只认 python3 调用
+    # 1) 围栏代码块：按命令行（含续行）提取，只认 python3 调用
     for block in re.findall(r"```[a-zA-Z]*\n(.*?)```", doc_text, re.S):
         lines = block.split("\n")
         i = 0
@@ -131,15 +228,31 @@ def _doc_flag_claims(doc_text: str) -> dict:
             while cmd.rstrip().endswith("\\") and i + 1 < len(lines):
                 i += 1
                 cmd = cmd.rstrip()[:-1] + " " + lines[i]
-            for name in OWN_CLIS:
-                if INVOKE_RX[name].search(cmd):
-                    claims[name].update(re.findall(r"--[a-z][a-z0-9-]*", cmd))
+            _attribute(cmd, claims)
             i += 1
-    # 2) 行内：段落级点名 CLI + 单独反引号包裹的 flag
-    for para in re.split(r"\n\s*\n", doc_text):
+
+    prose = FENCED_RX.sub("", doc_text)
+
+    # 2) 段落级点名 CLI + 单独反引号包裹的 flag
+    for para in re.split(r"\n\s*\n", prose):
         for name in OWN_CLIS:
             if name in para:
                 claims[name].update(re.findall(r"`(--[a-z][a-z0-9-]*)`", para))
+
+    # 3) 行内代码 span 内的完整命令
+    for span in INLINE_CODE_RX.findall(prose):
+        _attribute(span, claims)
+
+    # 4) 裸文中的完整命令：从调用点截到句读/管道处，避免误吞同行的他方 flag
+    prose_bare = INLINE_CODE_RX.sub(" ", prose)
+    for line in prose_bare.split("\n"):
+        for name in OWN_CLIS:
+            m = INVOKE_RX[name].search(line)
+            if not m:
+                continue
+            tail = line[m.start():]
+            cut = PROSE_CUT_RX.search(tail)
+            claims[name].update(FLAG_RX.findall(tail[:cut.start()] if cut else tail))
     return claims
 
 
@@ -170,7 +283,7 @@ class Invariant2DocumentedFlagsRegistered(unittest.TestCase):
             f"文档宣称但对应 CLI 未注册的 flag: {missing}。"
             f"文档宣称的能力必须机器可达——补注册或改文档，二者必居其一。")
 
-    # —— 故障注入：文档若塞入未注册 flag，守卫必须红 ——
+    # —— 故障注入 A：完全不存在的 flag（任何 CLI 都没注册）必须被抓 ——
     def test_unregistered_flag_in_doc_is_detected(self):
         doc = "```text\npython3 scripts/full_analysis.py start --company X --ghost-flag\n```"
         self.assertIn(
@@ -178,13 +291,39 @@ class Invariant2DocumentedFlagsRegistered(unittest.TestCase):
             check_documented_flags(doc),
             "文档塞入未注册 flag 必须被守卫捕获（否则守卫空转）")
 
-    # —— 故障注入：在错误 CLI 上下文注册也判缺失 ——
-    def test_flag_registered_in_wrong_cli_still_missing(self):
-        # 假设文档把 --ghost-flag 归属 full_analysis.py，但它实际只注册在 mk_result_bundle.py
-        doc = "```text\npython3 scripts/full_analysis.py start --ghost-flag\n```"
-        # 用 mk_result_bundle.py 的注册集伪造「已注册」，验证校验不看错 CLI
-        missing = check_documented_flags(doc)
-        self.assertIn(("full_analysis.py", "--ghost-flag"), missing)
+    # —— 故障注入 B：flag **真实存在但注册在别的 CLI** 时，仍须判缺失 ——
+    # v3.4.13 修正：此前本测试也用 --ghost-flag（哪个 CLI 都没有），与 A 完全同义，
+    # 根本没验证「归属」这件事（Duplicated Code + 空转）。现在用真实他属 flag。
+    def test_flag_registered_in_another_cli_is_still_missing(self):
+        borrowed = "--extra-evidence"
+        self.assertIn(borrowed, _registered_flags(OWN_CLIS["mk_result_bundle.py"]),
+                      "前提失效：该 flag 应真实注册于 mk_result_bundle.py")
+        self.assertNotIn(borrowed, _registered_flags(OWN_CLIS["full_analysis.py"]),
+                         "前提失效：该 flag 不应注册于 full_analysis.py")
+        doc = f"```text\npython3 scripts/full_analysis.py start {borrowed} x.json\n```"
+        self.assertIn(("full_analysis.py", borrowed), check_documented_flags(doc),
+                      "flag 注册在别的 CLI 不等于本 CLI 支持——归属校验必须判缺失")
+        # 同一个 flag 归属正确的 CLI 时必须放行（证明上面的红不是"一律判红"）
+        ok_doc = (f"```text\npython3 scripts/mk_result_bundle.py --run-root r "
+                  f"{borrowed} x.json\n```")
+        self.assertEqual(check_documented_flags(ok_doc), [])
+
+    # —— 故障注入 C：行内完整命令（非围栏代码块）也必须被解析 ——
+    def test_inline_full_command_flags_are_extracted(self):
+        inline_span = "运行 `python3 scripts/full_analysis.py doctor --ghost-inline` 即可。"
+        self.assertIn(("full_analysis.py", "--ghost-inline"),
+                      check_documented_flags(inline_span),
+                      "行内代码里的完整命令其 flag 必须被抓（此前整条命令包在反引号里会漏检）")
+        bare_prose = "直接执行 python3 scripts/full_analysis.py doctor --ghost-bare 观察输出"
+        self.assertIn(("full_analysis.py", "--ghost-bare"),
+                      check_documented_flags(bare_prose),
+                      "裸文里的完整命令其 flag 必须被抓")
+
+    def test_other_tools_flags_on_same_line_are_not_misattributed(self):
+        """截断规则防误报：同一行里 git 的 flag 不得被挂到自有 CLI 上。"""
+        doc = ("先 `python3 scripts/full_analysis.py doctor`，再 `git tag --list`；"
+               "最后 gh release create --notes-file x")
+        self.assertEqual(check_documented_flags(doc), [])
 
     def test_registered_flag_in_synthetic_doc_passes(self):
         doc = "```text\npython3 scripts/full_analysis.py start --company X --allow-stale\n```"

@@ -16,17 +16,27 @@
      --agent-job-id <job-id> \
      --report <attempt_dir>/report.md \
      --status PASS \
-     [--extra-evidence facts.json]   # 可选：真实 fact_updates 数组
-     [--extra-sources sources.json]  # 可选：真实 source_records 数组
+     --extra-evidence facts.json     # 真实 fact_updates 数组
+     --extra-sources sources.json    # 真实 source_records 数组（与上者必须同时提供）
+     [--extra-calculations calcs.json]  [--extra-judgments judg.json]
+     [--extra-receipts rcpt.json]       [--extra-capabilities cap.json]
      [--started-at ISO] [--completed-at ISO]
 
 输出：写入 <attempt_dir>/result.json，并打印校验摘要。
 
 它会自动：
 - 从 runtime-state 校验 (work_unit_id, attempt_id, nonce, agent_job_id) 与当前租约一致；
-- 按 contract 的 evidence_rules 生成最小合规证据（facts/sources/calcs/judgments/
-  role_runs/receipts/capabilities），并与 --extra-evidence/--extra-sources 合并去重；
-- 核对 report.md 含全部必需章节标题、字节数 >= min_bytes，给出 PASS 预判（不替代 Gate）。
+- 按 contract 的 evidence_rules 组装证据账本：真实输入优先，缺失部分补**带水印的
+  结构地板**（facts/sources/calcs/judgments/receipts/capabilities）；
+- 按 report 实际文件重算 bytes/sha256，核对必需章节标题与 min_bytes。
+
+自证红线（v3.4.13）：本工具**不会为未发生的事签发成功证明**。
+- 命令回执地板一律 status=UNAVAILABLE + PLACEHOLDER reason，绝不代签 PASS；
+- 判断/计算地板带 PLACEHOLDER 水印；capability 地板一律 available=false；
+- 真实调研成果必须经 --extra-* 传入，机械字段（sha256/bytes/id 规范）才由工具代劳。
+
+退出码：0 ⟺ bundle 零占位、可提交；2 = 输入非法或单边真实证据；
+3 = 全地板 bundle（调试用，Gate 仍会硬拒收）。
 
 本工具只生成 bundle，不改任何正式产物、不触发 submit；submit-result 仍由编排器执行。
 """
@@ -43,6 +53,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "tools" / "full_analysis_contract.json"
 TZ = timezone(timedelta(hours=8))
+
+# 结构地板水印：确定性字符串，Gate `_precheck_placeholder_evidence` 按它硬拒收。
+# 生成器与 Gate 必须同口径，任何新增的地板字段都要带上它。
+PLACEHOLDER = "PLACEHOLDER"
+
+# 退出码语义（v3.4.13）：0 ⟺ bundle 零占位、可提交；非 0 一律显式暴露问题。
+EXIT_OK = 0
+EXIT_INVALID = 2          # 输入非法/租约不符/单边真实证据
+EXIT_PLACEHOLDER = 3      # 全地板 bundle（仅调试用，须显式 --allow-placeholder-floor 才降级为 0）
 
 ROLE_CN = {
     "duan": "段永平", "buffett": "巴菲特", "munger": "芒格", "li": "李录",
@@ -93,7 +112,29 @@ def validate_lease(run_root: Path, work_unit_id: str, attempt_id: str,
     return state
 
 
-def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
+def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
+                          extra_calcs: list | None = None,
+                          extra_judgments: list | None = None,
+                          extra_receipts: list | None = None,
+                          extra_capabilities: list | None = None):
+    """按 contract 组装证据账本：真实输入优先，缺失部分补**带水印的结构地板**。
+
+    命名说明（v3.4.13）：旧名 build_minimum_evidence 具误导性——一旦任一类真实
+    输入存在，产出就不再是"minimum"，而是"真实优先 + 地板补齐"。故更名。
+
+    自证红线（v3.4.13 P0）：生成器**不得为未发生的事签发成功证明**。
+    地板条目一律带 PLACEHOLDER 水印，且回执状态为 UNAVAILABLE（绝不伪造 PASS），
+    capability 一律 available=false（未验证即不可用）。Gate 的占位预检会硬拒收，
+    使"未做真实调研的 bundle 能被接受为 DONE"这条路径在机器层面不可达。
+
+    role_runs 例外且无需水印：Gate 不信任 bundle 里的 role_runs，而是从磁盘
+    role-<role>.md 备忘录独立校验后派生（verified_by_gate=True，见 gate 1000-1030），
+    伪造它不产生信任效果。
+    """
+    extra_calcs = extra_calcs or []
+    extra_judgments = extra_judgments or []
+    extra_receipts = extra_receipts or []
+    extra_capabilities = extra_capabilities or []
     rules = skill.get("evidence_rules") or []
     sid = skill["skill_id"]
 
@@ -154,29 +195,34 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
                 "confidence": "low",
             })
 
-    min_calcs = n("min_calculations")
-    # NOTE: operation MUST be a real financial_rigor.py subcommand so the shared
-    # Audit Job can replay it (financial_rigor has `calc`, not `replay`). Using an
-    # unknown op yields returncode 2 -> calculation_not_replayed / insufficient_calculations
-    # at finalize. Agents should supply real calculation_requests; this is only the floor.
-    calcs = [{
-        "calculation_id": f"calculation.{sid}.{j + 1}",
-        "operation": "calc",
-        "args": {"expr": f"{j + 1}+1"},
-    } for j in range(min_calcs)]
+    # ---- 计算：真实优先；地板 calculation_id 带水印（operation 仍须是 financial_rigor
+    # 真子命令 `calc`，否则 audit 重放 returncode=2 → calculation_not_replayed）----
+    if extra_calcs:
+        calcs = [dict(c) for c in extra_calcs]
+    else:
+        min_calcs = n("min_calculations")
+        calcs = [{
+            "calculation_id": f"calculation-{sid}-{PLACEHOLDER}-{j + 1}",
+            "operation": "calc",
+            "args": {"expr": f"{j + 1}+1"},
+        } for j in range(min_calcs)]
 
-    judgment_rules = list(vals("required_judgment_rule_ids"))
-    min_judg = n("min_judgments_with_falsification")
-    while len(judgment_rules) < min_judg:
-        judgment_rules.append(f"{sid}_falsification_{len(judgment_rules) + 1}")
-    base_fact = facts[0]["fact_id"] if facts else f"fact-{sid}-stub"
-    judgments = [{
-        "judgment_id": f"judgment.{sid}.{i + 1}",
-        "rule_id": rid,
-        "conclusion": f"{sid} 关于 {rid} 的结构化判断 {i + 1}",
-        "falsification": [f"若 {sid} 该判断的反证条件成立，则结论需重审"],
-        "fact_ids": [base_fact],
-    } for i, rid in enumerate(judgment_rules)]
+    # ---- 判断：真实优先；地板 conclusion 自报占位，禁止伪装成已完成的分析结论 ----
+    if extra_judgments:
+        judgments = [dict(j) for j in extra_judgments]
+    else:
+        judgment_rules = list(vals("required_judgment_rule_ids"))
+        min_judg = n("min_judgments_with_falsification")
+        while len(judgment_rules) < min_judg:
+            judgment_rules.append(f"{sid}_falsification_{len(judgment_rules) + 1}")
+        base_fact = facts[0]["fact_id"] if facts else f"fact-{sid}-stub"
+        judgments = [{
+            "judgment_id": f"judgment-{sid}-{PLACEHOLDER}-{i + 1}",
+            "rule_id": rid,
+            "conclusion": f"{PLACEHOLDER}::未作出真实判断——{sid} / {rid} 的结构地板占位",
+            "falsification": [f"{PLACEHOLDER}::未给出真实反证条件，必须由 Agent 替换"],
+            "fact_ids": [base_fact],
+        } for i, rid in enumerate(judgment_rules)]
 
     min_roles = n("min_role_runs")
     required_roles = (skill.get("roles") or {}).get("required_roles", [])
@@ -185,26 +231,65 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
         role_ids.append(f"role-{len(role_ids) + 1}")
     role_runs = [{"role_id": rid, "status": "PASS"} for rid in role_ids[:max(min_roles, 0)]]
 
-    required_ops = list(vals("required_command_operations"))
     conditional = next((r for r in rules
                         if r.get("kind") == "conditional_command_operations"), None)
-    operations = list(required_ops)
-    if conditional:
-        operations.extend(item["op"] for item in conditional.get("values", []))
-    min_receipts = n("min_command_receipts")
-    while len(operations) < min_receipts:
-        operations.append(f"receipt-op-{len(operations) + 1}")
-    operations = list(dict.fromkeys(operations))
-    receipts = [{
-        "receipt_id": f"rcpt-{sid}-{i + 1}",
-        "operation": op,
-        "status": "PASS",
-    } for i, op in enumerate(operations)]
 
-    capabilities = ([{"capability": conditional["capability"], "available": True}]
-                    if conditional else [])
+    # ---- 回执：真实优先。地板**绝不伪造 PASS**——status=UNAVAILABLE + 水印 reason。
+    # 这是 v3.4.13 P0 的核心：此前地板为 ashare-data 一口气签发 51 条 status=PASS
+    # 的"命令已成功执行"回执，而实际一条命令都没跑，Gate 却接受为 DONE。----
+    if extra_receipts:
+        receipts = [dict(r) for r in extra_receipts]
+    else:
+        required_ops = list(vals("required_command_operations"))
+        operations = list(required_ops)
+        if conditional:
+            operations.extend(item["op"] for item in conditional.get("values", []))
+        min_receipts = n("min_command_receipts")
+        while len(operations) < min_receipts:
+            operations.append(f"receipt-op-{len(operations) + 1}")
+        operations = list(dict.fromkeys(operations))
+        receipts = [{
+            "receipt_id": f"rcpt-{sid}-{PLACEHOLDER}-{i + 1}",
+            "operation": op,
+            "status": "UNAVAILABLE",
+            "reason": f"{PLACEHOLDER}::命令未实际执行，生成器结构地板不得充当成功回执",
+        } for i, op in enumerate(operations)]
+
+    # ---- 能力：真实优先；地板一律 available=false（未验证即不可用，不得默认自称可用）。
+    # schema 禁止额外字段，故此处以 false 本身承担"未验证"语义。----
+    if extra_capabilities:
+        capabilities = [dict(c) for c in extra_capabilities]
+    else:
+        capabilities = ([{"capability": conditional["capability"], "available": False}]
+                        if conditional else [])
 
     return facts, sources, calcs, judgments, role_runs, receipts, capabilities
+
+
+def placeholder_offenders(bundle: dict) -> list:
+    """返回 bundle 中所有带 PLACEHOLDER 水印的证据条目描述（空=零占位）。
+
+    与 Gate 的 `_precheck_placeholder_evidence` 同口径，用于在**提交前**就把
+    "含占位的 bundle"暴露为非零退出，而不是等到 Gate 才拒收。
+    """
+    hits = []
+    for fact in bundle.get("fact_updates") or []:
+        if PLACEHOLDER in str(fact.get("value", "")):
+            hits.append(f"fact {fact.get('fact_id')}")
+    for src in bundle.get("source_records") or []:
+        if PLACEHOLDER in f"{src.get('publisher', '')}{src.get('title', '')}":
+            hits.append(f"source {src.get('source_id')}")
+    for calc in bundle.get("calculation_requests") or []:
+        if PLACEHOLDER in str(calc.get("calculation_id", "")):
+            hits.append(f"calculation {calc.get('calculation_id')}")
+    for judgment in bundle.get("judgments") or []:
+        if PLACEHOLDER in f"{judgment.get('judgment_id', '')}{judgment.get('conclusion', '')}":
+            hits.append(f"judgment {judgment.get('judgment_id')}")
+    for rcpt in bundle.get("command_receipts") or []:
+        blob = f"{rcpt.get('receipt_id', '')}{rcpt.get('reason', '')}{rcpt.get('detail', '')}"
+        if PLACEHOLDER in blob:
+            hits.append(f"receipt {rcpt.get('receipt_id')}")
+    return hits
 
 
 def check_report(skill: dict, report: Path):
@@ -239,6 +324,19 @@ def main() -> int:
                     choices=["PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"])
     ap.add_argument("--extra-evidence", help="JSON 文件，内容为 fact_updates 数组")
     ap.add_argument("--extra-sources", help="JSON 文件，内容为 source_records 数组")
+    ap.add_argument("--extra-calculations",
+                    help="JSON 文件，内容为 calculation_requests 数组（真实验算参数）")
+    ap.add_argument("--extra-judgments",
+                    help="JSON 文件，内容为 judgments 数组（真实判断+反证条件）")
+    ap.add_argument("--extra-receipts",
+                    help="JSON 文件，内容为 command_receipts 数组（真实命令回执；"
+                         "未提供时地板只发 UNAVAILABLE，绝不代签 PASS）")
+    ap.add_argument("--extra-capabilities",
+                    help="JSON 文件，内容为 capability_records 数组（真实能力探测结果；"
+                         "未提供时地板一律 available=false）")
+    ap.add_argument("--allow-placeholder-floor", action="store_true",
+                    help="仅调试：允许全 PLACEHOLDER 地板 bundle 以退出码 0 返回。"
+                         "生产禁用——Gate 仍会硬拒收。")
     ap.add_argument("--role-id", default=None)
     ap.add_argument("--started-at", default=None)
     ap.add_argument("--completed-at", default=None)
@@ -265,38 +363,51 @@ def main() -> int:
     if lease.get("agent_job_id") and lease["agent_job_id"] != args.agent_job_id:
         fail(f"agent_job_id 与已登记租约不一致: {lease['agent_job_id']} != {args.agent_job_id}")
 
+    # run_root 已 .resolve()（macOS 上 /var → /private/var）。report 必须做同样的
+    # 符号链接解析，否则 /var/... 形式的合法路径会在 relative_to 处被误判为
+    # "不在 run_root 内"（v3.4.13：macOS 临时目录下必现）。
     report = Path(args.report)
     if not report.is_absolute():
         report = run_root / report
+    report = report.resolve()
     if not report.is_file():
         fail(f"report 文件不存在: {report}")
     try:
         rel = report.relative_to(run_root).as_posix()
     except ValueError:
-        fail(f"report 必须位于 run_root 内: {report}")
+        fail(f"report 必须位于 run_root 内: {report}（run_root={run_root}）")
     if not rel.startswith("evidence/attempts/"):
         fail(f"report 必须位于 evidence/attempts/ 下: {rel}")
 
-    extra_facts = json.loads(Path(args.extra_evidence).read_text(encoding="utf-8")) if args.extra_evidence else []
-    extra_sources = json.loads(Path(args.extra_sources).read_text(encoding="utf-8")) if args.extra_sources else []
-    if isinstance(extra_facts, dict):
-        extra_facts = extra_facts.get("fact_updates", [])
-    if isinstance(extra_sources, dict):
-        extra_sources = extra_sources.get("source_records", [])
+    def load_extra(flag_value: str | None, wrapper_key: str) -> list:
+        if not flag_value:
+            return []
+        data = json.loads(Path(flag_value).read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data = data.get(wrapper_key, [])
+        return data
+
+    extra_facts = load_extra(args.extra_evidence, "fact_updates")
+    extra_sources = load_extra(args.extra_sources, "source_records")
+    extra_calcs = load_extra(args.extra_calculations, "calculation_requests")
+    extra_judgments = load_extra(args.extra_judgments, "judgments")
+    extra_receipts = load_extra(args.extra_receipts, "command_receipts")
+    extra_caps = load_extra(args.extra_capabilities, "capability_records")
+
+    # 单边真实证据必须显式失败（v3.4.13 P1）：只传 facts 或只传 sources 时，
+    # 另一类会退化成 PLACEHOLDER 地板并与真实证据混排，Gate 必然拒收整包，
+    # 而生成器此前仍返回 0 —— 静默产出不可提交的 bundle。事实与来源互为引用
+    # （fact.source_ids 指向 source_records），二者必须同真同假。
+    if bool(extra_facts) != bool(extra_sources):
+        got, lack = (("--extra-evidence", "--extra-sources") if extra_facts
+                     else ("--extra-sources", "--extra-evidence"))
+        fail(f"单边真实证据不被接受：已提供 {got} 但缺 {lack}。"
+             f"fact.source_ids 必须指向真实 source_records，只补一边会让另一边退化为 "
+             f"{PLACEHOLDER} 地板并被 Gate 拒收整包。请同时提供两者。")
 
     facts, sources, calcs, judgments, role_runs, receipts, capabilities = \
-        build_minimum_evidence(skill, extra_facts, extra_sources)
-
-    # v3.4.10：无真实证据时大声告警——此时 bundle 全部由 PLACEHOLDER 结构地板构成，
-    # Gate 预提交门禁会硬拒收（_precheck_placeholder_evidence）。地板只为本地调试
-    # bundle 结构而存在，绝不能作为真实调研成果提交。
-    if not extra_facts and not extra_sources and args.status in ("PASS", "PASS_WITH_LIMITATIONS"):
-        print(
-            "⚠️ 警告：未提供 --extra-evidence/--extra-sources，本 bundle 的证据账本全部为 "
-            "PLACEHOLDER 结构地板（非真实调研）。Gate 预提交门禁将硬拒收。"
-            "请先完成真实调研，再用真实 fact_updates/source_records 重跑本生成器。",
-            file=sys.stderr,
-        )
+        build_evidence_ledger(skill, extra_facts, extra_sources,
+                              extra_calcs, extra_judgments, extra_receipts, extra_caps)
 
     art_id = skill["artifact"]["artifact_id"]
     artifact_records = [{
@@ -344,6 +455,7 @@ def main() -> int:
     out.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
 
     warnings = check_report(skill, report)
+    offenders = placeholder_offenders(bundle)
     summary = {
         "result_path": str(out),
         "skill_id": args.skill_id,
@@ -352,15 +464,35 @@ def main() -> int:
         "min_bytes": skill["artifact"].get("min_bytes"),
         "facts": len(facts),
         "sources": len(sources),
+        "calculations": len(calcs),
         "judgments": len(judgments),
         "role_runs": len(role_runs),
         "receipts": len(receipts),
+        "placeholder_entries": len(offenders),
+        "submittable": not offenders,
         "precheck_warnings": warnings,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if warnings:
         print("⚠️ 预检有警告（不阻断，但 Gate 实质校验可能拒收，请补齐后再 submit）", file=sys.stderr)
-    return 0
+
+    # 不变量（v3.4.13）：退出码 0 ⟺ bundle 零占位、可提交。
+    # 此前"全地板 bundle"也返回 0，使"未做调研仍拿到成功信号"成为可能。
+    if offenders:
+        print(
+            f"❌ 本 bundle 含 {len(offenders)} 条 {PLACEHOLDER} 结构地板证据"
+            f"（非真实调研）：{offenders[:8]}{' …' if len(offenders) > 8 else ''}\n"
+            f"   地板只用于本地调 bundle 结构；Gate 预提交门禁会硬拒收，禁止 submit。\n"
+            f"   请补齐真实证据后重跑："
+            f"--extra-evidence/--extra-sources/--extra-calculations/"
+            f"--extra-judgments/--extra-receipts。",
+            file=sys.stderr,
+        )
+        if not args.allow_placeholder_floor:
+            return EXIT_PLACEHOLDER
+        print("（--allow-placeholder-floor 已启用：仅降级退出码，Gate 仍会拒收）",
+              file=sys.stderr)
+    return EXIT_OK
 
 
 if __name__ == "__main__":

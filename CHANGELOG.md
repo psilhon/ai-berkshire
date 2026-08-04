@@ -5,13 +5,47 @@
 
 ---
 
+## [v3.4.13] — 2026-08-04
+
+> 堵死「生成器自动自证」：证据账本不再能凭空签发成功证明。附带修正 v3.4.12 三处"修了但没修透"（单边占位、macOS 路径、守卫盲区）与一处 CHANGELOG 自相矛盾。
+
+### 🐛 修复 (Fixed)
+
+- **证据账本可被生成器自动自证（P0，最严重）**：`mk_result_bundle.py` 只接收 facts/sources 两类真实输入，却**自动补全** calculations、judgments、command_receipts、capabilities。实测：未执行任何命令的 `ashare-data` 单元被一口气签发 **51 条 `status: PASS`** 的「命令已成功执行」回执，且被 Gate 接受为 DONE——"未做调研"与"做了调研"在机器层面不可区分。修复（自证红线）：
+  - 回执地板一律 `status: UNAVAILABLE` + `PLACEHOLDER` reason，**绝不代签 PASS**；
+  - judgments / calculations 地板带 `PLACEHOLDER` 水印；capabilities 地板一律 `available: false`（未验证即不可用）；
+  - 每一类都新增 `--extra-calculations/--extra-judgments/--extra-receipts/--extra-capabilities`，真实输入**独立**顶掉本类地板；
+  - Gate `_precheck_placeholder_evidence` 由 2 类扩到 **5 类**（fact/source/calculation/judgment/receipt）硬拒收。
+- **单边真实证据静默残留占位（P1）**：只传 `--extra-evidence` 或只传 `--extra-sources` 时，另一类退化为 `PLACEHOLDER` 地板并与真实证据混排，Gate 必然拒收整包，而生成器**仍返回 0**。修复：`fact.source_ids` 与 `source_records` 互为引用，二者必须同真同假——单边输入直接以退出码 2 显式失败。
+- **退出码不再是准入信号（P1）**：全地板 bundle 此前也返回 0，等于给"未做调研"发成功信号。修复并固化不变量：**`0` ⟺ 零占位可提交**；`2` = 输入非法/单边证据；`3` = 账本仍是占位地板。`--allow-placeholder-floor` 仅降级退出码，绝不篡改内容（Gate 照拒）。
+- **macOS 绝对路径误判（P1）**：`run_root` 已 `resolve()`（`/var` → `/private/var`），`report` 却未做同样解析，导致 `/var/...` 形式的合法路径在 `relative_to` 处被误报"不在 run_root 内"——macOS 临时目录下必现。修复：双端一致解析。
+- **运行时模板与 canonical 文档矛盾（P1）**：`full_analysis_runtime.py` 的 `RESULT_BUNDLE_TEMPLATE` 仍提示 Agent"将以下 JSON 写入 result.json"，而 canonical skill 的 E16 明令禁止手写。修复：模板改为"结构参考（禁止手写）"，开头直接给出 `mk_result_bundle.py` 完整命令与退出码语义。
+- **守卫盲区与空转（P1）**：
+  - **目录级黑洞**：`docs/` 整体排除 → 新增 docs 文件永远逃逸扫描。改为**全仓 tracked 扫描 − file-level allowlist**（16 条逐条登记理由），新增文件默认先红；并加两条元守卫：豁免条目不得指向已删文件、不得豁免一个其实已合规的文件。
+  - **解码静默**：`errors="replace"` 改 **strict**——二进制（含 NUL）跳过，其余解码失败作为独立故障上报，坏字节变响不变哑。
+  - **行内完整命令漏检**：flag 提取器只认围栏代码块，写在行内代码 `` `python3 ... --x` `` 或裸文里的完整命令其 flag 全部漏检。新增两类提取路径，并对裸文按句读/管道截断，避免把同行 `git tag --list` 误挂到自有 CLI。
+  - **"错误 CLI 注册"测试空转**：该测试原用 `--ghost-flag`（哪个 CLI 都没注册），与上一条测试完全同义，根本没验证"归属"。改用真实他属 flag `--extra-evidence`（实际注册在 `mk_result_bundle.py`），并加正例证明不是"一律判红"。
+  - **Mysterious Name**：`build_minimum_evidence` → **`build_evidence_ledger`**（有真实输入时产出根本不是 minimum）。
+- **CHANGELOG 自相矛盾**：v3.4.12 条目上一行称"补 `docs/` 扫描"、下一行称"故不扫 `docs/`"。已改写为准确表述并附 v3.4.13 更正说明。
+
+### ✨ 新增 (Added)
+
+- **`scripts/deploy-user-skills.py`**：用户级 Codex 副本（`~/.codex/skills/`）部署器，支持 `--check` 漂移检测与 `--dest`。此前仓库三副本有 check.sh 守着，**用户级部署副本零机制**，只能靠手工拷贝——这正是每轮 review 都能翻出"用户级副本文案落后"的结构性原因。配套 `tests/test_deploy_user_skills.py`（5 测试，含"先红后绿"端到端与"不动用户自建 skill"）。
+- **用户侧 `~/.workbuddy/berkshire-skill-sync/sync.py` 纳管编排 skill**：`EXCLUDE` → `VERBATIM`（原样复制）。此前编排 skill 被排除在同步之外却仍有一份手工副本躺在 `~/.workbuddy/skills/` 下，永远不会被 `--check` 看见，于是静默落后多个版本。
+- **回归测试**：`tests/test_mk_result_bundle.py` +8（含端到端 CLI 类，覆盖退出码 0/2/3、五类地板水印、macOS 符号链接路径）；`tests/test_full_analysis_gate_v2.py` +1（五类占位逐类拒收）；`tests/test_invariants.py` +4（扫描器分别上报违规/坏字节、docs 真在扫描面、行内完整命令提取、他属 flag 归属）。
+
+### 🔬 验证方式
+
+不再以"测试通过"自证。四处**故障注入**逐一确认守卫会红、还原后绿：回执地板改回伪造 PASS（红）、去掉 `report.resolve()`（红 6）、去掉单边证据校验（红 2）、退出码恒 0（红 2）；另注入一个未豁免的 `docs/` 新文件确认被扫描面抓获。
+
 ## [v3.4.12] — 2026-08-04
 
 > 更正 v3.4.11：不变量守卫在 v3.4.11 实际是**红的**——守卫源码自身的 docstring 含裸旧标识 `full-company-analysis`，被自己的扫描命中并自报违规；且 v3.4.11 CHANGELOG 声称的「故障注入验证」当时并未真正落地（无注入测试）。本版把守卫跑绿、补齐注入测试，并修复生成器占位残留与 codex 副本漂移。
 
 ### 🐛 修复 (Fixed)
-- **不变量守卫自红（P0）**：`tests/test_invariants.py` 扫描 `tests/` 却未排除自身，其 docstring 中的裸旧标识被自己命中 → 守卫第一条断言自报违规，v3.4.11 的 check.sh 实际 FAIL。修复：守卫源码排除自身（GUARD_SELF）+ docstring 不再直接写裸标识；补 `docs/` 扫描与 `errors="replace"`（不再静默吞解码错误）。
-  - **例外说明**：`docs/` 经核全是历史设计档案（dated plans/specs/ROADMAP，含 `superpowers/` 下 40+ 篇），引用旧名是当时史实，与 CHANGELOG 同属档案豁免，故不扫 `docs/`（避免逼着重写历史）。
+- **不变量守卫自红（P0）**：`tests/test_invariants.py` 扫描 `tests/` 却未排除自身，其 docstring 中的裸旧标识被自己命中 → 守卫第一条断言自报违规，v3.4.11 的 check.sh 实际 FAIL。修复：守卫源码排除自身（GUARD_SELF）+ docstring 不再直接写裸标识；解码改用 `errors="replace"`（不再静默吞解码错误）。
+  - **扫描面说明**：`docs/` 经核全是历史设计档案（dated plans/specs/ROADMAP，含 `superpowers/` 下 40+ 篇），引用旧名是当时史实，与 CHANGELOG 同属档案豁免，故本版**不扫 `docs/`**（避免逼着重写历史）。
+  - ⚠️ **v3.4.13 更正**：整目录豁免是错的——它让未来新增的 docs 文件自动逃逸扫描；且 `errors="replace"` 会把坏字节静默换成 U+FFFD，反而可能吞掉标识串。两点已在 v3.4.13 改为 file-level allowlist + strict 解码。
 - **文档 flag 守卫可绕过（P1）**：原提取器只扫 `python3 scripts|tools/...` 命令行，导致 `--allow-stale`（v3.4.8 事故根因，文档以散文出现）从未被提取，守卫对其动机事故视而不见；且三套 CLI 注册集合被合并，注册到错误 CLI 也能通过。修复：按 CLI 归属校验——代码块内以 `python3` 真正调用的命令行（含 `\` 续行）其 flag 归属该 CLI；并把 `--allow-stale` 补进 `full_analysis.py start` 文档上下文。
 - **生成器命名规范冲突 + 占位残留（P1 / 功能性 P0）**：`mk_result_bundle.py` 生成 `fact_id`/`receipt_id` 用 `fact.<skill>.<field>` 点号形式，违反 skill 文档强制的 `fact-<skill>-<descriptor>` 连字符形式；且**提供真实证据时仍与占位地板按 id 并列**，导致「提供 3 条真实事实仍残留 3 条占位事实 + 1 条占位来源」，Gate 占位预检直接拒收整包。修复：id 改连字符形式；真实证据与占位地板互斥——提供真实证据后零占位残留（`tests/test_mk_result_bundle.py` 新增 `test_real_evidence_leaves_no_placeholder_floor` 守护）。
 - **部署漂移**：本机 Codex 安装副本 `~/.codex/skills/.../SKILL.md` 预算口径仍写 `26`，仓库真源已为 `27`（`2×13+1`）。已对齐为 `27`；五个副本（skills/、workbuddy-skills/、codex-skills/、~/.workbuddy/skills/、~/.codex/skills/）现已一致。

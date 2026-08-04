@@ -93,10 +93,29 @@ EVIDENCE_DIRECTIVE = """
 重放结果由 Audit Job 调用 financial_rigor.py 生成，Agent 不得自证计算结果。
 """
 
-# Result Bundle v1 完整模板：注入 payload 供 Agent 照填，消除旧 schema 残留。
+# Result Bundle v1 结构参考：注入 payload 供 Agent 理解字段语义与自检。
+# v3.4.13：本模板此前写作"将以下 JSON 写入 result.json"，与 canonical skill 的 E16
+# （禁止手写 result.json，必须走 mk_result_bundle.py）直接矛盾——Agent 照模板手写正是
+# 五粮液 run 四类 schema 返工的根因。现改为「生成器为唯一产出路径，模板仅供理解字段」。
 RESULT_BUNDLE_TEMPLATE = """
-【Result Bundle v1 · 模板】
-完成分析后，将以下 JSON 写入 <attempt_dir>/result.json（替换尖括号占位符）：
+【Result Bundle v1 · 结构参考（禁止手写，见下方生成命令）】
+⚠️ E16 强制：result.json 必须由确定性生成器产出，禁止手写 JSON。
+完成分析后执行（真实证据经 --extra-* 传入，机械字段由工具计算）：
+
+python3 scripts/mk_result_bundle.py \\
+  --run-root <run_root> --skill-id <skill_id> \\
+  --work-unit-id <work_unit_id> --attempt-id <attempt_id> \\
+  --lease-nonce <lease_nonce> --agent-job-id <agent_job_id> \\
+  --report <attempt_dir>/report.md --status PASS \\
+  --extra-evidence <facts.json> --extra-sources <sources.json> \\
+  [--extra-calculations <calcs.json>] [--extra-judgments <judgments.json>] \\
+  [--extra-receipts <receipts.json>] [--extra-capabilities <caps.json>]
+
+生成器退出码 0 才代表 bundle 零占位、可提交；退出码 3 表示证据账本仍是
+PLACEHOLDER 结构地板（未做真实调研），Gate 会硬拒收，禁止 submit。
+--extra-evidence 与 --extra-sources 必须同时提供（单边会直接失败退出 2）。
+
+下列结构仅供理解字段语义与自检，**不要照抄手写**：
 {
   "schema_version": "result-schema/v1",
   "run_id": "<派发包中的 run_id>",
@@ -139,7 +158,10 @@ RESULT_BUNDLE_TEMPLATE = """
   {"predicate": "<contract applicability.predicate>",
    "fact_id": "<证明谓词为假的 fact_id>",
    "alternative": "<contract applicability.alternative 或 null>"}
-- 写完 result.json 后立即调用 submit-result；即使 submit-result 失败，
+- command_receipts 只能如实记录**实际执行过**的命令：未执行一律 UNAVAILABLE + reason，
+  执行失败一律 FAIL + reason。虚构 PASS 回执等同伪造证据，Gate 会按白名单与占位水印拒收。
+- calculation_requests 只提交 operation 与 args，重放结果由 Audit Job 生成，Agent 不得自证。
+- 生成 result.json 后立即调用 submit-result；即使 submit-result 失败，
   磁盘上的 result.json 可被 resume 的孤儿恢复机制接管
 """
 
