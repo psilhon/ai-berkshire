@@ -154,7 +154,7 @@ python3 scripts/mk_result_bundle.py \
 - `command_receipts` 地板一律 `status: UNAVAILABLE` + `PLACEHOLDER` reason，**绝不伪造 PASS**。真实回执必须经 `--extra-receipts` 传入。（根因：此前 ashare-data 单元凭空产出 **51 条 `status: PASS`** 的「命令已成功执行」回执，实际一条命令未跑，却被 Gate 接受为 DONE。）
 - `judgments` / `calculation_requests` 地板带 `PLACEHOLDER` 水印；`capability_records` 地板一律 `available: false`（未验证即不可用）。
 - **`--extra-evidence` 与 `--extra-sources` 必须同时提供**：`fact.source_ids` 指向 `source_records`，只补一边会让另一边退化为占位并被 Gate 拒收整包，故生成器直接以退出码 2 失败。
-- **退出码即准入信号**：`0` ⟺ bundle 零占位、可提交；`2` = 输入非法/单边证据；`3` = 账本仍是 PLACEHOLDER 地板（未做真实调研）。**只有退出码 0 才允许 submit-result**；Gate 的占位预检会对 fact/source/calculation/judgment/receipt 五类水印硬拒收。
+- **退出码即准入信号（v3.4.14 完整化）**：`0` ⟺ **Gate 预期会接受** = 零占位 AND 状态为可验收终态（PASS / PASS_WITH_LIMITATIONS / 已完整证明的 NOT_APPLICABLE）AND 报告满足该状态对应的章节/字节硬门槛；`2` = 输入非法（JSON 解析失败/单边证据/NA 证明不成立）或报告缺必需章节；`3` = 账本仍是 PLACEHOLDER 地板（未做真实调研）；`4` = `status=FAIL`（如实上报失败，**不是**成功信号）。**没有任何开关能把非 0 降级为 0**（旧的 `--allow-placeholder-floor` 会让占位地板返回 0、击穿「0 ⟺ 可提交」，已移除）；**只有退出码 0 才允许 submit-result**。Gate 的占位预检对 fact/source/calculation/judgment/receipt 五类水印硬拒收，且 PASS 回执还必须携带真实执行绑定（`argv`+`output`、不含 `PLACEHOLDER`/`TEST_FIXTURE`/`未连接真实命令日志`/`mock` 等伪造标记），否则同样拒收。
 
 **result.json 优先写入**：Agent 完成分析后，第一步运行 mk_result_bundle 生成 result.json（写入 attempt_dir），第二步再调用 submit-result。即使 submit-result 因会话中断失败，磁盘上的 result.json 可被 `resume` 的孤儿恢复机制接管（Runtime 会检查 `evidence/attempts/<skill_id>/<attempt_id>/result.json` 是否存在且 Gate 可接受）。
 

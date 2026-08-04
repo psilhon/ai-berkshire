@@ -90,6 +90,19 @@ class GateError(Exception):
         super().__init__(message)
 
 
+# 回执伪造标记（v3.4.14）：PASS 回执的 argv/详情/输出含这些串即视为自报成功而无真实执行。
+_FORGERY_TOKENS = ("placeholder", "test_fixture", "未连接真实命令日志",
+                   "fixture", "mock", "mocked", "simulated", "fake")
+
+
+def _forgery_token_in(text: str | None) -> str | None:
+    t = (text or "").lower()
+    for tok in _FORGERY_TOKENS:
+        if tok in t:
+            return tok
+    return None
+
+
 def now_iso() -> str:
     return datetime.now(TZ_SHANGHAI).isoformat()
 
@@ -505,15 +518,16 @@ def _precheck_calculation_params(bundle: dict) -> list:
 
 
 def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
-    """校验回执操作不越出契约白名单（仅拦 PASS 状态的白名单外操作）。
+    """校验回执：① 操作不越出契约白名单；② PASS 回执必须带来自真实执行的绑定
+    （argv + output）且不含伪造标记。
 
     返回错误消息列表（空=通过），由 validate_result_bundle 聚合抛出。
     白名单 = 契约 required_command_operations.values ∪ conditional_command_operations
-    各 op（数据源与 audit 同源，均为 contract.json）。只拦确定性错误：
-    status=PASS 却落在白名单外的操作（虚构成功 / 自定义操作）会让下游重放失败、
-    触发整轮返工，必须当场记为错误。非 PASS 的白名单外操作与 required 缺漏不在此拦——
-    前者不构成虚构成功，后者可能因 UNAVAILABLE/FAIL+limitation 合法豁免，
-    满足率（min_satisfied_ratio）与豁免判定属 audit 权威职责，避免与 audit 判重。
+    各 op。只拦确定性错误：status=PASS 却 (a) 落在白名单外的操作（虚构成功/
+    自定义操作），或 (b) 缺 argv/output 执行绑定，或 (c) argv/详情/输出含伪造标记
+    （PLACEHOLDER/TEST_FIXTURE/未连接真实命令日志/mock）。(b)(c) 是 v3.4.14 新增的
+    "执行绑定"——此前 Agent 可自报 PASS 并写 `detail: TEST_FIXTURE::未连接真实命令日志`
+    蒙混过关，Gate 无法分辨。非 PASS 白名单外操作不在此拦（可能合法豁免，满足率属 audit）。
     """
     rules = skill.get("evidence_rules") or []
     whitelist: set = set()
@@ -529,20 +543,40 @@ def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
                     whitelist.add(value["op"])
     if not whitelist:
         return []  # 契约未声明命令操作清单的技能（非 ashare 类）不做白名单校验
-    offending = sorted({
-        str(receipt.get("operation"))
-        for receipt in bundle.get("command_receipts") or []
-        if receipt.get("status") == "PASS"
-        and str(receipt.get("operation")) not in whitelist
-    })
-    if not offending:
-        return []
-    return [
-        f"  - [回执越界] 成功操作 {offending} 不在契约白名单内；operation 必须取自"
-        f"契约白名单（required_command_operations / conditional_command_operations 声明的 op），"
-        f"禁止自定义操作或虚构成功。请改用白名单内操作重跑，"
-        f"或把该回执状态改为 FAIL/UNAVAILABLE 并附 reason 说明。"
-    ]
+    errors = []
+    for receipt in bundle.get("command_receipts") or []:
+        if receipt.get("status") != "PASS":
+            continue
+        op = str(receipt.get("operation"))
+        rid = receipt.get("receipt_id")
+        if op not in whitelist:
+            errors.append(
+                f"  - [回执越界] 成功操作 {op!r}（{rid}）不在契约白名单内；operation 必须取自"
+                f"契约白名单（required_command_operations / conditional_command_operations 声明的 op），"
+                f"禁止自定义操作或虚构成功。请改用白名单内操作重跑，"
+                f"或把该回执状态改为 FAIL/UNAVAILABLE 并附 reason 说明。")
+            continue
+        argv = receipt.get("argv")
+        if not (isinstance(argv, list) and argv
+                and all(isinstance(a, str) and a.strip() for a in argv)):
+            errors.append(
+                f"  - [回执无执行绑定] {rid} 状态 PASS 但缺 argv（真实执行的命令行）；"
+                f"禁止自报成功而无真实执行痕迹。请补 argv（实际命令）与 output（落盘引用）。")
+            continue
+        out = receipt.get("output")
+        if not (isinstance(out, str) and out.strip()):
+            errors.append(
+                f"  - [回执无执行绑定] {rid} 状态 PASS 但缺 output（真实执行输出/落盘引用）；"
+                f"禁止自报成功而无真实执行痕迹。")
+            continue
+        blob = " ".join(str(a) for a in argv) + " " + " ".join(
+            str(receipt.get(k, "")) for k in ("detail", "output", "reason"))
+        token = _forgery_token_in(blob)
+        if token:
+            errors.append(
+                f"  - [回执伪造痕迹] {rid} 的 argv/详情/输出含伪造标记 {token!r}；"
+                f"PASS 回执必须来自真实执行，不得含 PLACEHOLDER/TEST_FIXTURE/未连接真实命令日志 等。")
+    return errors
 
 
 def _precheck_placeholder_evidence(bundle: dict) -> list:

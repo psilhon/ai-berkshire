@@ -5,6 +5,30 @@
 
 ---
 
+## [v3.4.14] — 2026-08-04
+
+> 收口 v3.4.13 发行后 review 点名的 5 项 P1 + 1 项 P2 残余风险，并把「退出码 0 = 真正可提交」从口号压实为机器可证的不变量。重点：回执执行绑定、退出码契约完整化、full-oracle 测试、部署器资产覆盖。另补全 v3.4.13 缺失的 NOT_APPLICABLE / FAIL 真实路径（此前 CLI 暴露的状态无法生成合法 bundle，与 E16 冲突）。
+
+### 🐛 修复 (Fixed)
+
+- **回执可自报成功却无执行绑定（P1）**：此前 Agent 传一条白名单内 `status: PASS` 回执、detail 写 `TEST_FIXTURE::未连接真实命令日志` 即可蒙混过关（Gate 只校验 schema/白名单/水印）。修复：PASS 回执必须携带真实执行痕迹——`argv`（实际命令）+ `output`（真实输出/落盘引用），且不得含 `PLACEHOLDER`/`TEST_FIXTURE`/`未连接真实命令日志`/`mock` 等伪造标记；**生成器与 Gate `_precheck_command_receipts` 双向独立校验**，缺绑定或含伪造标记一律拒收。
+- **退出码 0 ≠ 真正可提交（P1，最关键的认知纠偏）**：v3.4.13 宣称「`0` ⟺ 零占位可提交」，但实测报告缺章节、事实不足、缺 role memo、甚至 `--status FAIL/NOT_APPLICABLE` 不当都可能 `rc=0`。修复并固化不变量：**`0` ⟺ Gate 预期接受** = 零占位 AND 状态为可验收终态 AND 报告过 Gate 硬门槛（章节齐全 + 达字节下限）；`2` = 输入非法（JSON 解析失败/单边证据/NA 证明不成立）或报告缺必需章节；`3` = 账本仍是 PLACEHOLDER 地板；`4` = `status=FAIL`（如实上报失败，**非**成功信号）。**无任何开关能把非 0 降级为 0**。
+- **"全量证据"测试是 false oracle（P1）**：此前该测试只跑生成器、不跑 Gate/Audit——生成器放行 ≠ Gate 放行。修复：该测试升级为 **true-oracle**，生成器产出的 bundle 直接交 `gate.validate_result_bundle` 端到端接受；并对该 bundle 做故障注入（伪造标记 / 删 argv / 清 output / 白名单外 op），**先证红再证绿**，否则同 false oracle。另补 `_precheck_command_receipts` 的 forgery/绑定测试。
+- **非法输入退出码与文档不一致（P1）**：非法 JSON 此前会 traceback 以退出码 1 收场，文档声称 2。修复：非法 JSON 统一以退出码 2 失败（与 CHANGELOG/Skill 声明一致）。
+- **用户级部署器覆盖不完整（P1）**：`deploy-user-skills.py` 此前只复制 `SKILL.md`，漏 `investment-memo-craft/agents/openai.yaml` 等附属资产，且 `--check` 仍报绿（"存在但落后"正是盲区）。修复：`plan()` 改为递归覆盖 skill 目录下**全部文件**（按字节比较），`--check` 能真把资产缺失/篡改变红。
+- **`--allow-placeholder-floor` 语义冲突（P2）**：该开关让占位地板返回 0，直接击穿「`0` ⟺ 可提交」。已移除（地板 bundle 仍正常落盘，调试时忽略退出码即可）。
+
+### ✨ 新增 (Added)
+
+- **NOT_APPLICABLE 真支持（消除 E16 冲突）**：新增 `--status NOT_APPLICABLE --na-fact-id <证伪谓词的 fact_id> --limitation "code|detail"` 模式；predicate/alternative 一律从契约取（不接受覆写），artifact_id 自动切 `artifact.na.<skill_id>`，不补占位地板，且**就地按 Gate `_validate_not_applicable` 口径校验**（谓词匹配 / fact 证伪 / source 已登记 / limitations 非空），任一不满足即拒收。
+- **FAIL 专用退出码 4**：`--status FAIL` 必须携带 `--error "code|detail"`（Gate 强制 FAIL bundle 带 error 对象，否则整包拒收），退出码 4 表示"如实上报失败"，清晰区别于成功信号 0。
+
+### 🧪 测试 (Tests)
+
+- `tests/test_mk_result_bundle.py`：移除过时的 `--allow-placeholder-floor` 测试；新增非法 JSON→2、回执无绑定→生成器拒收、伪造标记→拒收、`--status FAIL`→4（无 error→2）、缺章节→2、NA 真支持→0 且 Gate 接受、PASS true-oracle 端到端接受 + 故障注入证红。
+- `tests/test_full_analysis_gate_v2.py`：新增 `_precheck_command_receipts` 的 forgery/绑定测试（缺 argv / 缺 output / 伪造标记拒收，带绑定绿）；修正既有 receipt 夹具统一携带 argv+output。
+- `tests/test_full_analysis_e2e.py` / `test_full_analysis_runtime.py` / `test_full_analysis_rework.py` / `test_deploy_user_skills.py`：夹具回执补齐执行绑定；修正一处 `write_text` 误传 bytes 的测试 bug。
+
 ## [v3.4.13] — 2026-08-04
 
 > 堵死「生成器自动自证」：证据账本不再能凭空签发成功证明。附带修正 v3.4.12 三处"修了但没修透"（单边占位、macOS 路径、守卫盲区）与一处 CHANGELOG 自相矛盾。

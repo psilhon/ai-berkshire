@@ -97,10 +97,41 @@ class DeployUserSkillsTests(unittest.TestCase):
             self.assertTrue(keep.is_file(), "用户自建 skill 被删除")
             self.assertEqual(keep.read_text(encoding="utf-8"), "用户自建，勿动")
 
+    def test_plan_and_drift_include_skill_assets(self):
+        """v3.4.14 修复：plan 必须覆盖 skill 目录下的附属资产（如 agents/openai.yaml），
+        而非仅 SKILL.md；否则资产静默缺失却 --check 仍报绿。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = root / "codex-skills"
+            (src / "alpha").mkdir(parents=True)
+            (src / "alpha" / "SKILL.md").write_text("# alpha\n", encoding="utf-8")
+            (src / "alpha" / "agents").mkdir(parents=True)
+            (src / "alpha" / "agents" / "openai.yaml").write_text("model: gpt\n", encoding="utf-8")
+            dest = root / "dest"
+            items = self.mod.plan(src, dest)
+            paths = [str(p) for _, p, _ in items]
+            self.assertIn(str(dest / "alpha" / "SKILL.md"), paths)
+            self.assertIn(str(dest / "alpha" / "agents" / "openai.yaml"), paths)
+            # 缺失时全部报漂移
+            self.assertEqual(set(self.mod.drifted(items)), {"alpha"})
+            # 落盘（含资产）后应无漂移
+            for _, p, c in items:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(c)
+            self.assertEqual(self.mod.drifted(items), [])
+            # 资产被改 → 重新变红（此前这类"存在但落后"正是盲区）
+            (dest / "alpha" / "agents" / "openai.yaml").write_text("model: hacked\n")
+            self.assertEqual(set(self.mod.drifted(items)), {"alpha"})
+
     def test_repo_source_is_populated(self):
-        """源目录必须真有内容——否则部署器会"成功部署 0 个"并报绿。"""
+        """源目录必须真有内容——否则部署器会"成功部署 0 个"并报绿。
+        且必须包含 skill 的附属资产（如 investment-memo-craft/agents/openai.yaml）。"""
         items = self.mod.plan(REPO / "codex-skills", Path("/tmp/never-written"))
-        self.assertGreaterEqual(len(items), 14, "codex-skills 源副本数量异常")
+        self.assertGreaterEqual(len(items), 15, "codex-skills 源副本数量异常（含附属资产应 >14）")
+        asset_paths = [str(p) for _, p, _ in items]
+        self.assertTrue(
+            any(p.endswith("investment-memo-craft/agents/openai.yaml") for p in asset_paths),
+            "investment-memo-craft 的附属资产 agents/openai.yaml 未被纳入部署")
 
 
 if __name__ == "__main__":

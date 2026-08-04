@@ -13,7 +13,15 @@ REGISTRY = REPO / "tools" / "full_analysis_contract.json"
 SCHEMA = REPO / "tools" / "full_analysis_result_schema.json"
 
 sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "tools"))  # 供 true-oracle 测试直接调用 Gate 预检
+import full_analysis_gate as gate_module  # noqa: E402
 import mk_result_bundle as mkb  # noqa: E402
+
+# 负向验收（NOT_APPLICABLE）报告必须含 Gate 约定的五章且 >= NA_MIN_BYTES，
+# 否则即便谓词证伪成功也会被 Gate 报告硬门槛拒收。
+NA_REPORT_BODY = "\n\n".join(
+    f"## {h}\n\n{'此谓词经判定不成立，已附真实证据与替代路径并登记限制。' * 20}"
+    for h in ("不适用结论", "判定事实", "证据来源", "替代路径", "限制"))
 
 
 def _validate_schema_value(value, schema, path):
@@ -247,6 +255,8 @@ class MkResultBundleTests(unittest.TestCase):
             "receipt_id": "rcpt-ashare-data-quote",
             "operation": "quote",
             "status": "PASS",
+            "argv": ["tushare", "quote", "--ts_code", "000001.SZ"],
+            "output": "quote 实际输出：000001.SZ 日线数据已落盘",
             "detail": "tencent quote 000001 已执行",
         }]
         real_caps = [{"capability": "tushare_configured", "available": True}]
@@ -334,12 +344,13 @@ class MkResultBundleCliTests(unittest.TestCase):
             }, ensure_ascii=False), encoding="utf-8")
         return run_root
 
-    def _run(self, run_root: Path, extra=None):
-        report = (run_root / "evidence" / "attempts" / self.SKILL
+    def _run(self, run_root: Path, extra=None, skill_id=None):
+        skill_id = skill_id or self.SKILL
+        report = (run_root / "evidence" / "attempts" / skill_id
                   / self.ATTEMPT / "report.md")
         argv = [sys.executable, str(REPO / "scripts" / "mk_result_bundle.py"),
-                "--run-root", str(run_root), "--skill-id", self.SKILL,
-                "--work-unit-id", self.WU, "--attempt-id", self.ATTEMPT,
+                "--run-root", str(run_root), "--skill-id", skill_id,
+                "--work-unit-id", f"wu-{skill_id}", "--attempt-id", self.ATTEMPT,
                 "--lease-nonce", self.NONCE, "--agent-job-id", self.JOB,
                 "--report", str(report)]
         argv.extend(extra or [])
@@ -364,10 +375,20 @@ class MkResultBundleCliTests(unittest.TestCase):
 
     @staticmethod
     def _real_receipts():
+        # v3.4.14：覆盖 7 个 required + 部分 conditional_command_operations（pe-band/ratios/
+        # mainbz），不再只跑 7 个 required；且每条 PASS 回执携带真实执行绑定（argv+output），
+        # 否则生成器/Gate 会拒收——这正是此前"false oracle"的盲区。
         ops = ["quote", "financials", "valuation", "history",
-               "equity-history", "announcements", "signals"]
-        return [{"receipt_id": f"rcpt-ashare-data-{op}", "operation": op,
-                 "status": "PASS", "detail": f"{op} 已实际执行并落盘"} for op in ops]
+               "equity-history", "announcements", "signals",
+               "pe-band", "ratios", "mainbz"]
+        return [{
+            "receipt_id": f"rcpt-ashare-data-{op}",
+            "operation": op,
+            "status": "PASS",
+            "argv": ["tushare", op, "--ts_code", "000001.SZ", "--start_date", "20240101"],
+            "output": f"{op} 实际执行输出：000001.SZ 2024 数据已落盘至 evidence/...",
+            "detail": f"{op} 已实际执行并落盘",
+        } for op in ops]
 
     def test_placeholder_floor_bundle_exits_nonzero(self):
         """不传任何真实证据时，生成器必须以非 0 退出并自报占位条数——
@@ -382,19 +403,241 @@ class MkResultBundleCliTests(unittest.TestCase):
             self.assertGreater(summary["placeholder_entries"], 0)
             self.assertIn("PLACEHOLDER", proc.stderr)
 
-    def test_allow_placeholder_floor_only_downgrades_exit_code(self):
-        """--allow-placeholder-floor 只降退出码，绝不篡改 bundle 内容
-        （submittable 仍为 false，Gate 仍会拒收）。"""
+    def _write_manifest(self, run_root: Path, run_id: str = "run-cli-test") -> None:
+        """Gate.validate_result_bundle 要求 manifest 与 bundle 的 run_id 一致，
+        且版本为 full-analysis-manifest/v2——否则 Gate 直接报'只接受 v2 manifest'。"""
+        (run_root / "evidence" / "00-analysis-manifest.json").write_text(
+            json.dumps({
+                "manifest_schema_version": "full-analysis-manifest/v2",
+                "run": {"run_id": run_id},
+                "sources": [],
+            }, ensure_ascii=False), encoding="utf-8")
+
+    def _make_run_root_for(self, td: Path, skill_id: str) -> Path:
+        """与 _make_run_root 同构，但支持任意 skill（NA/always-applicable 测试用）。"""
+        run_root = td / "run"
+        attempt_dir = run_root / "evidence" / "attempts" / skill_id / self.ATTEMPT
+        attempt_dir.mkdir(parents=True)
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        skill = next(s for s in registry["skills"] if s["skill_id"] == skill_id)
+        headings = [s["heading"] for s in skill["sections"] if s.get("required")]
+        body = "\n\n".join(f"## {h}\n\n{'正文内容占位。' * 30}" for h in headings)
+        (attempt_dir / "report.md").write_text(body, encoding="utf-8")
+        (run_root / "evidence" / "runtime-state.json").write_text(
+            json.dumps({
+                "run_id": "run-cli-test",
+                "work_units": [{
+                    "work_unit_id": f"wu-{skill_id}",
+                    "skill_id": skill_id,
+                    "status": "LEASED",
+                    "lease": {"attempt_id": self.ATTEMPT, "lease_nonce": self.NONCE,
+                              "agent_job_id": self.JOB},
+                }],
+            }, ensure_ascii=False), encoding="utf-8")
+        return run_root
+
+    def test_illegal_json_extra_evidence_exits_invalid(self):
+        """v3.4.14 P1：非法 JSON 文件必须以退出码 2 收场（与 CHANGELOG/Skill 声明一致），
+        不得抛 traceback 以退出码 1 结束。"""
         with tempfile.TemporaryDirectory() as td:
             run_root = self._make_run_root(Path(td))
-            proc = self._run(run_root, ["--allow-placeholder-floor"])
+            bad = Path(td) / "bad.json"
+            bad.write_text("{not json", encoding="utf-8")
+            proc = self._run(run_root, ["--extra-evidence", str(bad),
+                                        "--extra-sources", str(bad)])
+            self.assertEqual(proc.returncode, mkb.EXIT_INVALID,
+                             f"stdout={proc.stdout}\nstderr={proc.stderr}")
+            self.assertIn("不是合法 JSON", proc.stderr)
+
+    def test_pass_receipt_missing_binding_rejected(self):
+        """v3.4.14 回执执行绑定：PASS 回执必须携带 argv+output，否则生成器拒收（exit 2）。
+        此前 Agent 可自报 PASS 并写 detail: TEST_FIXTURE::未连接真实命令日志 蒙混过关。"""
+        facts, sources = self._real_facts_sources()
+        no_argv = [{"receipt_id": "rcpt-ashare-data-quote", "operation": "quote",
+                    "status": "PASS", "output": "quote 实际输出已落盘",
+                    "detail": "quote 已执行"}]
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root(td_path)
+            proc = self._run(run_root, [
+                "--extra-evidence", self._write(td_path, "f.json", facts),
+                "--extra-sources", self._write(td_path, "s.json", sources),
+                "--extra-receipts", self._write(td_path, "r.json", no_argv),
+                "--extra-capabilities",
+                self._write(td_path, "c.json",
+                            [{"capability": "tushare_configured", "available": True}])])
+            self.assertEqual(proc.returncode, mkb.EXIT_INVALID, proc.stderr)
+            self.assertIn("回执无执行绑定", proc.stderr)
+            self.assertIn("argv", proc.stderr)
+
+    def test_pass_receipt_forgery_token_rejected(self):
+        """含伪造标记（PLACEHOLDER/TEST_FIXTURE/未连接真实命令日志/mock）的 PASS 回执
+        必须被生成器拒收（exit 2），与 Gate 双向独立校验。"""
+        facts, sources = self._real_facts_sources()
+        forged = [{"receipt_id": "rcpt-ashare-data-quote", "operation": "quote",
+                   "status": "PASS", "argv": ["tushare", "quote", "--ts_code", "000651.SZ"],
+                   "output": "quote 输出", "detail": "TEST_FIXTURE::未连接真实命令日志"}]
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root(td_path)
+            proc = self._run(run_root, [
+                "--extra-evidence", self._write(td_path, "f.json", facts),
+                "--extra-sources", self._write(td_path, "s.json", sources),
+                "--extra-receipts", self._write(td_path, "r.json", forged),
+                "--extra-capabilities",
+                self._write(td_path, "c.json",
+                            [{"capability": "tushare_configured", "available": True}])])
+            self.assertEqual(proc.returncode, mkb.EXIT_INVALID, proc.stderr)
+            self.assertIn("伪造标记", proc.stderr)
+
+    def test_fail_status_requires_error_object(self):
+        """--status FAIL 必须带 --error（Gate 强制 FAIL bundle 携带 error 对象，否则整包拒收）；
+        有 error → 退出码 4（如实上报失败，非成功信号）；无 error → 退出码 2。"""
+        facts, sources = self._real_facts_sources()
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root(td_path)
+            proc = self._run(run_root, [
+                "--status", "FAIL",
+                "--extra-evidence", self._write(td_path, "f.json", facts),
+                "--extra-sources", self._write(td_path, "s.json", sources)])
+            self.assertEqual(proc.returncode, mkb.EXIT_INVALID, proc.stderr)
+            self.assertIn("--error", proc.stderr)
+
+            proc = self._run(run_root, [
+                "--status", "FAIL", "--error", "tushare_down|接口连续超时",
+                "--error-retryable", "false",
+                "--extra-evidence", self._write(td_path, "f2.json", facts),
+                "--extra-sources", self._write(td_path, "s2.json", sources)])
+            self.assertEqual(proc.returncode, mkb.EXIT_NOT_SUCCESS, proc.stderr)
+            summary = json.loads(proc.stdout)
+            bundle = json.loads(Path(summary["result_path"]).read_text(encoding="utf-8"))
+            self.assertIsNotNone(bundle["error"])
+            self.assertEqual(bundle["error"]["code"], "tushare_down")
+            self.assertFalse(bundle["error"]["retryable"])
+
+    def test_missing_required_heading_exits_invalid(self):
+        """报告缺必需章节时退出码 2（BLOCK:: 硬拒收项），不再静默返回 0
+        （此前缺章节只打印警告却仍 exit 0，等于给 Gate 必拒的 bundle 发成功信号）。"""
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root(td_path)
+            # 仅保留首个必需章节，故意缺其余
+            skill = next(s for s in json.loads(REGISTRY.read_text(encoding="utf-8"))["skills"]
+                         if s["skill_id"] == self.SKILL)
+            first = next(h["heading"] for h in skill["sections"] if h.get("required"))
+            report = (run_root / "evidence" / "attempts" / self.SKILL
+                      / self.ATTEMPT / "report.md")
+            report.write_text(f"## {first}\n\n正文内容占位。" * 10, encoding="utf-8")
+            facts, sources = self._real_facts_sources()
+            proc = self._run(run_root, [
+                "--extra-evidence", self._write(td_path, "f.json", facts),
+                "--extra-sources", self._write(td_path, "s.json", sources),
+                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts()),
+                "--extra-capabilities",
+                self._write(td_path, "c.json",
+                            [{"capability": "tushare_configured", "available": True}])])
+            self.assertEqual(proc.returncode, mkb.EXIT_INVALID,
+                             f"stdout={proc.stdout}\nstderr={proc.stderr}")
+            blockers = json.loads(proc.stdout)["report_blockers"]
+            self.assertTrue(any("缺必需章节" in b for b in blockers))
+
+    def test_not_applicable_real_support_exits_zero_and_gate_accepts(self):
+        """v3.4.14：CLI 现在能生成 Gate 可接受的 NA bundle（此前无法生成，逼得 NA 路径
+        手写 result.json 与 E16 冲突）。quality-screen 谓词 has_comparable_financial_history
+        证伪 → exit 0 且 Gate 接受；始终适用的 skill（news-pulse）标 NA → exit 2 拒收。"""
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root_for(td_path, "quality-screen")
+            (run_root / "evidence" / "attempts" / "quality-screen"
+             / self.ATTEMPT / "report.md").write_text(NA_REPORT_BODY, encoding="utf-8")
+            self._write_manifest(run_root)
+            facts = [{"fact_id": "fact-quality-screen-na",
+                      "field": "has_comparable_financial_history", "value": False,
+                      "source_ids": ["src-na"], "confidence": "high"}]
+            sources = [{"source_id": "src-na", "url": "https://www.cninfo.com.cn/x",
+                        "retrieved_at": "2026-08-04", "source_type": "filing",
+                        "publisher": "巨潮资讯网", "title": "上市不足三年公告"}]
+            proc = self._run(run_root, [
+                "--status", "NOT_APPLICABLE",
+                "--extra-evidence", self._write(td_path, "f.json", facts),
+                "--extra-sources", self._write(td_path, "s.json", sources),
+                "--na-fact-id", "fact-quality-screen-na",
+                "--limitation", "insufficient_history|上市不足三年，无可比财务历史"],
+                skill_id="quality-screen")
             self.assertEqual(proc.returncode, mkb.EXIT_OK, proc.stderr)
             summary = json.loads(proc.stdout)
-            self.assertFalse(summary["submittable"])
+            self.assertTrue(summary["submittable"])
+            self.assertEqual(summary["not_applicable"]["predicate"],
+                             "has_comparable_financial_history")
+            registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
             bundle = json.loads(Path(summary["result_path"]).read_text(encoding="utf-8"))
-            self.assertTrue(mkb.placeholder_offenders(bundle))
-            for r in bundle["command_receipts"]:
-                self.assertNotEqual(r["status"], "PASS")
+            # Gate 必须接受该 NA bundle（双向校验）
+            gate_module.validate_result_bundle(bundle, run_root, registry)
+
+        # 始终适用的 skill 不得标 NA
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root_for(td_path, "news-pulse")
+            (run_root / "evidence" / "attempts" / "news-pulse"
+             / self.ATTEMPT / "report.md").write_text(NA_REPORT_BODY, encoding="utf-8")
+            self._write_manifest(run_root)
+            facts = [{"fact_id": "fact-quality-screen-na",
+                      "field": "has_comparable_financial_history", "value": False,
+                      "source_ids": ["src-na"], "confidence": "high"}]
+            sources = [{"source_id": "src-na", "url": "https://www.cninfo.com.cn/x",
+                        "retrieved_at": "2026-08-04", "source_type": "filing",
+                        "publisher": "巨潮资讯网", "title": "上市不足三年公告"}]
+            proc = self._run(run_root, [
+                "--status", "NOT_APPLICABLE",
+                "--extra-evidence", self._write(td_path, "f2.json", facts),
+                "--extra-sources", self._write(td_path, "s2.json", sources),
+                "--na-fact-id", "fact-quality-screen-na",
+                "--limitation", "x|y"], skill_id="news-pulse")
+            self.assertEqual(proc.returncode, mkb.EXIT_INVALID, proc.stderr)
+            self.assertIn("始终适用", proc.stderr)
+
+    def test_pass_bundle_true_oracle_accepted_and_fault_injection_red(self):
+        """true-oracle（v3.4.14 P1）：生成器产出的 PASS bundle 必须被 Gate
+        validate_result_bundle 端到端接受（此前'full real evidence'测试只跑生成器不跑
+        Gate，是 false oracle）；并对该 bundle 做故障注入（伪造标记/删 argv/清 output/
+        白名单外 op），证明 oracle 会变红——否则同 false oracle。"""
+        import copy
+
+        facts, sources = self._real_facts_sources()
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            run_root = self._make_run_root(td_path)
+            self._write_manifest(run_root)
+            proc = self._run(run_root, [
+                "--extra-evidence", self._write(td_path, "f.json", facts),
+                "--extra-sources", self._write(td_path, "s.json", sources),
+                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts()),
+                "--extra-capabilities",
+                self._write(td_path, "c.json",
+                            [{"capability": "tushare_configured", "available": True}])])
+            self.assertEqual(proc.returncode, mkb.EXIT_OK, proc.stderr)
+            registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+            bundle = json.loads(Path(
+                json.loads(proc.stdout)["result_path"]).read_text(encoding="utf-8"))
+            # 绿：真实 bundle 被 Gate 接受
+            gate_module.validate_result_bundle(bundle, run_root, registry)
+            # 红：故障注入必须让 Gate 拒收
+            cases = {
+                "伪造标记": lambda b: b["command_receipts"][0].update(
+                    {"detail": "TEST_FIXTURE::未连接真实命令日志"}),
+                "删除 argv": lambda b: b["command_receipts"][0].pop("argv", None),
+                "清空 output": lambda b: b["command_receipts"][0].update({"output": "   "}),
+                "白名单外 op": lambda b: b["command_receipts"][0].update(
+                    {"operation": "made-up"}),
+            }
+            for name, mutate in cases.items():
+                with self.subTest(case=name):
+                    bad = copy.deepcopy(bundle)
+                    mutate(bad)
+                    with self.assertRaises(gate_module.GateError,
+                                           msg=f"oracle 失效：{name} 未被 Gate 拒收"):
+                        gate_module.validate_result_bundle(bad, run_root, registry)
 
     def test_single_sided_real_evidence_fails_loudly(self):
         """只传 facts 或只传 sources 必须显式失败（exit 2），
@@ -426,11 +669,16 @@ class MkResultBundleCliTests(unittest.TestCase):
     def test_full_real_evidence_exits_zero_and_accepts_symlinked_abs_path(self):
         """五类证据齐全时退出码 0 且 bundle 零占位；同时守护 macOS 路径回归——
         tempfile 在 macOS 下天然给出 /var/... 未解析路径（真实为 /private/var/...），
-        修复前会在 relative_to 处误报 "report 必须位于 run_root 内"。"""
+        修复前会在 relative_to 处误报 "report 必须位于 run_root 内"。
+
+        v3.4.14 P1 修正：本测试升级为**真 oracle**——生成器产出的 bundle 还会直接交给
+        Gate.validate_result_bundle 端到端接受（不再只跑生成器自证）。此前"full real
+        evidence"测试只跑生成器、不跑 Gate，是 false oracle。"""
         facts, sources = self._real_facts_sources()
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
             run_root = self._make_run_root(td_path)
+            self._write_manifest(run_root)
             # 记录是否真的踩到符号链接场景（macOS 为真，Linux 下两者相等仍可跑）
             symlinked = td_path.resolve() != td_path
             proc = self._run(run_root, [
@@ -451,6 +699,9 @@ class MkResultBundleCliTests(unittest.TestCase):
             self.assertEqual(mkb.placeholder_offenders(bundle), [])
             self.assertTrue(bundle["artifact_records"][0]["path"].startswith(
                 "evidence/attempts/"))
+            # 真 oracle：交给 Gate 端到端接受（生成器放行 ≠ Gate 放行）
+            registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+            gate_module.validate_result_bundle(bundle, run_root, registry)
 
 
 if __name__ == "__main__":

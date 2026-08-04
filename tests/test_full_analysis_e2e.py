@@ -118,6 +118,10 @@ def build_compliant_evidence(registry_path, skill_id):
         "receipt_id": f"receipt.{skill_id}.{i + 1}",
         "operation": operation,
         "status": "PASS",
+        # v3.4.14 回执执行绑定：PASS 回执必须带真实执行痕迹（argv+output），
+        # 否则 Gate 前置拦截；测试夹具统一补上，避免误触发"无执行绑定"拒收。
+        "argv": ["tushare", operation, "--ts_code", "000651.SZ"],
+        "output": f"{operation} 实际执行输出：000651.SZ 数据已落盘",
     } for i, operation in enumerate(operations)]
     capability_records = ([{
         "capability": conditional["capability"], "available": True,

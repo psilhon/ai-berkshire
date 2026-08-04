@@ -33,21 +33,34 @@ DEFAULT_DEST = Path.home() / ".codex" / "skills"
 
 
 def plan(src_dir: Path, dest_dir: Path) -> list:
-    """返回 [(name, dest_path, content), ...]，按 name 排序（确定性）。"""
+    """返回 [(name, dest_path, content_bytes), ...]，按 name 排序（确定性）。
+
+    覆盖 skill 目录下的**全部文件**（SKILL.md + 附属资产如 agents/openai.yaml），
+    而非仅 SKILL.md——v3.4.14 修复：此前只复制 SKILL.md，导致附属资产
+    （如 investment-memo-craft/agents/openai.yaml）静默缺失却 --check 仍报绿。
+    文件相对路径在目标目录中保持；隐藏文件（.DS_Store）与 __pycache__ 跳过。
+    内容按字节比较，文本与二进制资产一视同仁。
+    """
     items = []
-    for src in sorted(src_dir.glob("*/SKILL.md")):
-        name = src.parent.name
-        items.append((name, dest_dir / name / "SKILL.md",
-                      src.read_text(encoding="utf-8")))
+    for skill_dir in sorted(p for p in src_dir.glob("*") if p.is_dir()):
+        name = skill_dir.name
+        for src in sorted(skill_dir.rglob("*")):
+            if not src.is_file():
+                continue
+            if src.name == ".DS_Store" or src.parent.name == "__pycache__":
+                continue
+            rel = src.relative_to(skill_dir)
+            items.append((name, dest_dir / name / rel, src.read_bytes()))
     return items
 
 
 def drifted(items: list) -> list:
-    """返回漂移的 skill 名列表（缺失或内容不一致）。"""
+    """返回漂移的 skill 名列表（缺失或内容不一致）。每个 skill 至多报一次。"""
     out = []
     for name, dest, content in items:
-        if not dest.exists() or dest.read_text(encoding="utf-8") != content:
-            out.append(name)
+        if not dest.exists() or dest.read_bytes() != content:
+            if name not in out:
+                out.append(name)
     return out
 
 
@@ -80,7 +93,7 @@ def main() -> int:
 
     for _, dest, content in items:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
+        dest.write_bytes(content)
     print(f"✅ 已部署 {len(items)} 个 Codex skill 到 {dest_dir}")
     return 0
 

@@ -961,8 +961,12 @@ class GateV2Tests(unittest.TestCase):
                            "equity-history", "announcements", "signals"]
 
     def _ashare_receipts(self, extra=()):
+        # v3.4.14：每条 PASS 回执必须带真实执行绑定（argv+output），否则 Gate 拒收。
+        # 此前测试只给 status=PASS 不绑 argv/output，正是被新规拦截的"自报成功无痕迹"。
         receipts = [
-            {"receipt_id": f"receipt.{op}", "operation": op, "status": "PASS"}
+            {"receipt_id": f"receipt.{op}", "operation": op, "status": "PASS",
+             "argv": ["tushare", op, "--ts_code", "000651.SZ"],
+             "output": f"{op} 实际执行输出：000651.SZ 数据已落盘"}
             for op in self.ASHARE_REQUIRED_OPS
         ]
         return receipts + list(extra)
@@ -992,11 +996,71 @@ class GateV2Tests(unittest.TestCase):
         self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
 
     def test_receipt_gate_passes_all_whitelisted_operations(self):
-        # required + conditional 全在白名单内 → 门禁放行
+        # required + conditional 全在白名单内且带真实执行绑定 → 门禁放行
         rp = self._mk_bundle("ashare-data", "attempt-t2c", facts=self.ASHARE_FACTS,
                              caps=self.ASHARE_CAPS, receipts=self._ashare_receipts(extra=[
                                  {"receipt_id": "receipt.peband", "operation": "pe-band",
-                                  "status": "PASS"}]))
+                                  "status": "PASS",
+                                  "argv": ["tushare", "pe-band", "--ts_code", "000651.SZ"],
+                                  "output": "pe-band 实际执行输出已落盘"}]))
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
+
+    # ---- v3.4.14：回执执行绑定（argv+output+无伪造标记）门禁 ----
+
+    def test_receipt_gate_rejects_pass_missing_argv(self):
+        # 白名单内 PASS 操作但缺 argv（无真实执行痕迹）→ 前置拦截
+        rp = self._mk_bundle("ashare-data", "attempt-bind-argv",
+                             facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
+                             receipts=[{"receipt_id": "receipt.quote", "operation": "quote",
+                                        "status": "PASS",
+                                        "output": "quote 实际输出已落盘"}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("回执无执行绑定", combined)
+        self.assertIn("argv", combined)
+
+    def test_receipt_gate_rejects_pass_missing_output(self):
+        # 白名单内 PASS 操作但缺 output（真实执行输出/落盘引用）→ 前置拦截
+        rp = self._mk_bundle("ashare-data", "attempt-bind-out",
+                             facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
+                             receipts=[{"receipt_id": "receipt.quote", "operation": "quote",
+                                        "status": "PASS",
+                                        "argv": ["tushare", "quote", "--ts_code", "000651.SZ"]}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("回执无执行绑定", combined)
+        self.assertIn("output", combined)
+
+    def test_receipt_gate_rejects_pass_forgery_token(self):
+        # PASS 回执的 argv/详情/输出含伪造标记（TEST_FIXTURE/未连接真实命令日志）→ 前置拦截
+        rp = self._mk_bundle("ashare-data", "attempt-bind-forge",
+                             facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
+                             receipts=[{"receipt_id": "receipt.quote", "operation": "quote",
+                                        "status": "PASS",
+                                        "argv": ["tushare", "quote", "--ts_code", "000651.SZ"],
+                                        "output": "quote 输出",
+                                        "detail": "TEST_FIXTURE::未连接真实命令日志"}])
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", rp)
+        self.assertNotEqual(ingested.returncode, 0)
+        combined = ingested.stdout + ingested.stderr
+        self.assertIn("伪造痕迹", combined)
+
+    def test_receipt_gate_accepts_pass_with_real_binding(self):
+        # 白名单内 PASS + 真实 argv + output（无伪造标记）→ 门禁放行（绿）
+        rp = self._mk_bundle("ashare-data", "attempt-bind-ok",
+                             facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
+                             receipts=self._ashare_receipts(extra=[
+                                 {"receipt_id": "receipt.peband", "operation": "pe-band",
+                                  "status": "PASS",
+                                  "argv": ["tushare", "pe-band", "--ts_code", "000651.SZ"],
+                                  "output": "pe-band 实际执行输出已落盘"}]))
         ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
                             "--registry", REGISTRY, "--result", rp)
         self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
@@ -1020,7 +1084,7 @@ class GateV2Tests(unittest.TestCase):
         self.assertIn("calculation.t3.bad", combined)   # 参数错条目
         self.assertIn("--growth", combined)             # 参数修复提示
         self.assertIn("custom-download", combined)      # 回执越界条目
-        self.assertIn("2 处问题", combined)             # 聚合计数
+        self.assertIn("处问题", combined)               # 聚合计数（不固化具体数字，防绑定校验新增后脆弱）
 
 
 class StaleCheckTests(unittest.TestCase):
