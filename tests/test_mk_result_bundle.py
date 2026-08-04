@@ -170,5 +170,45 @@ class MkResultBundleTests(unittest.TestCase):
             self.assertTrue(any("字节数" in w for w in warnings))
 
 
+    def test_real_evidence_leaves_no_placeholder_floor(self):
+        """v3.4.12 修复验证：提供真实事实/来源时，生成器不得残留任何 PLACEHOLDER 地板。
+
+        修复前占位事实始终生成并与真实证据按 id 并列，导致「提供 3 条真实事实仍残留
+        3 条占位事实 + 1 条占位来源」，Gate 占位预检直接拒收整包。本测试直接守护该回归。
+        """
+        skill = next(s for s in self.registry["skills"] if s["skill_id"] == "ashare-data")
+        real_facts = [{
+            "fact_id": "fact-ashare-data-price",
+            "field": "price",
+            "value": 12.34,
+            "source_ids": ["src-real"],
+            "confidence": "high",
+        }]
+        real_sources = [{
+            "source_id": "src-real",
+            "url": "https://www.cninfo.com.cn/x",
+            "publisher": "巨潮资讯网",
+            "title": "x 2025 年报",
+        }]
+        facts, sources, *_ = mkb.build_minimum_evidence(skill, real_facts, real_sources)
+        for fact in facts:
+            self.assertNotIn("PLACEHOLDER", str(fact.get("value")))
+        for src in sources:
+            self.assertNotIn("PLACEHOLDER", str(src.get("publisher")))
+            self.assertNotIn("PLACEHOLDER", str(src.get("title")))
+        # 真实证据必须与占位地板互斥：提供真实证据后事实/来源应恰好是传入的真实内容
+        self.assertEqual([f["fact_id"] for f in facts], ["fact-ashare-data-price"])
+        self.assertEqual([s["source_id"] for s in sources], ["src-real"])
+
+    def test_floor_still_emitted_when_no_real_evidence(self):
+        """未提供真实证据时，地板仍全部带水印（供本地调结构与 Gate 拒收用）。"""
+        skill = next(s for s in self.registry["skills"] if s["skill_id"] == "ashare-data")
+        facts, sources, *_ = mkb.build_minimum_evidence(skill, [], [])
+        for fact in facts:
+            self.assertIn("PLACEHOLDER", str(fact.get("value")))
+        for src in sources:
+            self.assertIn("PLACEHOLDER", str(src.get("publisher")))
+
+
 if __name__ == "__main__":
     unittest.main()

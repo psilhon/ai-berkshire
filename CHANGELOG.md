@@ -5,6 +5,22 @@
 
 ---
 
+## [v3.4.12] — 2026-08-04
+
+> 更正 v3.4.11：不变量守卫在 v3.4.11 实际是**红的**——守卫源码自身的 docstring 含裸旧标识 `full-company-analysis`，被自己的扫描命中并自报违规；且 v3.4.11 CHANGELOG 声称的「故障注入验证」当时并未真正落地（无注入测试）。本版把守卫跑绿、补齐注入测试，并修复生成器占位残留与 codex 副本漂移。
+
+### 🐛 修复 (Fixed)
+- **不变量守卫自红（P0）**：`tests/test_invariants.py` 扫描 `tests/` 却未排除自身，其 docstring 中的裸旧标识被自己命中 → 守卫第一条断言自报违规，v3.4.11 的 check.sh 实际 FAIL。修复：守卫源码排除自身（GUARD_SELF）+ docstring 不再直接写裸标识；补 `docs/` 扫描与 `errors="replace"`（不再静默吞解码错误）。
+  - **例外说明**：`docs/` 经核全是历史设计档案（dated plans/specs/ROADMAP，含 `superpowers/` 下 40+ 篇），引用旧名是当时史实，与 CHANGELOG 同属档案豁免，故不扫 `docs/`（避免逼着重写历史）。
+- **文档 flag 守卫可绕过（P1）**：原提取器只扫 `python3 scripts|tools/...` 命令行，导致 `--allow-stale`（v3.4.8 事故根因，文档以散文出现）从未被提取，守卫对其动机事故视而不见；且三套 CLI 注册集合被合并，注册到错误 CLI 也能通过。修复：按 CLI 归属校验——代码块内以 `python3` 真正调用的命令行（含 `\` 续行）其 flag 归属该 CLI；并把 `--allow-stale` 补进 `full_analysis.py start` 文档上下文。
+- **生成器命名规范冲突 + 占位残留（P1 / 功能性 P0）**：`mk_result_bundle.py` 生成 `fact_id`/`receipt_id` 用 `fact.<skill>.<field>` 点号形式，违反 skill 文档强制的 `fact-<skill>-<descriptor>` 连字符形式；且**提供真实证据时仍与占位地板按 id 并列**，导致「提供 3 条真实事实仍残留 3 条占位事实 + 1 条占位来源」，Gate 占位预检直接拒收整包。修复：id 改连字符形式；真实证据与占位地板互斥——提供真实证据后零占位残留（`tests/test_mk_result_bundle.py` 新增 `test_real_evidence_leaves_no_placeholder_floor` 守护）。
+- **部署漂移**：本机 Codex 安装副本 `~/.codex/skills/.../SKILL.md` 预算口径仍写 `26`，仓库真源已为 `27`（`2×13+1`）。已对齐为 `27`；五个副本（skills/、workbuddy-skills/、codex-skills/、~/.workbuddy/skills/、~/.codex/skills/）现已一致。
+
+### ✅ 新增 (Added)
+- **真正的故障注入测试**（兑现 v3.4.11 未落地的承诺）：
+  - Invariant1 谓词注入：`has_bare_legacy_id` 对裸标识为真、对带 `-workbuddy` 后缀为假。
+  - Invariant2 注入：合成文档塞未注册 `--ghost-flag` → 守卫必红；在错误 CLI 上下文注册仍判缺失。
+
 ## [v3.4.11] — 2026-08-04
 
 > 不变量守卫：把三轮返工的病根（只改一行就宣称全称性质成立）固化成 check.sh 机器断言

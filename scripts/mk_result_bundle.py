@@ -103,59 +103,56 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
     def vals(kind):
         return next((r.get("values", []) for r in rules if r.get("kind") == kind), [])
 
-    sources = [{
-        "source_id": f"src.{sid}.primary",
-        "url": f"https://example.invalid/{sid}/placeholder-primary",
-        "retrieved_at": now_iso()[:10],
-        "source_type": "other",
-        "publisher": f"PLACEHOLDER 占位一手来源（{sid}，未核实）",
-        "title": f"{sid} 结构地板占位来源——非真实检索，必须用真实来源替换",
-    }]
-    secondary = {
-        "source_id": f"src.{sid}.secondary",
-        "url": f"https://example.invalid/{sid}/placeholder-secondary",
-        "retrieved_at": now_iso()[:10],
-        "source_type": "other",
-        "publisher": f"PLACEHOLDER 占位二次来源（{sid}，未核实）",
-        "title": f"{sid} 结构地板占位交叉来源——非真实检索，必须用真实来源替换",
-    }
+    # ---- 来源：提供真实来源时只用真实来源；否则给带水印的结构地板（Gate 会拒收）----
+    if extra_sources:
+        sources = [dict(s) for s in extra_sources]
+    else:
+        sources = [{
+            "source_id": f"src-{sid}-primary",
+            "url": f"https://example.invalid/{sid}/placeholder-primary",
+            "retrieved_at": now_iso()[:10],
+            "source_type": "other",
+            "publisher": f"PLACEHOLDER 占位一手来源（{sid}，未核实）",
+            "title": f"{sid} 结构地板占位来源——非真实检索，必须用真实来源替换",
+        }]
+        min_dual = n("min_dual_source_facts")
+        if min_dual > 0:
+            sources.append({
+                "source_id": f"src-{sid}-secondary",
+                "url": f"https://example.invalid/{sid}/placeholder-secondary",
+                "retrieved_at": now_iso()[:10],
+                "source_type": "other",
+                "publisher": f"PLACEHOLDER 占位二次来源（{sid}，未核实）",
+                "title": f"{sid} 结构地板占位交叉来源——非真实检索，必须用真实来源替换",
+            })
 
-    min_facts = n("min_facts")
-    req_fields = list(dict.fromkeys(vals("required_fact_fields")))
-    min_dual = n("min_dual_source_facts")
-    fields = list(req_fields)
-    while len(fields) < max(min_facts, 1):
-        fields.append(f"{sid}_fact_{len(fields) + 1}")
-
-    facts = []
-    for i, field in enumerate(fields):
-        srcs = [f"src.{sid}.primary"]
-        if i < min_dual:
-            srcs.append(f"src.{sid}.secondary")
-        facts.append({
-            "fact_id": f"fact.{sid}.{field}",
-            "field": field,
-            # v3.4.10：占位值必须自报身份（PLACEHOLDER 前缀），禁止伪装成真实数值——
-            # 此前 value={sid}::{field} 配 confidence=high 会被误读为已核实事实。
-            "value": f"PLACEHOLDER::{sid}::{field}",
-            "source_ids": srcs,
-            "confidence": "low",
-        })
-    if min_dual > 0:
-        sources.append(secondary)
-
-    # 真实证据合并去重（真实优先，按 id 去重）
-    merged_sources = {s["source_id"]: s for s in sources}
-    for s in extra_sources:
-        if isinstance(s, dict) and s.get("source_id"):
-            merged_sources[s["source_id"]] = s
-    sources = list(merged_sources.values())
-
-    merged_facts = {f["fact_id"]: f for f in facts}
-    for f in extra_facts:
-        if isinstance(f, dict) and f.get("fact_id"):
-            merged_facts[f["fact_id"]] = f
-    facts = list(merged_facts.values())
+    # ---- 事实：提供真实事实时只用真实事实；否则给带水印的结构地板（Gate 会拒收）----
+    # 关键修复（v3.4.12）：真实证据与占位地板不再按 id 合并共存——一旦提供真实证据，
+    # 必须零占位残留。此前占位始终生成并与真实证据并列，导致「提供 3 条真实事实仍残留
+    # 3 条占位事实 + 1 条占位来源」，Gate 占位预检直接拒收整包。
+    if extra_facts:
+        facts = [dict(f) for f in extra_facts]
+    else:
+        min_facts = n("min_facts")
+        req_fields = list(dict.fromkeys(vals("required_fact_fields")))
+        min_dual = n("min_dual_source_facts")
+        fields = list(req_fields)
+        while len(fields) < max(min_facts, 1):
+            fields.append(f"{sid}_fact_{len(fields) + 1}")
+        facts = []
+        for i, field in enumerate(fields):
+            srcs = [f"src-{sid}-primary"]
+            if i < min_dual:
+                srcs.append(f"src-{sid}-secondary")
+            facts.append({
+                "fact_id": f"fact-{sid}-{field}",
+                "field": field,
+                # v3.4.10：占位值必须自报身份（PLACEHOLDER 前缀），禁止伪装成真实数值——
+                # 此前 value={sid}::{field} 配 confidence=high 会被误读为已核实事实。
+                "value": f"PLACEHOLDER::{sid}::{field}",
+                "source_ids": srcs,
+                "confidence": "low",
+            })
 
     min_calcs = n("min_calculations")
     # NOTE: operation MUST be a real financial_rigor.py subcommand so the shared
@@ -172,7 +169,7 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
     min_judg = n("min_judgments_with_falsification")
     while len(judgment_rules) < min_judg:
         judgment_rules.append(f"{sid}_falsification_{len(judgment_rules) + 1}")
-    base_fact = facts[0]["fact_id"] if facts else f"fact.{sid}.stub"
+    base_fact = facts[0]["fact_id"] if facts else f"fact-{sid}-stub"
     judgments = [{
         "judgment_id": f"judgment.{sid}.{i + 1}",
         "rule_id": rid,
@@ -199,7 +196,7 @@ def build_minimum_evidence(skill: dict, extra_facts: list, extra_sources: list):
         operations.append(f"receipt-op-{len(operations) + 1}")
     operations = list(dict.fromkeys(operations))
     receipts = [{
-        "receipt_id": f"receipt.{sid}.{i + 1}",
+        "receipt_id": f"rcpt-{sid}-{i + 1}",
         "operation": op,
         "status": "PASS",
     } for i, op in enumerate(operations)]

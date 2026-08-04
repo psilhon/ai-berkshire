@@ -45,7 +45,7 @@ cd <仓库根> && git status --short tools/full_analysis_contract.json scripts/f
 python3 scripts/full_analysis.py start --company <公司名> --code <证券代码> --as-of <YYYY-MM-DD>
 ```
 
-   - 启动被 `E1 版本门禁` 拒绝时：执行 `git tag --list "v*" | sort -V | tail -1` 获取最新 tag，`git checkout <该tag>` 后重试；确认目标版本无误且必须基于当前 HEAD 启动时，追加 `--allow-stale`。
+   - 启动被 `E1 版本门禁` 拒绝时：执行 `git tag --list "v*" | sort -V | tail -1` 获取最新 tag，`git checkout <该tag>` 后重试；确认目标版本无误且必须基于当前 HEAD 启动时，在 `python3 scripts/full_analysis.py start` 命令追加 `--allow-stale`。
 
    - 只从返回的 `run_root` 继续。注册表 `tools/full_analysis_contract.json` 是 13 项业务契约、阶段目录、角色、章节和适用性谓词的唯一机器真源；不要在本适配器中复制清单。
 4. **核对落盘**：`start` 会把当前契约文件的 SHA-256（`contract.registry_sha256`）与 HEAD commit（`run.contract_commit`）记录到 `evidence/00-analysis-manifest.json`；启动后核对两条已落盘（E10 机器强制兜底见下）。
