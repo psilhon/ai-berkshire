@@ -373,22 +373,37 @@ class MkResultBundleCliTests(unittest.TestCase):
                     "publisher": "巨潮资讯网", "title": "2025 年年度报告"}]
         return facts, sources
 
-    @staticmethod
-    def _real_receipts():
-        # v3.4.14：覆盖 7 个 required + 部分 conditional_command_operations（pe-band/ratios/
-        # mainbz），不再只跑 7 个 required；且每条 PASS 回执携带真实执行绑定（argv+output），
-        # 否则生成器/Gate 会拒收——这正是此前"false oracle"的盲区。
-        ops = ["quote", "financials", "valuation", "history",
-               "equity-history", "announcements", "signals",
-               "pe-band", "ratios", "mainbz"]
-        return [{
-            "receipt_id": f"rcpt-ashare-data-{op}",
-            "operation": op,
-            "status": "PASS",
-            "argv": ["tushare", op, "--ts_code", "000001.SZ", "--start_date", "20240101"],
-            "output": f"{op} 实际执行输出：000001.SZ 2024 数据已落盘至 evidence/...",
-            "detail": f"{op} 已实际执行并落盘",
-        } for op in ops]
+    # v3.4.14 覆盖 7 个 required + 3 个 conditional；沿用该组合。
+    REAL_OPS = ("quote", "financials", "valuation", "history",
+                "equity-history", "announcements", "signals",
+                "pe-band", "ratios", "mainbz")
+
+    def _real_receipts(self, run_root: Path, td_path: Path):
+        """用**真实执行器**签发回执（v3.4.15）。
+
+        v3.4.14 这里返回的是手写字典（argv/output 两个自述字符串）——而那正是
+        Gate 当时全部的检查内容，于是测试与被测代码共享同一个错误假设：只要
+        字段非空就算"真实执行"。这类 fixture 本身就是 false oracle。
+        现在 fixture 必须真的跑一遍执行器：它会 subprocess 执行命令、落盘输出、
+        写 journal、签名。任何一条绑定退化，这些测试都会随之变红。
+        """
+        cmd_stub = td_path / "op_cmd.py"
+        if not cmd_stub.exists():
+            cmd_stub.write_text(
+                "import sys\nprint(f'{sys.argv[1]} 000651.SZ rows=42')\n",
+                encoding="utf-8")
+        receipts = []
+        for op in self.REAL_OPS:
+            proc = subprocess.run(
+                [sys.executable, str(REPO / "scripts" / "run_evidence_command.py"),
+                 "--run-root", str(run_root),
+                 "--receipt-id", f"rcpt-ashare-data-{op}",
+                 "--operation", op, "--",
+                 sys.executable, str(cmd_stub), op],
+                capture_output=True, text=True)
+            assert proc.returncode == 0, f"{op}: {proc.stdout}\n{proc.stderr}"
+            receipts.append(json.loads(proc.stdout))
+        return receipts
 
     def test_placeholder_floor_bundle_exits_nonzero(self):
         """不传任何真实证据时，生成器必须以非 0 退出并自报占位条数——
@@ -533,7 +548,7 @@ class MkResultBundleCliTests(unittest.TestCase):
             proc = self._run(run_root, [
                 "--extra-evidence", self._write(td_path, "f.json", facts),
                 "--extra-sources", self._write(td_path, "s.json", sources),
-                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts()),
+                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts(run_root, td_path)),
                 "--extra-capabilities",
                 self._write(td_path, "c.json",
                             [{"capability": "tushare_configured", "available": True}])])
@@ -612,7 +627,7 @@ class MkResultBundleCliTests(unittest.TestCase):
             proc = self._run(run_root, [
                 "--extra-evidence", self._write(td_path, "f.json", facts),
                 "--extra-sources", self._write(td_path, "s.json", sources),
-                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts()),
+                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts(run_root, td_path)),
                 "--extra-capabilities",
                 self._write(td_path, "c.json",
                             [{"capability": "tushare_configured", "available": True}])])
@@ -684,7 +699,7 @@ class MkResultBundleCliTests(unittest.TestCase):
             proc = self._run(run_root, [
                 "--extra-evidence", self._write(td_path, "f.json", facts),
                 "--extra-sources", self._write(td_path, "s.json", sources),
-                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts()),
+                "--extra-receipts", self._write(td_path, "r.json", self._real_receipts(run_root, td_path)),
                 "--extra-capabilities", self._write(
                     td_path, "c.json",
                     [{"capability": "tushare_configured", "available": True}])])

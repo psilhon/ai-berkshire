@@ -34,11 +34,14 @@
 - 命令回执地板一律 status=UNAVAILABLE + PLACEHOLDER reason，绝不代签 PASS；
 - 判断/计算地板带 PLACEHOLDER 水印；capability 地板一律 available=false；
 - 真实调研成果必须经 --extra-* 传入，机械字段（sha256/bytes/id 规范）才由工具代劳。
-- **命令回执执行绑定（v3.4.14）**：经 `--extra-receipts` 传入的 `status=PASS` 回执必须
-  携带真实执行痕迹——`argv`（实际执行的命令行）与 `output`（真实输出/落盘引用），且不得含
-  `PLACEHOLDER`/`TEST_FIXTURE`/`未连接真实命令日志`/`mock` 等伪造标记。生成器与 Gate 的
-  `_precheck_command_receipts` 双向独立校验，缺绑定或含伪造标记一律拒收——仅靠"写一条
-  PASS + 一句假 detail"无法再蒙混过关。
+- **命令回执必须由执行器签发（v3.4.15）**：经 `--extra-receipts` 传入的 `status=PASS`
+  回执必须是 `scripts/run_evidence_command.py` 真实执行后签发的完整回执（含 signature /
+  exit_code / output_digest / executed_at / executor_version），**原样粘贴、禁止手写或改动**。
+  v3.4.14 曾要求 `argv`+`output`，但两者都是同一份 JSON 里的自述字符串——跑一条无关命令、
+  编一段输出即可通过，所谓"执行绑定"名不副实。现在改由 Gate 的
+  `_precheck_command_receipts` → `verify_executor_receipt` 六项判定统一负责
+  （签名/退出码/输出摘要/时间窗/operation∈argv/journal 留痕）；生成器通过
+  `admit_bundle` 复用同一判定，不再自己维护第二套口径。
 
 2) 负向验收（NOT_APPLICABLE）模式：当契约谓词不成立时，用同一工具产出 Gate
    可接受的负向验收 bundle（此前本工具无法生成合法 NA bundle，逼得 NA 路径手写
@@ -94,6 +97,7 @@ from full_analysis_gate import (  # noqa: E402
     NA_MIN_BYTES,
     NA_PREDICATE_FIELDS,
     NA_REQUIRED_HEADINGS,
+    admit_bundle,
 )
 
 # 结构地板水印：确定性字符串，Gate `_precheck_placeholder_evidence` 按它硬拒收。
@@ -340,44 +344,6 @@ def placeholder_offenders(bundle: dict) -> list:
 
 
 # 回执伪造标记（v3.4.14）：PASS 回执的 argv/详情/输出含这些串即视为自报成功而无真实执行。
-_FORGERY_TOKENS = ("placeholder", "test_fixture", "未连接真实命令日志",
-                   "fixture", "mock", "mocked", "simulated", "fake")
-
-
-def _forgery_token_in(text: str | None) -> str | None:
-    t = (text or "").lower()
-    for tok in _FORGERY_TOKENS:
-        if tok in t:
-            return tok
-    return None
-
-
-def _enforce_pass_receipt_binding(receipt: dict) -> None:
-    """PASS 回执必须带来自真实执行的 argv + output，且不含伪造标记（v3.4.14）。
-
-    此前 Gate 只校验 schema/白名单/水印，Agent 可自报 PASS 并写
-    `detail: TEST_FIXTURE::未连接真实命令日志` 蒙混过关。本函数与 Gate 的
-    `_precheck_command_receipts` 双重独立校验；无执行绑定或含伪造标记一律 fail(exit 2)。
-    """
-    if receipt.get("status") != "PASS":
-        return
-    argv = receipt.get("argv")
-    if not (isinstance(argv, list) and argv
-            and all(isinstance(a, str) and a.strip() for a in argv)):
-        fail(f"command_receipt {receipt.get('receipt_id')} 状态 PASS 却缺 argv"
-             f"（真实执行的命令行）；回执无执行绑定：禁止自报成功而无真实执行痕迹。"
-             f"请补 argv 与 output。")
-    out = receipt.get("output")
-    if not (isinstance(out, str) and out.strip()):
-        fail(f"command_receipt {receipt.get('receipt_id')} 状态 PASS 却缺 output"
-             f"（真实执行输出/落盘引用）；回执无执行绑定：禁止自报成功而无真实执行痕迹。")
-    blob = " ".join(str(a) for a in argv) + " " + " ".join(
-        str(receipt.get(k, "")) for k in ("detail", "output", "reason"))
-    token = _forgery_token_in(blob)
-    if token:
-        fail(f"command_receipt {receipt.get('receipt_id')} 的 argv/详情/输出含伪造标记 {token!r}；"
-             f"回执无执行绑定：PASS 回执必须来自真实执行，不得含"
-             f"PLACEHOLDER/TEST_FIXTURE/未连接真实命令日志 等。")
 
 
 # 阻断标记（v3.4.14）：带此前缀的预检问题 = Gate 会**硬拒收**，生成器必须非 0 退出。
@@ -590,10 +556,8 @@ def main() -> int:
         facts, sources, calcs, judgments, role_runs, receipts, capabilities = \
             build_evidence_ledger(skill, extra_facts, extra_sources,
                                   extra_calcs, extra_judgments, extra_receipts, extra_caps)
-    # 执行绑定（v3.4.14）：PASS 回执必须带来自真实执行的 argv + output，不含伪造标记。
-    # 缺绑定或含伪造标记一律 fail(exit 2)——生成器层先挡下，Gate 层再挡一次。
-    for r in receipts:
-        _enforce_pass_receipt_binding(r)
+    # 回执执行绑定（v3.4.15）：PASS 回执的完整性由 admit_bundle 统一校验（与 Gate/ingest
+    # 同一函数），此处不再单独预检——避免两套口径分叉导致「生成器放行、Gate 拒收」。
 
     limitations = []
     for item in args.limitation:
@@ -675,12 +639,15 @@ def main() -> int:
     out = attempt_dir / "result.json"
     out.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # FAIL 的报告没有章节义务（Gate 对 FAIL 不做产物实质校验），按 NA/PASS 两套口径核。
+    # 完整准入判定：生成器与 Gate/ingest 共用 admit_bundle（check_artifacts=True 复用
+    # 文件/实质/角色memo/NA 章节校验）。这是 v3.4.15 的关键不变量：退出码 0 ⟺ Gate 真正接受，
+    # 不再各写各的校验（此前生成器只查标题/字节，导致 rc0 但 Gate 拒收）。
     warnings = check_report(skill, report, na=is_na) if args.status != "FAIL" else []
     offenders = placeholder_offenders(bundle)
     blockers = [w for w in warnings if w.startswith(BLOCK)]
     status_ok = args.status in {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"}
     report_ok = not blockers
+    admission = admit_bundle(bundle, run_root, registry, check_artifacts=True)
     summary = {
         "result_path": str(out),
         "skill_id": args.skill_id,
@@ -694,18 +661,20 @@ def main() -> int:
         "role_runs": len(role_runs),
         "receipts": len(receipts),
         "placeholder_entries": len(offenders),
-        # 准入信号必须诚实（v3.4.14）：submittable=true ⟺ 退出码 0 ⟺ Gate 预期会接受 =
-        # 零占位 AND 状态为可验收终态 AND 报告无 Gate 硬拒收项（章节齐全 + 达字节下限）。
-        "submittable": (not offenders) and status_ok and report_ok,
+        # 准入信号必须诚实（v3.4.15）：submittable=true ⟺ 退出码 0 ⟺ Gate 真正接受 =
+        # 零占位 AND 状态为可验收终态 AND admit_bundle 全绿（章节/字节/实质/角色memo/
+        # 回执执行绑定/占位水印/证据规则/NA 证明/run_id 全部通过）。
+        "submittable": (not offenders) and status_ok and not admission,
         "report_blockers": blockers,
+        "admission_blockers": admission,
         "status_acceptable": status_ok,
         "not_applicable": not_applicable,
         "precheck_warnings": warnings,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
-    # 不变量（v3.4.13 起，v3.4.14 完整化）：退出码 0 ⟺ submittable ⟺ Gate 预期接受。
-    # 每一类"Gate 必拒"的情形都必须映射到互不重叠的非 0 码，且无开关可降级为 0。
+    # 不变量（v3.4.13 起，v3.4.15 完整化）：退出码 0 ⟺ submittable ⟺ Gate 真正接受。
+    # 每一类"Gate 必拒"的情形都映射到互不重叠的非 0 码，且无开关可降级为 0。
     if offenders:
         print(
             f"❌ 本 bundle 含 {len(offenders)} 条 {PLACEHOLDER} 结构地板证据"
@@ -727,12 +696,13 @@ def main() -> int:
     if not status_ok:  # 防御性：--status choices 之外的取值不得静默放行
         print(f"❌ status={args.status} 不是可验收终态（退出码 2）。", file=sys.stderr)
         return EXIT_INVALID
-    if not report_ok:
+    if admission:
+        # 与 Gate 同口径的拦截：逐条打印，Agent 一轮改全，不进 audit、不耗 attempt。
         print(
-            f"❌ 报告未过 Gate 硬门槛：{blockers}。"
-            f"{'（负向验收报告须含 ' + '/'.join(NA_REQUIRED_HEADINGS) + f' 五章且 >= {NA_MIN_BYTES} 字节）' if is_na else ''}"
-            f"补齐后再 submit（退出码 2）。",
+            f"❌ 准入拦截 {len(admission)} 处（与 Gate 同一 admit_bundle 判定，Gate 会硬拒收）：",
             file=sys.stderr)
+        for e in admission:
+            print(f"  - {e}", file=sys.stderr)
         return EXIT_INVALID
     return EXIT_OK
 

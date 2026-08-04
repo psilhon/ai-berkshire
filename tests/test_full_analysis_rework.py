@@ -55,7 +55,8 @@ class ReworkTests(unittest.TestCase):
         artifact = attempt_dir / "report.md"
         artifact.write_text(build_compliant_report(REGISTRY, skill_id), encoding="utf-8")
         (ev_facts, ev_sources, ev_calcs, ev_judgments, ev_roles,
-         ev_receipts, ev_capabilities) = build_compliant_evidence(REGISTRY, skill_id)
+         ev_receipts, ev_capabilities) = build_compliant_evidence(
+            REGISTRY, skill_id, self.run_root)
         manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
         bundle = {
             "schema_version": "result-schema/v1", "run_id": manifest["run"]["run_id"],

@@ -5,11 +5,13 @@
 部署器本身是确定性的、--check 能真的把漂移变红（而不是永远打印"一致"）。
 """
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "deploy-user-skills.py"
@@ -132,6 +134,59 @@ class DeployUserSkillsTests(unittest.TestCase):
         self.assertTrue(
             any(p.endswith("investment-memo-craft/agents/openai.yaml") for p in asset_paths),
             "investment-memo-craft 的附属资产 agents/openai.yaml 未被纳入部署")
+
+    def test_drifted_detects_orphan_in_owned_skill(self):
+        """v3.4.15：目标 skill 目录内存在但源已删除的残留文件（orphan）必须报漂移，
+        否则删除/改名资产后 --check 仍报绿、残留静默污染用户副本。"""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = self._fake_src(root, ("alpha",))
+            dest = root / "dest"
+            items = self.mod.plan(src, dest)
+            for _, p, c in items:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(c)
+            # 源里没有的残留文件
+            (dest / "alpha" / "stale.txt").write_text("残留", encoding="utf-8")
+            # 不传 src/dest 时保持旧语义（只查缺失/不一致）→ 无漂移
+            self.assertEqual(self.mod.drifted(items), [])
+            # 传 src/dest 时 orphan 必须变红
+            self.assertEqual(self.mod.drifted(items, src, dest), ["alpha（orphan 残留）"])
+
+    def test_deploy_cleans_orphans_only_in_owned_skills(self):
+        """v3.4.15：部署必须清理仓库拥有 skill 目录内的 orphan，
+        但用户自建 skill 目录不扫不删（职责边界不变）。
+        注：CLI 用的是仓库真实 codex-skills 源，故取真实 skill 名做残留注入。"""
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td) / "codex-skills"
+            real_name = next(p.name for p in (REPO / "codex-skills").glob("*") if p.is_dir())
+            (dest / real_name).mkdir(parents=True)
+            (dest / real_name / "stale.txt").write_text("残留", encoding="utf-8")
+            (dest / "my-own").mkdir(parents=True)
+            keep = dest / "my-own" / "keep.txt"
+            keep.write_text("勿动", encoding="utf-8")
+            done = self._run(dest)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertFalse((dest / real_name / "stale.txt").exists(),
+                             "仓库拥有的 skill 目录内 orphan 应被清理")
+            self.assertTrue(keep.is_file() and keep.read_text(encoding="utf-8") == "勿动",
+                            "用户自建 skill 不得被删改")
+            # 清理后 --check 必须绿（否则部署完永远红，闭环断裂）
+            self.assertEqual(self._run(dest, check=True).returncode, 0)
+
+    def test_default_dest_follows_codex_home(self):
+        """v3.4.15：目标目录跟随 CODEX_HOME 环境变量（Codex 官方约定）。"""
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {"CODEX_HOME": td}):
+                self.assertEqual(self.mod.default_dest(), Path(td) / "skills")
+
+    def test_default_dest_defaults_to_home_codex(self):
+        saved = os.environ.pop("CODEX_HOME", None)
+        try:
+            self.assertEqual(self.mod.default_dest(), Path.home() / ".codex" / "skills")
+        finally:
+            if saved is not None:
+                os.environ["CODEX_HOME"] = saved
 
 
 if __name__ == "__main__":

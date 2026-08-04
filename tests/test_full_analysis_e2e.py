@@ -12,6 +12,11 @@ CLI = REPO / "scripts/full_analysis.py"
 GATE = REPO / "tools/full_analysis_gate.py"
 REGISTRY = REPO / "tools/full_analysis_contract.json"
 
+# 真 oracle：让夹具直接调用执行器签发回执，而非手写 argv/output。
+# v3.4.14 的 false oracle（夹具自己拼回执）正是绑定失效没被发现的根因。
+sys.path.insert(0, str(REPO / "tools"))
+import evidence_receipt as er  # noqa: E402
+
 ROLE_CN = {
     "duan": "段永平", "buffett": "巴菲特", "munger": "芒格", "li": "李录",
     "editor": "编辑", "reader": "读者", "company": "公司", "regulatory": "监管",
@@ -49,8 +54,13 @@ def build_compliant_report(registry_path, skill_id):
     return body
 
 
-def build_compliant_evidence(registry_path, skill_id):
-    """按全部 contract evidence_rules 生成最小满足证据，供 canary 使用。"""
+def build_compliant_evidence(registry_path, skill_id, run_root=None):
+    """按全部 contract evidence_rules 生成最小满足证据，供 canary 使用。
+
+    run_root 给定时，每条 PASS 回执**真实调用执行器签发**（execute_and_sign），
+    让 canary 在真实编排链路上验证「回执绑定」名副其实；run_root 为 None 时退化
+    为 v3.4.14 风格的手写 argv/output（仅供不依赖执行器的纯单元场景）。
+    """
     reg = json.loads(Path(registry_path).read_text(encoding="utf-8"))
     skill = next(s for s in reg["skills"] if s["skill_id"] == skill_id)
     rules = skill.get("evidence_rules") or []
@@ -114,15 +124,28 @@ def build_compliant_evidence(registry_path, skill_id):
     while len(operations) < min_receipts:
         operations.append(f"receipt-op-{len(operations) + 1}")
     operations = list(dict.fromkeys(operations))
-    command_receipts = [{
-        "receipt_id": f"receipt.{skill_id}.{i + 1}",
-        "operation": operation,
-        "status": "PASS",
-        # v3.4.14 回执执行绑定：PASS 回执必须带真实执行痕迹（argv+output），
-        # 否则 Gate 前置拦截；测试夹具统一补上，避免误触发"无执行绑定"拒收。
-        "argv": ["tushare", operation, "--ts_code", "000651.SZ"],
-        "output": f"{operation} 实际执行输出：000651.SZ 数据已落盘",
-    } for i, operation in enumerate(operations)]
+    command_receipts = []
+    for i, operation in enumerate(operations):
+        receipt_id = f"receipt.{skill_id}.{i + 1}"
+        if run_root is not None:
+            # 真 oracle：用执行器真实 subprocess 跑一条命令并签名签发。
+            # 命令必须含 operation token（Gate 校验 operation ∈ argv），且退出码 0。
+            command = [sys.executable, "-c",
+                       "import sys; sys.stdout.write('evidence-ok')", operation]
+            receipt, _exit = er.execute_and_sign(
+                Path(run_root), receipt_id, operation, command)
+            assert receipt["status"] == "PASS", (
+                f"夹具执行器签发失败：{operation} -> {receipt}")
+            command_receipts.append(receipt)
+        else:
+            # 退化分支（不依赖执行器的纯单元场景）：v3.4.14 风格手写 argv/output。
+            command_receipts.append({
+                "receipt_id": receipt_id,
+                "operation": operation,
+                "status": "PASS",
+                "argv": ["tushare", operation, "--ts_code", "000651.SZ"],
+                "output": f"{operation} 实际执行输出：000651.SZ 数据已落盘",
+            })
     capability_records = ([{
         "capability": conditional["capability"], "available": True,
     }] if conditional else [])
@@ -177,7 +200,8 @@ class FullAnalysisE2ETests(unittest.TestCase):
                     (attempt_dir / f"role-{role}.md").write_text(
                         f"角色 {role} 独立分析：" + "数据详实论证 " * 80 + "\n", encoding="utf-8")
             (ev_facts, ev_sources, ev_calcs, ev_judgments, ev_roles,
-             ev_receipts, ev_capabilities) = build_compliant_evidence(REGISTRY, skill_id)
+             ev_receipts, ev_capabilities) = build_compliant_evidence(
+                REGISTRY, skill_id, self.run_root)
             bundle = {
                 "schema_version": "result-schema/v1", "run_id": run_id,
                 "work_unit_id": lease["work_unit_id"], "attempt_id": lease["attempt_id"],

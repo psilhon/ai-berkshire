@@ -23,6 +23,10 @@ from pathlib import Path
 
 from full_analysis_snapshot import analysis_snapshot
 from financial_rigor import preflight_diagnose_params
+from evidence_receipt import (
+    ensure_signing_secret, load_journal, load_run_id, load_run_started_at,
+    load_signing_secret, verify_executor_receipt,
+)
 import full_analysis_runtime as runtime_mod
 
 
@@ -82,6 +86,10 @@ SUMMARY_REQUIRED_HEADINGS = (
 )
 NA_MIN_BYTES = 800
 SUMMARY_MIN_BYTES = 2500
+# FAIL 报告字节下限（v3.4.15）：短失败上报只需「真实失败说明」，远轻于 PASS/NA。
+# 此前 ingest 对 FAIL 复用 NA_MIN_BYTES(800) 导致「生成器 rc4 但 ingest 拒收」的断路；
+# 统一到本常量后，生成器与 Gate 用同一门槛，rc4 即代表「如实上报且可提交为失败」。
+FAIL_MIN_BYTES = 200
 
 
 class GateError(Exception):
@@ -371,72 +379,169 @@ def _validate_schema_value(value, schema: dict, path: str = "$") -> None:
                 _validate_schema_value(item, properties[key], f"{path}.{key}")
 
 
-def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None:
+def _manifest_or_empty(run_root: Path) -> dict:
+    """返回 manifest；缺失/非法时返回空壳（仅含 sources=[]），让调用方降级而非崩溃。"""
+    try:
+        return load_manifest(run_root)
+    except Exception:
+        return {"sources": [], "skills": []}
+
+
+def _admit_artifact_checks(bundle: dict, run_root: Path, skill: dict, status: str) -> list:
+    """准入判定的文件侧检查（check_artifacts=True 时启用）：artifact 文件存在-字节-sha
+    一致性、报告字节下限、多角色备忘录、实质校验、NA 章节。仅读取，不写文件。返回拦截列表。"""
+    errs: list = []
+    records = bundle.get("artifact_records") or []
+    if not records:
+        return errs
+    rec = records[0]
+    try:
+        rel = safe_relative(run_root, rec.get("path", ""))
+    except GateError as exc:
+        return [str(exc)]
+    source = Path(run_root) / rel
+    if not source.is_file() or source.is_symlink() or not str(rel).startswith("evidence/attempts/"):
+        return [f"artifact 必须来自 evidence/attempts 且为普通文件: {rel}"]
+    actual_bytes = source.stat().st_size
+    if actual_bytes != rec.get("bytes") or sha256_file(source) != rec.get("sha256"):
+        errs.append(f"artifact bytes/sha256 与 Result Bundle 不一致: {rel}")
+    if status in {"PASS", "PASS_WITH_LIMITATIONS"}:
+        min_bytes = skill["artifact"].get("min_bytes", 0)
+    elif status == "NOT_APPLICABLE":
+        min_bytes = NA_MIN_BYTES
+    else:  # FAIL
+        min_bytes = FAIL_MIN_BYTES
+    if isinstance(min_bytes, int) and min_bytes > 0 and actual_bytes < min_bytes:
+        errs.append(f"artifact 字节数 {actual_bytes} < 下限 {min_bytes}（{skill['skill_id']}）")
+    try:
+        txt = source.read_text(encoding="utf-8")
+    except Exception:
+        txt = ""
+    if status in {"PASS", "PASS_WITH_LIMITATIONS"}:
+        roles = skill.get("roles") or {}
+        if roles.get("mode") == "independent_then_integrator":
+            attempt_dir = source.parent
+            missing = []
+            for role in roles.get("required_roles", []):
+                if role == "integrator":
+                    continue
+                memo = attempt_dir / f"role-{role}.md"
+                if not memo.is_file() or memo.is_symlink() or memo.stat().st_size < 300:
+                    missing.append(role)
+            if missing:
+                errs.append(f"多角色 skill {skill['skill_id']} 缺角色独立备忘录: {missing}")
+        errs += _substance_errors(skill, txt)
+    elif status == "NOT_APPLICABLE":
+        missing_headings = [
+            h for h in NA_REQUIRED_HEADINGS
+            if not re.search(rf"^#{{1,6}}\s+{re.escape(h)}\s*$", txt, re.M)
+        ]
+        if missing_headings:
+            errs.append(f"负向验收报告缺必需章节: {missing_headings}")
+    return errs
+
+
+def admit_bundle(bundle: dict, run_root: Path, registry: dict, *,
+                 check_artifacts: bool = True) -> list:
+    """单一准入判定（v3.4.15）：生成器、cmd_ingest、correction 共用同一函数。
+
+    返回拦截消息列表（空=可接受）。此前三处校验分叉——生成器只查标题/字节、
+    validate_result_bundle 不查角色memo/实质、ingest 才查——导致「rc0 ⟺ Gate 接受」
+    长期为假。本函数聚合全部确定性拦截：
+      schema/status/artifact_id/evidence_rules/calc 参数/回执绑定/占位水印/NA 证明/run_id
+      （check_artifacts=True 时追加）artifact 文件存在-字节-sha/角色memo/实质校验/报告字节下限。
+    validate_result_bundle(check_artifacts=False) 与 cmd_ingest/生成器(check_artifacts=True)
+    都走这里，保证「生成器 rc0 ⟺ Gate 真正接受」成为机器事实。
+    """
+    errs: list = []
     schema = load_json(RESULT_SCHEMA_PATH, "Result Bundle schema")
-    _validate_schema_value(bundle, schema)
+    try:
+        _validate_schema_value(bundle, schema)
+    except GateError as exc:
+        errs.append(str(exc))
     required = set(schema["required"])
     allowed = set(schema.get("properties", {})) or required
     missing = sorted(required - set(bundle))
-    # 仅拒绝 schema 未声明的未知字段；schema 中声明的可选实质字段（key_claims/dissent_points 等）放行
+    if missing:
+        errs.append(f"Result Bundle 顶层缺字段: {missing}")
     extra = sorted(set(bundle) - allowed)
-    if missing or extra:
-        raise GateError(f"Result Bundle 顶层字段不匹配 missing={missing} extra={extra}")
+    if extra:
+        errs.append(f"Result Bundle 含未声明字段: {extra}")
     if bundle.get("schema_version") != "result-schema/v1":
-        raise GateError("Result Bundle schema_version 必须为 result-schema/v1")
-    if bundle.get("status") not in RESULT_STATUSES:
-        raise GateError(f"Result Bundle status 非法: {bundle.get('status')!r}")
-    if bundle["status"] == "FAIL" and not isinstance(bundle.get("error"), dict):
-        raise GateError("FAIL Result Bundle 必须提供 error")
-    if (bundle["status"] in SUCCESS_TERMINAL_STATUSES
-            and bundle.get("error") is not None):
-        raise GateError("成功/PWL/NA Result Bundle 的 error 必须为 null")
-    if not isinstance(bundle.get("pwl_candidates"), list) or not set(bundle["pwl_candidates"]).issubset(PWL_ALLOWLIST):
-        raise GateError("pwl_candidates 含未注册的 PWL 原因")
-    skill = find_skill(registry, bundle.get("skill_id"))
-    if bundle.get("run_id") != load_manifest(run_root)["run"]["run_id"]:
-        raise GateError("Result Bundle run_id 与 manifest 不一致")
+        errs.append("Result Bundle schema_version 必须为 result-schema/v1")
+    status = bundle.get("status")
+    if status not in RESULT_STATUSES:
+        errs.append(f"Result Bundle status 非法: {status!r}")
+    if status == "FAIL" and not isinstance(bundle.get("error"), dict):
+        errs.append("FAIL Result Bundle 必须提供 error")
+    if status in SUCCESS_TERMINAL_STATUSES and bundle.get("error") is not None:
+        errs.append("成功/PWL/NA Result Bundle 的 error 必须为 null")
+    if not isinstance(bundle.get("pwl_candidates"), list) \
+            or not set(bundle.get("pwl_candidates") or []).issubset(PWL_ALLOWLIST):
+        errs.append("pwl_candidates 含未注册的 PWL 原因")
+
+    # 结构校验未过（schema/字段/枚举/类型）时提前返回，避免对畸形子结构
+    # （如 fact_updates 为字符串数组、artifact_records 非数组）做 .get() 而崩溃；
+    # 深层校验（evidence_rules/calc/receipt/占位/NA/artifact 文件）均假设子结构良构。
+    if errs:
+        return errs
+
+    try:
+        skill = find_skill(registry, bundle.get("skill_id"))
+    except GateError as exc:
+        return [str(exc)]
+
+    try:
+        mfid = load_manifest(run_root)["run"]["run_id"]
+    except Exception:
+        mfid = None
+    if mfid is not None and bundle.get("run_id") != mfid:
+        errs.append("Result Bundle run_id 与 manifest 不一致")
     if not isinstance(bundle.get("artifact_records"), list):
-        raise GateError("artifact_records 必须为数组")
-    expected = skill["artifact"]["artifact_id"]
-    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}:
-        if len(bundle["artifact_records"]) != 1:
-            raise GateError(f"{bundle['skill_id']} 必须恰好提交 1 个正式 artifact")
-        if bundle["artifact_records"][0].get("artifact_id") != expected:
-            raise GateError(f"artifact_id 不匹配: 期望 {expected}")
-        if bundle.get("not_applicable") is not None:
-            raise GateError("PASS/PASS_WITH_LIMITATIONS 不得携带 not_applicable")
-    elif bundle["status"] == "NOT_APPLICABLE":
-        expected_na = f"artifact.na.{bundle['skill_id']}"
-        if len(bundle["artifact_records"]) != 1:
-            raise GateError(
-                f"{bundle['skill_id']} 的 NOT_APPLICABLE 必须恰好提交 1 个负向验收 artifact")
-        if bundle["artifact_records"][0].get("artifact_id") != expected_na:
-            raise GateError(f"负向验收 artifact_id 不匹配: 期望 {expected_na}")
-        _validate_not_applicable(bundle, skill, load_manifest(run_root))
-    elif bundle.get("not_applicable") is not None:
-        raise GateError("非 NOT_APPLICABLE 状态不得携带 not_applicable")
-    # E4: 前置校验 evidence_rules 账本（快速失败，替代等 audit 批量暴露）。
-    # 仅校验 bundle 自身携带的账本字段/rule_id/capability 名；跨 skill 覆盖、
-    # source 存在性、command 满足率等仍由 audit 权威判定。
-    # NOT_APPLICABLE 单元走负向验收（负向验收 fact 不适用 evidence_rules），跳过。
-    if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}:
-        _precheck_evidence_rules(bundle, skill)
-        # v3.3.9 T1/T2/T3：派发前预提交门禁——把 audit 才暴露的参数笔误（financial_rigor
-        # dry-run, rc=2）与「白名单外的 PASS 操作」（虚构成功/自定义操作）前移到提交当下，
-        # 聚合为一次抛错，Agent 一轮看全所有问题、原地修完再交，不进 audit、不耗 attempt。
-        preflight_errors = _precheck_calculation_params(bundle)
-        preflight_errors += _precheck_command_receipts(bundle, skill)
-        # v3.4.10：占位证据水印拒收——mk_result_bundle 的「结构地板」只用于本地打通
-        # 结构，不得进正式账本。任何带 PLACEHOLDER 水印的 fact/source 出现在 PASS bundle
-        # 中即拦截（水印是确定性字符串，误报为零）。真实证据必须替换全部占位字段。
-        preflight_errors += _precheck_placeholder_evidence(bundle)
-        if preflight_errors:
-            raise GateError(
-                f"{bundle['skill_id']} 预提交门禁拦截 {len(preflight_errors)} 处问题"
-                f"（未进 audit、未耗 attempt），请逐条修正后一次性重交：\n"
-                + "\n".join(preflight_errors))
+        errs.append("artifact_records 必须为数组")
+    else:
+        expected = skill["artifact"]["artifact_id"]
+        if status in {"PASS", "PASS_WITH_LIMITATIONS"}:
+            if len(bundle["artifact_records"]) != 1:
+                errs.append(f"{skill['skill_id']} 必须恰好提交 1 个正式 artifact")
+            elif bundle["artifact_records"][0].get("artifact_id") != expected:
+                errs.append(f"artifact_id 不匹配: 期望 {expected}")
+            if bundle.get("not_applicable") is not None:
+                errs.append("PASS/PASS_WITH_LIMITATIONS 不得携带 not_applicable")
+        elif status == "NOT_APPLICABLE":
+            expected_na = f"artifact.na.{skill['skill_id']}"
+            if len(bundle["artifact_records"]) != 1:
+                errs.append(f"{skill['skill_id']} 的 NOT_APPLICABLE 必须恰好提交 1 个负向验收 artifact")
+            elif bundle["artifact_records"][0].get("artifact_id") != expected_na:
+                errs.append(f"负向验收 artifact_id 不匹配: 期望 {expected_na}")
+            try:
+                _validate_not_applicable(bundle, skill, _manifest_or_empty(run_root))
+            except GateError as exc:
+                errs.append(str(exc))
+        elif bundle.get("not_applicable") is not None:
+            errs.append("非 NOT_APPLICABLE 状态不得携带 not_applicable")
+    if status in {"PASS", "PASS_WITH_LIMITATIONS"}:
+        try:
+            _precheck_evidence_rules(bundle, skill)
+        except GateError as exc:
+            errs.append(str(exc))
+        errs += _precheck_calculation_params(bundle) or []
+        errs += _precheck_command_receipts(bundle, skill, run_root) or []
+        errs += _precheck_placeholder_evidence(bundle) or []
+    if check_artifacts:
+        errs += _admit_artifact_checks(bundle, run_root, skill, status)
+    return errs
 
 
+def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None:
+    """轻量准入（check_artifacts=False）：仅做 schema/逻辑校验，不触碰 artifact 文件。
+
+    供单测/局部校验使用；完整准入（含文件/实质/角色memo）由 cmd_ingest 与生成器
+    通过 admit_bundle(check_artifacts=True) 调用，保证三处口径一致。"""
+    errs = admit_bundle(bundle, run_root, registry, check_artifacts=False)
+    if errs:
+        raise GateError(
+            f"{bundle.get('skill_id')} 准入拦截 {len(errs)} 处：\n" + "\n".join(errs))
 def _precheck_evidence_rules(bundle: dict, skill: dict) -> None:
     """提交时前置校验 evidence_rules 的最低账本要求，返回 None（失败抛 GateError）。
 
@@ -517,17 +622,49 @@ def _precheck_calculation_params(bundle: dict) -> list:
     return errors
 
 
-def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
-    """校验回执：① 操作不越出契约白名单；② PASS 回执必须带来自真实执行的绑定
-    （argv + output）且不含伪造标记。
+def _receipt_binding_mode(run_root: Path) -> str:
+    """判定该 run 采用哪一档回执绑定校验：'executor'（v2）或 'legacy'（v1）。
 
-    返回错误消息列表（空=通过），由 validate_result_bundle 聚合抛出。
+    有签名密钥（即经 v3.4.15 的 start 初始化，或执行器已自愈生成）→ executor 档，
+    PASS 回执必须由执行器签发。无密钥 → legacy 档，只能退回 v1 的
+    「argv/output 非空 + 无伪造标记」弱校验。
+
+    为什么允许 legacy 降级：v3.4.15 之前初始化的在途 run 与单测裸目录都没有密钥，
+    fail-close 会把它们全部打死。**但要诚实地说清这不是安全边界**——能写
+    result.json 的进程同样能删掉密钥文件把自己降级到 legacy。真正的防线是
+    「执行器是唯一便捷路径」，而非密码学不可绕过。降级发生时 doctor 会看到
+    journal 为空的指纹。
+    """
+    return "executor" if load_signing_secret(run_root) else "legacy"
+
+
+def _legacy_receipt_binding_errors(receipt: dict) -> list:
+    """v1 弱绑定（无密钥的历史 run）：argv/output 非空即可，仅能拦最粗劣的自报。"""
+    rid = receipt.get("receipt_id")
+    argv = receipt.get("argv")
+    if not (isinstance(argv, list) and argv
+            and all(isinstance(a, str) and a.strip() for a in argv)):
+        return [f"  - [回执无执行绑定] {rid} 状态 PASS 但缺 argv（真实执行的命令行）；"
+                f"禁止自报成功而无真实执行痕迹。请补 argv（实际命令）与 output（落盘引用）。"]
+    out = receipt.get("output")
+    if not (isinstance(out, str) and out.strip()):
+        return [f"  - [回执无执行绑定] {rid} 状态 PASS 但缺 output（真实执行输出/落盘引用）；"
+                f"禁止自报成功而无真实执行痕迹。"]
+    return []
+
+
+def _precheck_command_receipts(bundle: dict, skill: dict, run_root: Path) -> list:
+    """校验回执：① 操作不越出契约白名单；② PASS 回执必须由执行器真实签发；
+    ③ 不含伪造标记。
+
+    返回错误消息列表（空=通过），由 admit_bundle 聚合。
     白名单 = 契约 required_command_operations.values ∪ conditional_command_operations
-    各 op。只拦确定性错误：status=PASS 却 (a) 落在白名单外的操作（虚构成功/
-    自定义操作），或 (b) 缺 argv/output 执行绑定，或 (c) argv/详情/输出含伪造标记
-    （PLACEHOLDER/TEST_FIXTURE/未连接真实命令日志/mock）。(b)(c) 是 v3.4.14 新增的
-    "执行绑定"——此前 Agent 可自报 PASS 并写 `detail: TEST_FIXTURE::未连接真实命令日志`
-    蒙混过关，Gate 无法分辨。非 PASS 白名单外操作不在此拦（可能合法豁免，满足率属 audit）。
+    各 op。非 PASS 的白名单外操作不在此拦（可能合法豁免，满足率属 audit）。
+
+    ② 的历史：v3.4.14 曾称之为「执行绑定」，实际只检查 argv/output 两个字符串非空
+    ——而它们都是 Agent 在同一份 JSON 里自填的，跑一条无关命令附任意输出即可通过。
+    v3.4.15 起改为校验执行器签发的回执（签名/退出码/输出摘要/时间窗/op↔argv/journal
+    留痕六项，见 tools/evidence_receipt.py）。无密钥的历史 run 降级到 v1 弱校验。
     """
     rules = skill.get("evidence_rules") or []
     whitelist: set = set()
@@ -543,6 +680,11 @@ def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
                     whitelist.add(value["op"])
     if not whitelist:
         return []  # 契约未声明命令操作清单的技能（非 ashare 类）不做白名单校验
+    mode = _receipt_binding_mode(run_root)
+    secret = load_signing_secret(run_root) if mode == "executor" else None
+    run_id = load_run_id(run_root) or bundle.get("run_id") or ""
+    run_started = load_run_started_at(run_root)
+    journal = load_journal(run_root)
     errors = []
     for receipt in bundle.get("command_receipts") or []:
         if receipt.get("status") != "PASS":
@@ -556,20 +698,16 @@ def _precheck_command_receipts(bundle: dict, skill: dict) -> list:
                 f"禁止自定义操作或虚构成功。请改用白名单内操作重跑，"
                 f"或把该回执状态改为 FAIL/UNAVAILABLE 并附 reason 说明。")
             continue
-        argv = receipt.get("argv")
-        if not (isinstance(argv, list) and argv
-                and all(isinstance(a, str) and a.strip() for a in argv)):
-            errors.append(
-                f"  - [回执无执行绑定] {rid} 状态 PASS 但缺 argv（真实执行的命令行）；"
-                f"禁止自报成功而无真实执行痕迹。请补 argv（实际命令）与 output（落盘引用）。")
+        if secret is None:
+            bound = _legacy_receipt_binding_errors(receipt)
+        else:
+            bound = verify_executor_receipt(
+                receipt, run_root=run_root, run_id=run_id, secret=secret,
+                run_started_at=run_started, journal=journal)
+        if bound:
+            errors += bound
             continue
-        out = receipt.get("output")
-        if not (isinstance(out, str) and out.strip()):
-            errors.append(
-                f"  - [回执无执行绑定] {rid} 状态 PASS 但缺 output（真实执行输出/落盘引用）；"
-                f"禁止自报成功而无真实执行痕迹。")
-            continue
-        blob = " ".join(str(a) for a in argv) + " " + " ".join(
+        blob = " ".join(str(a) for a in receipt.get("argv") or []) + " " + " ".join(
             str(receipt.get(k, "")) for k in ("detail", "output", "reason"))
         token = _forgery_token_in(blob)
         if token:
@@ -779,6 +917,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         } for item in registry["skills"]],
     })
     (root / EVENTS_REL).write_text("", encoding="utf-8")
+    # v3.4.15：本 run 的回执签名密钥。有它 Gate 才会启用执行器档（executor）回执校验；
+    # 缺失则降级到 v1 弱绑定，见 _receipt_binding_mode。
+    ensure_signing_secret(root)
     for name in ("facts.json", "sources.json", "calculations.json", "artifacts.json"):
         atomic_write_json(root / "evidence" / name, [])
     append_event(root, {"type": "run_initialized", "run_id": run_id})
@@ -1028,7 +1169,13 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     root, registry = Path(args.run_root), load_registry(Path(args.registry))
     manifest = load_manifest(root)
     bundle = load_json(Path(args.result), "Result Bundle")
-    validate_result_bundle(bundle, root, registry)
+    # v3.4.15：完整准入口径（含 artifact 文件/实质/角色memo/NA 章节）统一由 admit_bundle
+    # 判定，与生成器、correction 共用同一函数——消除「生成器 rc0 但 ingest 拒收」的口径分叉。
+    errs = admit_bundle(bundle, root, registry, check_artifacts=True)
+    if errs:
+        raise GateError(
+            f"{bundle['skill_id']} 准入拦截 {len(errs)} 处（完整 ingest 口径）：\n"
+            + "\n".join(errs))
     skill = find_skill(registry, bundle["skill_id"])
 
     accepted_status = bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS"}
@@ -1040,15 +1187,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         source = root / rel
         if not source.is_file() or source.is_symlink() or not str(rel).startswith("evidence/attempts/"):
             raise GateError(f"artifact 必须来自 evidence/attempts 且为普通文件: {rel}")
-        if source.stat().st_size != record.get("bytes") or sha256_file(source) != record.get("sha256"):
-            raise GateError(f"artifact bytes/sha256 与 Result Bundle 不一致: {rel}")
-        # 防坍塌软下限：仅挡住 403 字节式空报告，不作为深度目标（深度由实质校验保证）
-        min_bytes = (
-            skill["artifact"].get("min_bytes")
-            if accepted_status else NA_MIN_BYTES
-        )
-        if isinstance(min_bytes, int) and min_bytes > 0 and source.stat().st_size < min_bytes:
-            raise GateError(f"artifact 字节数 {source.stat().st_size} < 防坍塌下限 {min_bytes}（{skill['skill_id']}）；报告过浅，拒收退回重试")
+        # 注：bytes/sha256/字节下限已由 admit_bundle(_admit_artifact_checks) 统一校验，此处不再重复。
         formal_rel = safe_relative(
             root,
             skill["artifact"]["formal_path"]
@@ -1057,19 +1196,18 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         )
         prepared.append((source, root / formal_rel, formal_rel, record))
 
-    # 多角色 skill 必须存在各角色独立备忘录（仅 PASS/PASS_WITH_LIMITATIONS 时校验，NOT_APPLICABLE 跳过）
+    # 多角色 skill 的角色备忘录：存在性/字节下限已由 admit_bundle 校验；此处仅登记晋级记录。
+    # （admit_bundle 已拒收缺备忘录的 bundle，下方兜底不应触发。）
     verified_role_memos: list[tuple[Path, Path, dict]] = []
     roles = skill.get("roles") or {}
     if accepted_status and roles.get("mode") == "independent_then_integrator":
         attempt_dir = (root / safe_relative(root, bundle["artifact_records"][0].get("path", ""))).parent
-        missing = []
         for role in roles.get("required_roles", []):
             if role == "integrator":
                 continue
             memo = attempt_dir / f"role-{role}.md"
             if not memo.is_file() or memo.is_symlink() or memo.stat().st_size < 300:
-                missing.append(role)
-                continue
+                raise GateError(f"多角色 skill {skill['skill_id']} 缺角色独立备忘录: {role}")
             formal_rel = Path(
                 "evidence/roles",
                 bundle["skill_id"],
@@ -1088,35 +1226,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
                     "verified_by_gate": True,
                 },
             ))
-        if missing:
-            raise GateError(
-                f"多角色 skill {skill['skill_id']} 缺角色独立备忘录: {missing}；"
-                f"须先为各角色产出 role-<role>.md（>=300 字节）再整合"
-            )
 
-    # 实质校验：防凑数 / 防空壳 / 防片面（替代纯字节门槛）
-    if accepted_status and prepared:
-        try:
-            txt = prepared[0][0].read_text(encoding="utf-8")
-        except Exception:
-            txt = ""
-        sub_errs = _substance_errors(skill, txt)
-        if sub_errs:
-            raise GateError(
-                f"实质校验未通过（{skill['skill_id']}）：" + "；".join(sub_errs)
-            )
-    elif bundle["status"] == "NOT_APPLICABLE" and prepared:
-        try:
-            txt = prepared[0][0].read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            txt = ""
-        missing_headings = [
-            heading for heading in NA_REQUIRED_HEADINGS
-            if not re.search(rf"^#{{1,6}}\s+{re.escape(heading)}\s*$", txt, re.M)
-        ]
-        if missing_headings:
-            raise GateError(
-                f"负向验收报告缺必需章节: {missing_headings}")
+    # 注：实质校验/NA 章节校验已由 admit_bundle(check_artifacts=True) 统一完成，此处不再重复。
 
     # ===== 阶段二：内存准备（所有数据处理成功前不得写正式文件）=====
     records = []
@@ -1776,6 +1887,26 @@ def _validate_correction(correction: dict, manifest: dict, registry: dict) -> No
                     f"{kind} 引用不存在的 {id_key}={rid!r}（correction 只允许修改已有 ID，禁止新增）")
 
 
+def _validate_correction_receipts(correction: dict, registry: dict, run_root: Path) -> None:
+    """Task #45：correction 同样受回执绑定约束，禁止借 correction 绕过 Gate 注入
+    未经执行器签发的 PASS 回执。
+
+    correction 直接改写 manifest 的账本、不走 admit_bundle，若不重跑回执预检，伪造的
+    PASS 回执可借此绕过签名校验进入生产账本。这里对 correction 提交的非 removed 回执
+    复用与 submit-result 完全相同的 `_precheck_command_receipts`，保证两条路径口径一致。
+    """
+    skill = find_skill(registry, correction["skill_id"])
+    recs = [r for r in correction["corrections"].get("command_receipts") or []
+            if not r.get("removed")]
+    if not recs:
+        return
+    errs = _precheck_command_receipts({"command_receipts": recs}, skill, run_root)
+    if errs:
+        raise GateError(
+            "correction 回执预检未通过（禁止借 correction 注入未经验证签发的 PASS 回执）：\n"
+            + "\n".join(errs))
+
+
 def _apply_correction(manifest: dict, correction: dict, run_root: Path) -> None:
     corrections = correction["corrections"]
     # 1. removed 差集清理（雅克 run 经验：已删除请求的残留会让 audit 二次暴露）
@@ -1818,6 +1949,7 @@ def cmd_submit_correction(args: argparse.Namespace) -> int:
     manifest = load_manifest(root)
     correction = load_json(Path(args.correction), "Correction Bundle")
     _validate_correction(correction, manifest, registry)
+    _validate_correction_receipts(correction, registry, root)
     next_manifest = copy.deepcopy(manifest)
     _apply_correction(next_manifest, correction, root)
     save_manifest(root, next_manifest)

@@ -67,7 +67,7 @@ class RuntimeTests(unittest.TestCase):
         artifact.write_text(build_compliant_report(REGISTRY, leased["skill_id"]), encoding="utf-8")
         (facts, sources, calculations, judgments, role_runs,
          command_receipts, capability_records) = build_compliant_evidence(
-            REGISTRY, leased["skill_id"])
+            REGISTRY, leased["skill_id"], self.run_root)
         manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
         bundle = {
             "schema_version": "result-schema/v1",

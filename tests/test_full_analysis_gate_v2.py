@@ -17,6 +17,7 @@ AUDIT = REPO / "tools" / "full_analysis_audit.py"
 REGISTRY = REPO / "tools" / "full_analysis_contract.json"
 sys.path.insert(0, str(REPO / "tools"))
 import full_analysis_gate as gate_module  # noqa: E402
+import evidence_receipt as er  # noqa: E402
 
 
 def run_gate(root, *args):
@@ -82,6 +83,13 @@ class GateV2Tests(unittest.TestCase):
             "--run-root", self.run_root, "--allow-stale",
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def _ensure_init(self):
+        # 幂等：仅当本 run_root 尚未初始化（无 manifest）时才 init。
+        # 因 _ashare_receipts/_real_receipt 常作为 _mk_bundle 的实参被**先于函数体**求值，
+        # 必须在回执签发前确保 run 已初始化（否则 execute_and_sign 读不到 run_id）。
+        if not (self.run_root / "evidence" / "00-analysis-manifest.json").is_file():
+            self.init()
 
     def test_init_fail_close_on_stale_none_and_true(self):
         # v3.4.9：E1 fail-close——stale=None（不可判定）与 stale=True（落后）均拒绝，
@@ -293,7 +301,8 @@ class GateV2Tests(unittest.TestCase):
             skill_id=skill_id, attempt_id="attempt-02", artifact_id="artifact.ashare-data",
             rel=rel2, size=size2, digest=digest2))
         self.assertNotEqual(r2.returncode, 0, "低质量 attempt 应被拒收")
-        self.assertIn("防坍塌下限", r2.stdout + r2.stderr)
+        # v3.4.15：统一 admit_bundle 口径后，min_bytes 拒收由 _admit_artifact_checks 输出
+        self.assertIn(f"artifact 字节数 {size2} < 下限", r2.stdout + r2.stderr)
 
         # 关键断言：正式文件仍是第一次的合规内容，manifest 哈希不变
         self.assertEqual(hashlib.sha256(formal.read_bytes()).hexdigest(), digest,
@@ -778,7 +787,7 @@ class GateV2Tests(unittest.TestCase):
     def _mk_bundle(self, skill_id, attempt, facts=None, judgments=None, caps=None,
                    receipts=None, calcs=None):
         """构造最小可 ingest 的 PASS bundle（可覆盖账本字段）。"""
-        self.init()
+        self._ensure_init()
         attempt_dir = self.run_root / f"evidence/attempts/{skill_id}/{attempt}"
         attempt_dir.mkdir(parents=True)
         source = attempt_dir / "report.md"
@@ -960,15 +969,23 @@ class GateV2Tests(unittest.TestCase):
     ASHARE_REQUIRED_OPS = ["quote", "financials", "valuation", "history",
                            "equity-history", "announcements", "signals"]
 
+    def _real_receipt(self, op, receipt_id=None):
+        """用执行器真实签发一条 PASS 回执（真 oracle，杜绝 false oracle）。"""
+        self._ensure_init()
+        receipt_id = receipt_id or f"receipt.{op}"
+        command = [sys.executable, "-c",
+                   "import sys; sys.stdout.write('evidence-ok')", op]
+        receipt, _exit = er.execute_and_sign(Path(self.run_root), receipt_id, op, command)
+        assert receipt["status"] == "PASS", receipt
+        return receipt
+
     def _ashare_receipts(self, extra=()):
-        # v3.4.14：每条 PASS 回执必须带真实执行绑定（argv+output），否则 Gate 拒收。
-        # 此前测试只给 status=PASS 不绑 argv/output，正是被新规拦截的"自报成功无痕迹"。
-        receipts = [
-            {"receipt_id": f"receipt.{op}", "operation": op, "status": "PASS",
-             "argv": ["tushare", op, "--ts_code", "000651.SZ"],
-             "output": f"{op} 实际执行输出：000651.SZ 数据已落盘"}
-            for op in self.ASHARE_REQUIRED_OPS
-        ]
+        # v3.4.15：每条 PASS 回执必须由执行器真实签发（execute_and_sign），
+        # 不得手写 argv/output——否则 Gate 以「回执未经执行器签发」拒收。
+        # 这里用执行器真签，让依赖 _ashare_receipts 的测试在真实准入口径下运行。
+        self._ensure_init()
+        receipts = [self._real_receipt(op, f"receipt.{op}")
+                    for op in self.ASHARE_REQUIRED_OPS]
         return receipts + list(extra)
 
     def test_receipt_gate_rejects_pass_operation_outside_whitelist(self):
@@ -996,21 +1013,19 @@ class GateV2Tests(unittest.TestCase):
         self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
 
     def test_receipt_gate_passes_all_whitelisted_operations(self):
-        # required + conditional 全在白名单内且带真实执行绑定 → 门禁放行
+        # required + conditional 全在白名单内且由执行器真实签发 → 门禁放行
         rp = self._mk_bundle("ashare-data", "attempt-t2c", facts=self.ASHARE_FACTS,
                              caps=self.ASHARE_CAPS, receipts=self._ashare_receipts(extra=[
-                                 {"receipt_id": "receipt.peband", "operation": "pe-band",
-                                  "status": "PASS",
-                                  "argv": ["tushare", "pe-band", "--ts_code", "000651.SZ"],
-                                  "output": "pe-band 实际执行输出已落盘"}]))
+                                 self._real_receipt("pe-band", "receipt.peband")]))
         ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
                             "--registry", REGISTRY, "--result", rp)
         self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
 
-    # ---- v3.4.14：回执执行绑定（argv+output+无伪造标记）门禁 ----
+    # ---- v3.4.15：回执必须由执行器签发（executor-issued receipt）门禁 ----
 
     def test_receipt_gate_rejects_pass_missing_argv(self):
-        # 白名单内 PASS 操作但缺 argv（无真实执行痕迹）→ 前置拦截
+        # v3.4.15：白名单内 PASS 操作但缺 signature（手写 argv/output、未经执行器签发）
+        # → 前置拦截（"回执未经执行器签发"）。
         rp = self._mk_bundle("ashare-data", "attempt-bind-argv",
                              facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
                              receipts=[{"receipt_id": "receipt.quote", "operation": "quote",
@@ -1020,11 +1035,11 @@ class GateV2Tests(unittest.TestCase):
                             "--registry", REGISTRY, "--result", rp)
         self.assertNotEqual(ingested.returncode, 0)
         combined = ingested.stdout + ingested.stderr
-        self.assertIn("回执无执行绑定", combined)
-        self.assertIn("argv", combined)
+        self.assertIn("回执未经执行器签发", combined)
+        self.assertIn("receipt.quote", combined)
 
     def test_receipt_gate_rejects_pass_missing_output(self):
-        # 白名单内 PASS 操作但缺 output（真实执行输出/落盘引用）→ 前置拦截
+        # v3.4.15：白名单内 PASS 操作但缺 output 落盘引用且未经执行器签发 → 前置拦截
         rp = self._mk_bundle("ashare-data", "attempt-bind-out",
                              facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
                              receipts=[{"receipt_id": "receipt.quote", "operation": "quote",
@@ -1034,33 +1049,30 @@ class GateV2Tests(unittest.TestCase):
                             "--registry", REGISTRY, "--result", rp)
         self.assertNotEqual(ingested.returncode, 0)
         combined = ingested.stdout + ingested.stderr
-        self.assertIn("回执无执行绑定", combined)
-        self.assertIn("output", combined)
+        self.assertIn("回执未经执行器签发", combined)
+        self.assertIn("receipt.quote", combined)
 
     def test_receipt_gate_rejects_pass_forgery_token(self):
-        # PASS 回执的 argv/详情/输出含伪造标记（TEST_FIXTURE/未连接真实命令日志）→ 前置拦截
+        # 执行器真实签发的回执被篡改（signature 被换为伪造值）→ 签名校验失败、前置拦截。
+        real = self._real_receipt("quote", "receipt.quote")
+        forged = dict(real)
+        forged["signature"] = "0" * 64
         rp = self._mk_bundle("ashare-data", "attempt-bind-forge",
                              facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
-                             receipts=[{"receipt_id": "receipt.quote", "operation": "quote",
-                                        "status": "PASS",
-                                        "argv": ["tushare", "quote", "--ts_code", "000651.SZ"],
-                                        "output": "quote 输出",
-                                        "detail": "TEST_FIXTURE::未连接真实命令日志"}])
+                             receipts=[forged])
         ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
                             "--registry", REGISTRY, "--result", rp)
         self.assertNotEqual(ingested.returncode, 0)
         combined = ingested.stdout + ingested.stderr
-        self.assertIn("伪造痕迹", combined)
+        self.assertIn("回执签名无效", combined)
+        self.assertIn("receipt.quote", combined)
 
     def test_receipt_gate_accepts_pass_with_real_binding(self):
-        # 白名单内 PASS + 真实 argv + output（无伪造标记）→ 门禁放行（绿）
+        # 白名单内 PASS + 执行器真实签发（带 signature/exit_code/output_digest）→ 门禁放行（绿）
         rp = self._mk_bundle("ashare-data", "attempt-bind-ok",
                              facts=self.ASHARE_FACTS, caps=self.ASHARE_CAPS,
                              receipts=self._ashare_receipts(extra=[
-                                 {"receipt_id": "receipt.peband", "operation": "pe-band",
-                                  "status": "PASS",
-                                  "argv": ["tushare", "pe-band", "--ts_code", "000651.SZ"],
-                                  "output": "pe-band 实际执行输出已落盘"}]))
+                                 self._real_receipt("pe-band", "receipt.peband")]))
         ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
                             "--registry", REGISTRY, "--result", rp)
         self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
@@ -1084,7 +1096,48 @@ class GateV2Tests(unittest.TestCase):
         self.assertIn("calculation.t3.bad", combined)   # 参数错条目
         self.assertIn("--growth", combined)             # 参数修复提示
         self.assertIn("custom-download", combined)      # 回执越界条目
-        self.assertIn("处问题", combined)               # 聚合计数（不固化具体数字，防绑定校验新增后脆弱）
+        self.assertIn("准入拦截", combined)             # 聚合计数（不固化具体数字，防绑定校验新增后脆弱）
+
+    def test_fail_short_report_accepted_with_relaxed_min_bytes(self):
+        # Task #48：FAIL 短报告——如实上报失败时字节下限放宽到 FAIL_MIN_BYTES(200)，
+        # 不得套用 PASS 的 min_bytes 拒绝（否则「生成器 rc4 但 ingest 拒收」断路重现）。
+        self.init()
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        skill = next(s for s in registry["skills"] if s["skill_id"] == "ashare-data")
+        attempt_dir = self.run_root / "evidence/attempts/ashare-data/attempt-fail"
+        attempt_dir.mkdir(parents=True)
+        source = attempt_dir / "report.md"
+        source.write_text("# ashare-data 失败报告\n" + "接口连续超时，本次无法完成。" * 20,
+                          encoding="utf-8")
+        actual = source.stat().st_size
+        self.assertGreaterEqual(actual, 200, "报告须 ≥ FAIL_MIN_BYTES")
+        self.assertLess(actual, skill["artifact"]["min_bytes"],
+                        "报告须 < 正常 min_bytes 才能证明 FAIL 档确实放宽")
+        run_id = json.loads(
+            (self.run_root / "evidence/00-analysis-manifest.json").read_text())["run"]["run_id"]
+        bundle = {
+            "schema_version": "result-schema/v1", "run_id": run_id,
+            "work_unit_id": "wu-ashare-data", "attempt_id": "attempt-fail",
+            "agent_job_id": "job-fail", "lease_nonce": "lease-x",
+            "skill_id": "ashare-data", "role_id": None, "status": "FAIL",
+            "artifact_records": [{
+                "artifact_id": skill["artifact"]["artifact_id"],
+                "path": str(source.relative_to(self.run_root)),
+                "bytes": actual, "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "formal": False, "accepted": False,
+            }],
+            "fact_updates": [], "source_records": [], "calculation_requests": [],
+            "judgments": [], "role_runs": [], "command_receipts": [],
+            "capability_records": [], "limitations": [], "pwl_candidates": [],
+            "started_at": "2026-07-23T12:00:00+08:00",
+            "completed_at": "2026-07-23T12:01:00+08:00",
+            "error": {"code": "tushare_down", "detail": "接口连续超时", "retryable": True},
+        }
+        result_path = attempt_dir / "result.json"
+        result_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+        ingested = run_gate(self.root, "ingest-result", "--run-root", self.run_root,
+                            "--registry", REGISTRY, "--result", result_path)
+        self.assertEqual(ingested.returncode, 0, ingested.stdout + ingested.stderr)
 
 
 class StaleCheckTests(unittest.TestCase):

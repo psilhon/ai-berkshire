@@ -5,6 +5,34 @@
 
 ---
 
+## [v3.4.15] — 2026-08-04
+
+> 根治 v3.4.14 review 的核心 P0：**「rc0 ⟺ Gate 接受」是假命题、回执绑定可被伪造**。v3.4.14 的「执行绑定」只检查 `argv`+`output` 两个自述字符串非空——跑一条无关命令、编一段输出即可通过。v3.4.15 把 PASS 回执的签发权从「Agent 手写 JSON」收归「真实命令执行器」：HMAC 签名 + 落盘摘要 + journal 留痕 + 时间窗 + operation∈argv 六项确定性校验，并把生成器/`cmd_ingest`/correction 三处准入收敛到单一 `admit_bundle`，让「rc0 ⟺ Gate 真正接受」成为机器事实。
+
+### 🐛 修复 (Fixed)
+
+- **PASS 回执可被手写伪造（P0，v3.4.14 绑定名实不符）**：新增 `scripts/run_evidence_command.py` 执行器 + `tools/evidence_receipt.py` 签发核心（`execute_and_sign` 为签发唯一实现）。PASS 回执必须经执行器真实 subprocess 执行后签发：① HMAC-SHA256 签名（密钥 `evidence/receipt-signing-key`，`start` 时生成）② `exit_code==0` ③ `output_digest==sha256(落盘输出)` ④ `executed_at` 在本 run 窗口内 ⑤ `operation ∈ argv` ⑥ `command-log.jsonl` journal 留痕同 digest。任一不成立即拒收；无密钥的历史 run 降级到 v1 弱校验（`_receipt_binding_mode`）。**诚实的威胁模型**：签名密钥与 result.json 同权限，真正防线是「执行器是唯一便捷路径」——伪造从「写两个字符串」升级为「刻意复刻签名+journal+落盘文件」。
+- **correction 可绕过 Gate 注入伪造回执（P1）**：correction 直接改写 manifest 账本、不走 admit_bundle。修复：`_validate_correction_receipts` 在 submit-correction 时对非 removed 回执重跑 `_precheck_command_receipts`，堵死旁路。
+- **`admit_bundle` 缩进死代码**：skill 校验块嵌在 `except GateError ... return` 之后成为不可达代码，恢复为函数顶层执行。
+- **生成器/ingest/Audit 准入分叉**：三处校验统一收敛到单一 `admit_bundle` 谓词。
+
+### ✨ 新增 (Added)
+
+- **执行器 CLI**：`python3 scripts/run_evidence_command.py --run-root <run_root> --receipt-id <id> --operation <op> -- <真实命令>`；退出码 0=成功已签名 / 1=用法错误 / 2=命令失败（FAIL 回执不签名）；`--unavailable --reason` 签发 UNAVAILABLE 回执；`--append-to` 批量攒回执。
+- **result schema 新增回执字段**：`executed_at`/`exit_code`/`output_digest`/`executor_version`/`signature`（PASS 条件必填，由 Gate 判定）。
+- **FAIL 字节下限放宽**：FAIL 报告下限 `FAIL_MIN_BYTES=200`（不再复用 NA 800），「生成器 rc4 但 ingest 拒收」断路消除；NA 保持 800。
+
+### 🧪 测试 (Tests)
+
+- `tests/test_evidence_receipt.py`（新，19 测试）：执行器真阳 + 六项绑定逐项故障注入变红（篡改签名/逐字段变异断言「签名无效」/改落盘输出/删 journal/跨 run 重放/时间越界），并对守卫自身做故障注入证明有牙齿。
+- `tests/test_full_analysis_e2e.py` / `correction` / `rework` / `runtime` / `gate_v2`：夹具统一升级为**真 oracle**——`build_compliant_evidence(run_root)` 真实调用 `execute_and_sign` 签发，e2e canary 130 条真实签名回执走完整 13 单元编排；gate_v2 6 条过时断言迁到执行器语义；新增 correction 旁路闭合测试与 FAIL 短报告测试。
+- `tests/test_deploy_user_skills.py`：新增 orphan 检测/清理与 `CODEX_HOME` 跟随测试（+4）。
+
+### 🔧 其他
+
+- **部署器增强**：`deploy-user-skills.py` 目标目录跟随 `CODEX_HOME`；`--check` 新增 orphan 检测（目标残留、源已删文件必红）；部署时清理仓库拥有 skill 目录内的 orphan，用户自建 skill 不扫不删。
+- **三层协议统一**：skill 文档（`command_receipts` 字段集 / 执行器签发红线）与 runtime `RESULT_BUNDLE_TEMPLATE` 同步 v3.4.15 语义；`sync-codex-skills.py` 重跑生成三副本一致。
+
 ## [v3.4.14] — 2026-08-04
 
 > 收口 v3.4.13 发行后 review 点名的 5 项 P1 + 1 项 P2 残余风险，并把「退出码 0 = 真正可提交」从口号压实为机器可证的不变量。重点：回执执行绑定、退出码契约完整化、full-oracle 测试、部署器资产覆盖。另补全 v3.4.13 缺失的 NOT_APPLICABLE / FAIL 真实路径（此前 CLI 暴露的状态无法生成合法 bundle，与 E16 冲突）。

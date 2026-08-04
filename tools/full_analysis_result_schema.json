@@ -5,34 +5,105 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "run_id", "work_unit_id", "attempt_id", "agent_job_id",
-    "lease_nonce", "skill_id", "role_id", "status", "artifact_records",
-    "fact_updates", "source_records", "calculation_requests", "judgments",
-    "limitations", "pwl_candidates", "started_at", "completed_at", "error"
+    "schema_version",
+    "run_id",
+    "work_unit_id",
+    "attempt_id",
+    "agent_job_id",
+    "lease_nonce",
+    "skill_id",
+    "role_id",
+    "status",
+    "artifact_records",
+    "fact_updates",
+    "source_records",
+    "calculation_requests",
+    "judgments",
+    "limitations",
+    "pwl_candidates",
+    "started_at",
+    "completed_at",
+    "error"
   ],
   "properties": {
-    "schema_version": {"const": "result-schema/v1"},
-    "run_id": {"type": "string", "minLength": 1},
-    "work_unit_id": {"type": "string", "minLength": 1},
-    "attempt_id": {"type": "string", "minLength": 1},
-    "agent_job_id": {"type": "string", "minLength": 1},
-    "lease_nonce": {"type": "string", "minLength": 1},
-    "skill_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
-    "role_id": {"type": ["string", "null"]},
-    "status": {"type": "string", "enum": ["PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"]},
+    "schema_version": {
+      "const": "result-schema/v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "work_unit_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lease_nonce": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skill_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "role_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "PASS_WITH_LIMITATIONS",
+        "NOT_APPLICABLE",
+        "FAIL"
+      ]
+    },
     "artifact_records": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["artifact_id", "path", "bytes", "sha256", "formal", "accepted"],
+        "required": [
+          "artifact_id",
+          "path",
+          "bytes",
+          "sha256",
+          "formal",
+          "accepted"
+        ],
         "properties": {
-          "artifact_id": {"type": "string", "pattern": "^artifact\\.[a-z0-9._-]+$"},
-          "path": {"type": "string", "minLength": 1},
-          "bytes": {"type": "integer", "minimum": 0},
-          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "formal": {"type": "boolean"},
-          "accepted": {"type": "boolean"}
+          "artifact_id": {
+            "type": "string",
+            "pattern": "^artifact\\.[a-z0-9._-]+$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "formal": {
+            "type": "boolean"
+          },
+          "accepted": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -41,15 +112,44 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["fact_id", "field", "value", "source_ids"],
+        "required": [
+          "fact_id",
+          "field",
+          "value",
+          "source_ids"
+        ],
         "properties": {
-          "fact_id": {"type": "string", "minLength": 1},
-          "field": {"type": "string", "minLength": 1},
+          "fact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
           "value": {},
-          "unit": {"type": "string"},
-          "period": {"type": "string"},
-          "source_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
-          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+          "unit": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          }
         }
       }
     },
@@ -58,15 +158,46 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["source_id", "url", "retrieved_at", "source_type"],
+        "required": [
+          "source_id",
+          "url",
+          "retrieved_at",
+          "source_type"
+        ],
         "properties": {
-          "source_id": {"type": "string", "minLength": 1},
-          "url": {"type": "string", "minLength": 1},
-          "retrieved_at": {"type": "string", "minLength": 1},
-          "source_type": {"type": "string", "enum": ["filing", "exchange", "web", "news", "tool", "other"]},
-          "publisher": {"type": "string", "minLength": 1},
-          "title": {"type": "string"},
-          "published_at": {"type": "string"}
+          "source_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retrieved_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "filing",
+              "exchange",
+              "web",
+              "news",
+              "tool",
+              "other"
+            ]
+          },
+          "publisher": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": "string"
+          }
         }
       }
     },
@@ -75,11 +206,23 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["calculation_id", "operation", "args"],
+        "required": [
+          "calculation_id",
+          "operation",
+          "args"
+        ],
         "properties": {
-          "calculation_id": {"type": "string", "pattern": "^calculation\\.[a-z0-9._-]+$"},
-          "operation": {"type": "string", "minLength": 1},
-          "args": {"type": "object"}
+          "calculation_id": {
+            "type": "string",
+            "pattern": "^calculation\\.[a-z0-9._-]+$"
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "object"
+          }
         }
       }
     },
@@ -88,13 +231,38 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["judgment_id", "rule_id", "conclusion", "falsification"],
+        "required": [
+          "judgment_id",
+          "rule_id",
+          "conclusion",
+          "falsification"
+        ],
         "properties": {
-          "judgment_id": {"type": "string", "minLength": 1},
-          "rule_id": {"type": "string", "minLength": 1},
-          "conclusion": {"type": "string", "minLength": 1},
-          "falsification": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-          "fact_ids": {"type": "array", "items": {"type": "string"}}
+          "judgment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conclusion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "falsification": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "fact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
@@ -103,15 +271,67 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["receipt_id", "operation", "status"],
+        "required": [
+          "receipt_id",
+          "operation",
+          "status"
+        ],
         "properties": {
-          "receipt_id": {"type": "string", "minLength": 1},
-          "operation": {"type": "string", "minLength": 1},
-          "status": {"type": "string", "enum": ["PASS", "UNAVAILABLE", "FAIL"]},
-          "detail": {"type": "string"},
-          "reason": {"type": "string"},
-          "argv": {"type": "array", "items": {"type": "string"}},
-          "output": {"type": "string"}
+          "receipt_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "UNAVAILABLE",
+              "FAIL"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "output": {
+            "type": "string"
+          },
+          "executed_at": {
+            "type": "string",
+            "minLength": 1,
+            "description": "执行器记录的 ISO 8601 执行时刻；受签字段，Gate 校验其落在本 run 时间窗内"
+          },
+          "exit_code": {
+            "type": "integer",
+            "description": "真实进程退出码；受签字段，PASS 回执必须为 0"
+          },
+          "output_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "落盘输出文件的 sha256；受签字段，Gate 会重算比对"
+          },
+          "executor_version": {
+            "type": "string",
+            "minLength": 1,
+            "description": "签发该回执的执行器版本，如 evidence-executor/v1；受签字段"
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "HMAC-SHA256(run 密钥, 受签字段规范化串)；由 scripts/run_evidence_command.py 签发，禁止手写"
+          }
         }
       }
     },
@@ -120,11 +340,25 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["role_id", "status"],
+        "required": [
+          "role_id",
+          "status"
+        ],
         "properties": {
-          "role_id": {"type": "string", "minLength": 1},
-          "status": {"type": "string", "enum": ["PASS", "FAIL"]},
-          "artifact_path": {"type": "string"}
+          "role_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL"
+            ]
+          },
+          "artifact_path": {
+            "type": "string"
+          }
         }
       }
     },
@@ -133,10 +367,18 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["capability", "available"],
+        "required": [
+          "capability",
+          "available"
+        ],
         "properties": {
-          "capability": {"type": "string", "minLength": 1},
-          "available": {"type": "boolean"}
+          "capability": {
+            "type": "string",
+            "minLength": 1
+          },
+          "available": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -145,35 +387,95 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["code", "detail"],
-        "properties": {"code": {"type": "string", "minLength": 1}, "detail": {"type": "string", "minLength": 1}}
+        "required": [
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "pwl_candidates": {
       "type": "array",
       "uniqueItems": true,
-      "items": {"type": "string", "enum": ["tushare_unavailable", "web_bandwidth_degraded", "ephemeral_source"]}
+      "items": {
+        "type": "string",
+        "enum": [
+          "tushare_unavailable",
+          "web_bandwidth_degraded",
+          "ephemeral_source"
+        ]
+      }
     },
-    "started_at": {"type": "string", "minLength": 1},
-    "completed_at": {"type": ["string", "null"]},
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completed_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "error": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["code", "detail", "retryable"],
+      "required": [
+        "code",
+        "detail",
+        "retryable"
+      ],
       "properties": {
-        "code": {"type": "string", "minLength": 1},
-        "detail": {"type": "string", "minLength": 1},
-        "retryable": {"type": "boolean"}
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
       }
     },
     "not_applicable": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["predicate", "fact_id", "alternative"],
+      "required": [
+        "predicate",
+        "fact_id",
+        "alternative"
+      ],
       "properties": {
-        "predicate": {"type": "string", "minLength": 1},
-        "fact_id": {"type": "string", "minLength": 1},
-        "alternative": {"type": ["string", "null"]}
+        "predicate": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "alternative": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "key_claims": {
@@ -181,10 +483,23 @@
       "description": "关键判断与溯源；每条挂 source_ids，供 Gate 实质校验优先使用",
       "items": {
         "type": "object",
-        "required": ["claim", "source_ids"],
+        "required": [
+          "claim",
+          "source_ids"
+        ],
         "properties": {
-          "claim": {"type": "string", "minLength": 1},
-          "source_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1}
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
         }
       }
     },
@@ -193,11 +508,21 @@
       "description": "可重放测算；供 Gate 实质校验优先使用",
       "items": {
         "type": "object",
-        "required": ["calculation_id", "operation", "args"],
+        "required": [
+          "calculation_id",
+          "operation",
+          "args"
+        ],
         "properties": {
-          "calculation_id": {"type": "string"},
-          "operation": {"type": "string"},
-          "args": {"type": "object"},
+          "calculation_id": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "args": {
+            "type": "object"
+          },
           "output": {}
         }
       }
@@ -207,11 +532,30 @@
       "description": "显式分歧点；供 Gate 防片面校验优先使用",
       "items": {
         "type": "object",
-        "required": ["topic", "parties", "positions"],
+        "required": [
+          "topic",
+          "parties",
+          "positions"
+        ],
         "properties": {
-          "topic": {"type": "string", "minLength": 1},
-          "parties": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-          "positions": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+          "topic": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
         }
       }
     },
@@ -220,10 +564,19 @@
       "description": "情景估值/推演；每情景带具体数字",
       "items": {
         "type": "object",
-        "required": ["name", "assumptions", "value"],
+        "required": [
+          "name",
+          "assumptions",
+          "value"
+        ],
         "properties": {
-          "name": {"type": "string", "minLength": 1},
-          "assumptions": {"type": "string"},
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assumptions": {
+            "type": "string"
+          },
           "value": {}
         }
       }
@@ -233,17 +586,30 @@
       "description": "反例/证伪检验",
       "items": {
         "type": "object",
-        "required": ["hypothesis", "verdict"],
+        "required": [
+          "hypothesis",
+          "verdict"
+        ],
         "properties": {
-          "hypothesis": {"type": "string", "minLength": 1},
-          "verdict": {"type": "string", "minLength": 1}
+          "hypothesis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }
   },
   "x_rules": {
     "error_required_when_status": "FAIL",
-    "error_null_when_status": ["PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"],
+    "error_null_when_status": [
+      "PASS",
+      "PASS_WITH_LIMITATIONS",
+      "NOT_APPLICABLE"
+    ],
     "accepted_artifacts_must_be_formal": true,
     "pwl_candidates_must_be_allowlisted": true
   }

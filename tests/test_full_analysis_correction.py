@@ -25,7 +25,8 @@ def _submit_one(root, run_root, lease):
     artifact = attempt_dir / "report.md"
     artifact.write_text(build_compliant_report(REGISTRY, skill_id), encoding="utf-8")
     (ev_facts, ev_sources, ev_calcs, ev_judgments, ev_roles,
-     ev_receipts, ev_capabilities) = build_compliant_evidence(REGISTRY, skill_id)
+     ev_receipts, ev_capabilities) = build_compliant_evidence(
+        REGISTRY, skill_id, run_root)
     manifest = json.loads((run_root / "evidence/00-analysis-manifest.json").read_text())
     bundle = {
         "schema_version": "result-schema/v1", "run_id": manifest["run"]["run_id"],
@@ -170,6 +171,51 @@ class CorrectionTests(unittest.TestCase):
         proc = self._apply(payload)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("不存在", proc.stdout + proc.stderr)
+
+    def test_correction_rejects_forged_pass_receipt(self):
+        # Task #45：correction 直接改写 manifest 账本、不走 admit_bundle，
+        # 若不在 correction 侧重跑回执预检，伪造（无签名）的 PASS 回执可借此绕过
+        # Gate 的回执绑定进入生产账本。此测试证明该旁路已被堵死。
+        # 自包含：另起一个 run 提交 ashare-data（真实执行器回执），再把其中一条
+        # PASS 回执抹掉签名后经 correction 重写 → 必须被拒。
+        rr2 = self.root / "local/company/000651.SZ-格力电器/20260723-120000-corr2"
+        started = self.cli("start", "--registry", REGISTRY, "--repo-root", self.root,
+                           "--company", "格力电器", "--code", "000651.SZ",
+                           "--as-of", "2026-07-23", "--run-root", rr2)
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        leased = json.loads(self.cli("next-work", "--run-root", rr2).stdout)
+        self.assertEqual(leased["status"], "LEASED", leased)
+        sj = self.cli("job-started", "--run-root", rr2,
+                      "--work-unit-id", leased["work_unit_id"],
+                      "--attempt-id", leased["attempt_id"],
+                      "--lease-nonce", leased["lease_nonce"],
+                      "--agent-job-id", f"job-{leased['attempt_id']}")
+        self.assertEqual(sj.returncode, 0, sj.stdout + sj.stderr)
+        bundle, rp = _submit_one(self.root, rr2, leased)
+        submitted = self.cli("submit-result", "--run-root", rr2,
+                             "--registry", REGISTRY, "--result", rp)
+        self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
+        manifest = json.loads((rr2 / "evidence/00-analysis-manifest.json").read_text())
+        existing = next(r for r in manifest["command_receipts"]
+                        if str(r.get("receipt_id", "")).startswith("receipt."))
+        forged = dict(existing)
+        forged.pop("signature", None)  # 抹掉执行器签名 → 变成手写伪造回执
+        payload = json.dumps({
+            "schema_version": "correction-bundle/v1",
+            "run_id": bundle["run_id"],
+            "skill_id": leased["skill_id"],
+            "base_attempt_id": leased["attempt_id"],
+            "corrections": {
+                "calculation_requests": [], "fact_updates": [], "judgments": [],
+                "command_receipts": [forged],
+            },
+        }, ensure_ascii=False)
+        p = rr2 / "evidence/attempts/correction-forge.json"
+        p.write_text(payload, encoding="utf-8")
+        proc = self.cli("submit-correction", "--run-root", rr2,
+                        "--registry", REGISTRY, "--correction", p)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("回执", proc.stdout + proc.stderr)
 
     def test_correction_rejects_missing_schema_version(self):
         proc = self._apply(self._correction().replace('"schema_version": "correction-bundle/v1",', ""))

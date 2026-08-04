@@ -158,8 +158,11 @@ PLACEHOLDER 结构地板（未做真实调研），Gate 会硬拒收，禁止 su
   {"predicate": "<contract applicability.predicate>",
    "fact_id": "<证明谓词为假的 fact_id>",
    "alternative": "<contract applicability.alternative 或 null>"}
-- command_receipts 只能如实记录**实际执行过**的命令：未执行一律 UNAVAILABLE + reason，
-  执行失败一律 FAIL + reason。虚构 PASS 回执等同伪造证据，Gate 会按白名单与占位水印拒收。
+- command_receipts：PASS 回执**必须由 `scripts/run_evidence_command.py` 真实执行后签发**
+  （含 signature/exit_code/output_digest/executed_at/executor_version），不得手写——手写
+  argv/output 而无合法签名即被 Gate 拒收；未执行一律 UNAVAILABLE + reason，执行失败一律
+  FAIL + reason。`mk_result_bundle.py --extra-receipts` 只负责把执行器产出的回执原样并入
+  bundle，不代签。虚构 PASS 回执等同伪造证据，Gate 会按白名单、占位水印与签名校验拒收。
 - calculation_requests 只提交 operation 与 args，重放结果由 Audit Job 生成，Agent 不得自证。
 - 生成 result.json 后立即调用 submit-result；即使 submit-result 失败，
   磁盘上的 result.json 可被 resume 的孤儿恢复机制接管
