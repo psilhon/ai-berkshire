@@ -5,6 +5,19 @@
 
 ---
 
+## [v3.4.11] — 2026-08-04
+
+> 不变量守卫：把三轮返工的病根（只改一行就宣称全称性质成立）固化成 check.sh 机器断言
+
+### ✨ 新增 (Added)
+- **`tests/test_invariants.py`**（自动挂载，check.sh 第 11 行 unittest discover 收集），三条不变量守卫：
+  1. **改名一致性**：git 追踪的活跃文件（skills/workbuddy-skills/codex-skills/scripts/tools/tests/README/CLAUDE/SKILLS-GUIDE/AGENTS）中不得存在裸旧标识 `full-company-analysis`（必须带 -workbuddy）；历史档案（CHANGELOG/.darwin-results.tsv）豁免。
+  2. **文档宣称⊆CLI 注册**：编排 skill 文档命令行里的每个 `--flag` 必须在 full_analysis.py/mk_result_bundle.py/full_analysis_gate.py 中真实注册。直接对应 v3.4.8 的 `--allow-stale` 脱节事故（文档存在但 argparse 从未注册）。
+  3. **校验器负例先行**：frontmatter/contract 校验器必须真拒非法输入（缺 platform、name 不匹配、非法 registry）。直接对应 v3.4.9 的"收紧空转"（规则嵌在 name 分支里，值恰好匹配时不触发）。
+- **故障注入验证**：两条守卫经实际注入错误确认会 FAILED（README 塞裸旧 ID、文档塞未注册 flag），非空转。
+
+---
+
 ## [v3.4.10] — 2026-08-03
 
 > review 三轮修复：改名真闭环（README 死链 + 4 业务 skill + 链接测试）/ frontmatter 真强制（双向 platform 规则 + 7 回归测试）/ normal_target 口径对齐（2N+1）/ 占位证据水印护栏
