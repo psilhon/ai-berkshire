@@ -42,12 +42,18 @@
       "minLength": 1
     },
     "agent_job_id": {
-      "type": "string",
-      "minLength": 1
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "执行该单元的 Agent job id；lean 模式不再校验，可空"
     },
     "lease_nonce": {
-      "type": "string",
-      "minLength": 1
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "历史租约 nonce；lean 模式不再签发/校验租约，可空"
     },
     "skill_id": {
       "type": "string",

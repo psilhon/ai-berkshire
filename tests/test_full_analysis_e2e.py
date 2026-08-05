@@ -183,11 +183,6 @@ class FullAnalysisE2ETests(unittest.TestCase):
     def cli(self, *args):
         return subprocess.run([sys.executable, str(CLI), *map(str, args)], cwd=self.root, capture_output=True, text=True)
 
-        # 本 canary 跑完整链路 start→lease 13 单元→各写报告→submit→register-summary→
-    # render-html。但 submit 走 Gate 的 ingest-result → admit_bundle(check_artifacts=True)
-    # → _substance_errors，而后者仍按 contract `sections` 计数（lean 已移除），
-    # 导致 min_substantive_sections 永远无法满足、任何 PASS 报告都 ingest 失败
-    # （tools/full_analysis_gate.py:971）。impl 修复后移除本装饰器即可转绿。
     def test_single_company_canary_closes_all_thirteen_units(self):
         started = self.cli("start", "--registry", REGISTRY, "--repo-root", self.root,
                            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
@@ -202,10 +197,6 @@ class FullAnalysisE2ETests(unittest.TestCase):
             self.assertEqual(leased.returncode, 0, leased.stdout + leased.stderr)
             lease = json.loads(leased.stdout)
             self.assertEqual(lease["status"], "LEASED")
-            started_job = self.cli("job-started", "--run-root", self.run_root,
-                                   "--work-unit-id", lease["work_unit_id"], "--attempt-id", lease["attempt_id"],
-                                   "--lease-nonce", lease["lease_nonce"], "--agent-job-id", f"job-{lease['attempt_id']}")
-            self.assertEqual(started_job.returncode, 0, started_job.stdout + started_job.stderr)
             skill_id = lease["skill_id"]
             attempt_dir = self.run_root / "evidence/attempts" / skill_id / lease["attempt_id"]
             attempt_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +216,7 @@ class FullAnalysisE2ETests(unittest.TestCase):
             bundle = {
                 "schema_version": "result-schema/v1", "run_id": run_id,
                 "work_unit_id": lease["work_unit_id"], "attempt_id": lease["attempt_id"],
-                "agent_job_id": f"job-{lease['attempt_id']}", "lease_nonce": lease["lease_nonce"],
+                "agent_job_id": f"job-{lease['attempt_id']}", "lease_nonce": None,
                 "skill_id": skill_id, "role_id": None, "status": "PASS",
                 "artifact_records": [{"artifact_id": by_id[skill_id]["artifact"].get("artifact_id", f"artifact.{skill_id}"),
                                       "path": str(artifact.relative_to(self.run_root)), "bytes": artifact.stat().st_size,

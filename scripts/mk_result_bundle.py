@@ -6,14 +6,12 @@
 
 用法（两种模式）：
 
-1) 从租约元数据直接生成（最常用）：
+1) 直接生成（最常用）：
    python3 scripts/mk_result_bundle.py \
      --run-root <run_root> \
      --skill-id <skill_id> \
      --work-unit-id <wu-xxx> \
      --attempt-id <attempt-xxx> \
-     --lease-nonce <nonce> \
-     --agent-job-id <job-id> \
      --report <attempt_dir>/report.md \
      --status PASS \
      --extra-evidence facts.json     # 真实 fact_updates 数组
@@ -25,7 +23,8 @@
 输出：写入 <attempt_dir>/result.json，并打印校验摘要。
 
 它会自动：
-- 从 runtime-state 校验 (work_unit_id, attempt_id, nonce, agent_job_id) 与当前租约一致；
+- lean 模式（v3.7+）：编排不再签发租约，故不校验租约身份；agent_job_id /
+  lease_nonce 仅作为可选溯源字段原样写入（可空）；
 - 按 contract 的 evidence_rules 组装证据账本：真实输入优先，缺失部分补**带水印的
   结构地板**（facts/sources/calcs/judgments/receipts/capabilities）；
 - 按 report 实际文件重算 bytes/sha256，核对必需章节标题与 min_bytes。
@@ -143,24 +142,6 @@ def find_skill(registry: dict, skill_id: str) -> dict:
         if s["skill_id"] == skill_id:
             return s
     fail(f"contract 中找不到 skill_id={skill_id}")
-
-
-def validate_lease(run_root: Path, work_unit_id: str, attempt_id: str,
-                   nonce: str, agent_job_id: str) -> dict:
-    state = load_json(run_root / "evidence" / "runtime-state.json")
-    unit = next((u for u in state["work_units"]
-                 if u["work_unit_id"] == work_unit_id), None)
-    if not unit:
-        fail(f"runtime-state 找不到 work_unit_id={work_unit_id}")
-    lease = unit.get("lease") or {}
-    expect = {"attempt_id": attempt_id, "lease_nonce": nonce,
-              "agent_job_id": agent_job_id}
-    actual = {k: lease.get(k) for k in expect}
-    if unit.get("status") not in {"LEASED", "RUNNING"}:
-        fail(f"work unit 状态非法 {unit.get('status')}（需 LEASED/RUNNING，请先 job-started）")
-    if actual != expect:
-        fail(f"租约身份不匹配: 期望 {actual} 实得 {expect}")
-    return state
 
 
 def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
@@ -327,8 +308,12 @@ def main() -> int:
     ap.add_argument("--skill-id", required=True)
     ap.add_argument("--work-unit-id", required=True)
     ap.add_argument("--attempt-id", required=True)
-    ap.add_argument("--lease-nonce", required=True)
-    ap.add_argument("--agent-job-id", required=True)
+    ap.add_argument("--lease-nonce", default=None,
+                    help="可选：历史租约 nonce，仅用于向后兼容旧 bundle 字段；"
+                         "lean 模式不再校验租约，可省略")
+    ap.add_argument("--agent-job-id", default=None,
+                    help="可选：执行该单元的 Agent job id，仅作 bundle 溯源字段；"
+                         "lean 模式不再校验，可省略")
     ap.add_argument("--report", required=True, help="attempt_dir/report.md 绝对或相对 run_root 路径")
     ap.add_argument("--status", default="PASS",
                     choices=["PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE", "FAIL"])
@@ -368,16 +353,8 @@ def main() -> int:
     state = load_json(run_root / "evidence" / "runtime-state.json")
     run_id = state.get("run_id")
 
-    # 租约身份校验（不强制 agent_job_id 已登记——允许先 job-started 再构造）
-    unit = next((u for u in state["work_units"]
-                 if u["work_unit_id"] == args.work_unit_id), None)
-    if not unit:
-        fail(f"找不到 work_unit_id={args.work_unit_id}")
-    lease = unit.get("lease") or {}
-    if lease.get("attempt_id") != args.attempt_id or lease.get("lease_nonce") != args.lease_nonce:
-        fail(f"租约 attempt/nonce 不匹配: lease={ {k: lease.get(k) for k in ('attempt_id','lease_nonce')} }")
-    if lease.get("agent_job_id") and lease["agent_job_id"] != args.agent_job_id:
-        fail(f"agent_job_id 与已登记租约不一致: {lease['agent_job_id']} != {args.agent_job_id}")
+    # lean 模式（v3.7+）：编排不再签发租约，故不再校验租约身份。agent_job_id /
+    # lease_nonce 仅作为 bundle 溯源字段原样写入（可空），不作准入条件。
 
     # run_root 已 .resolve()（macOS 上 /var → /private/var）。report 必须做同样的
     # 符号链接解析，否则 /var/... 形式的合法路径会在 relative_to 处被误判为

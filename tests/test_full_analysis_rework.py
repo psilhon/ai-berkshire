@@ -54,15 +54,12 @@ class ReworkTests(unittest.TestCase):
         return json.loads((self.run_root / "evidence/runtime-state.json").read_text())
 
     def _complete(self, lease):
-        """把单元推进到 rework 要求的前态：DONE + manifest 里有已接受 attempt。"""
+        """把单元推进到 rework 要求的前态：DONE + manifest 里有已接受 attempt。
+
+        lean（v3.7+）：无 job-started / 无租约——直接置 DONE 并播种 manifest attempt。
+        """
         skill_id = lease["skill_id"]
         attempt_id = lease["attempt_id"]
-        started = self.cli("job-started", "--run-root", self.run_root,
-                           "--work-unit-id", lease["work_unit_id"],
-                           "--attempt-id", attempt_id,
-                           "--lease-nonce", lease["lease_nonce"],
-                           "--agent-job-id", f"job-{attempt_id}")
-        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
         attempt_dir = self.run_root / "evidence/attempts" / skill_id / attempt_id
         attempt_dir.mkdir(parents=True, exist_ok=True)
         artifact = attempt_dir / "report.md"
@@ -80,7 +77,6 @@ class ReworkTests(unittest.TestCase):
         unit = next(u for u in state["work_units"]
                     if u["work_unit_id"] == lease["work_unit_id"])
         unit["status"] = "DONE"
-        unit["lease"] = None
         state["concurrency"]["current"] = 0
         state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 

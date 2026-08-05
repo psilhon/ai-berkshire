@@ -913,7 +913,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
             "core": item["core"],
             "status": "PENDING", "attempts": 0, "max_attempts": 3,
-            "lease": None, "next_retry_at": None,
+            "next_retry_at": None,
             "depends_on": dep_graph.get(item["skill_id"], []),
         } for item in registry["skills"]],
     })
@@ -1040,6 +1040,40 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
     if sub.get("require_disclaimer") and not re.search(r"(仅供学习研究|免责|本研究不构成|非投资建议|学习研究)", text):
         errors.append("缺仅供学习研究/免责声明")
     return errors
+
+
+def cmd_self_check(args: argparse.Namespace) -> int:
+    """每个 skill 产出后的自我质量校验（优化点 1：质量归属下放到 skill 自身）。
+
+    复用 Gate 边界兜底的同一套 _substance_errors（实质章节 / 分歧交锋 / 标题占比 /
+    数据截止日·来源·免责三锚），并对该 skill 的 lean 契约阈值做确定性校验；
+    同时校验报告字节下限（artifact.min_bytes）。通过才允许进入 mk_result_bundle /
+    submit-result。
+    退出码 0 = 通过（无错误）；1 = 发现实质错误（Agent 应修复或 mark-failed）；2 = 文件缺失。
+    """
+    registry = load_registry(Path(args.registry))
+    skill = find_skill(registry, args.skill_id)
+    report = Path(args.report)
+    if not report.is_file():
+        print(json.dumps({"skill_id": args.skill_id, "passed": False,
+                          "errors": [f"report 不存在: {report}"]}, ensure_ascii=False, indent=2))
+        return 2
+    text = report.read_text(encoding="utf-8")
+    errors = _substance_errors(skill, text)
+    actual_bytes = report.stat().st_size
+    min_bytes = skill.get("artifact", {}).get("min_bytes", 0)
+    if isinstance(min_bytes, int) and min_bytes > 0 and actual_bytes < min_bytes:
+        errors.append(f"报告字节数 {actual_bytes} < 下限 {min_bytes}（{skill['skill_id']}）")
+    result = {
+        "skill_id": args.skill_id,
+        "report": str(report),
+        "report_bytes": actual_bytes,
+        "min_bytes": min_bytes,
+        "passed": not errors,
+        "errors": errors,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if not errors else 1
 
 
 # 溯源账本聚合：跨 bundle 合并 facts/sources/calculations 时保持完整性。
@@ -1824,6 +1858,13 @@ def build_parser() -> argparse.ArgumentParser:
     render_html = sub.add_parser("render-html")
     render_html.add_argument("--run-root", required=True)
     render_html.add_argument("--registry", default=DEFAULT_REGISTRY)
+    # 质量归属：每个 skill 产出后的自我校验（优化点 1）。复用 _substance_errors 对该
+    # skill 的 lean 契约阈值做确定性校验，并通过才进入 mk_result_bundle / submit-result。
+    self_check = sub.add_parser("self-check")
+    self_check.add_argument("--run-root", required=True)
+    self_check.add_argument("--registry", default=DEFAULT_REGISTRY)
+    self_check.add_argument("--skill-id", required=True)
+    self_check.add_argument("--report", required=True)
     return parser
 
 
@@ -1836,6 +1877,7 @@ def main(argv=None) -> int:
             "register-summary": cmd_register_summary,
             "finalize": cmd_finalize,
             "render-html": cmd_render_html,
+            "self-check": cmd_self_check,
         }[args.command](args)
     except GateError as exc:
         print(f"❌ {exc}")

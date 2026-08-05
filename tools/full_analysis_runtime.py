@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""WorkBuddy 专用 Runtime：调度、租约、重试和预算；不写正式业务 manifest。"""
+"""WorkBuddy 专用 Runtime：调度、重试和预算；不写正式业务 manifest（lean：无租约）。"""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import secrets
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -105,7 +104,6 @@ RESULT_BUNDLE_TEMPLATE = """
 python3 scripts/mk_result_bundle.py \\
   --run-root <run_root> --skill-id <skill_id> \\
   --work-unit-id <work_unit_id> --attempt-id <attempt_id> \\
-  --lease-nonce <lease_nonce> --agent-job-id <agent_job_id> \\
   --report <attempt_dir>/report.md --status PASS \\
   --extra-evidence <facts.json> --extra-sources <sources.json> \\
   [--extra-calculations <calcs.json>] [--extra-judgments <judgments.json>] \\
@@ -121,8 +119,8 @@ PLACEHOLDER 结构地板（未做真实调研），Gate 会硬拒收，禁止 su
   "run_id": "<派发包中的 run_id>",
   "work_unit_id": "<派发包中的 work_unit_id>",
   "attempt_id": "<派发包中的 attempt_id>",
-  "agent_job_id": "<job-started 时使用的 agent_job_id>",
-  "lease_nonce": "<派发包中的 lease_nonce>",
+  "agent_job_id": "<可选；执行该单元的 agent job id，可空>",
+  "lease_nonce": "<可选；历史租约 nonce，可空>",
   "skill_id": "<本 skill 的 skill_id>",
   "role_id": null,
   "status": "PASS",
@@ -427,40 +425,16 @@ def compute_dependency_waves(graph: dict) -> list[list[str]]:
     # 每波内按契约 registry 顺序稳定排序，保证派发顺序可复现
     return [sorted(waves[d]) for d in sorted(waves)]
 
+def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:
+    """领取下一个可派发 work unit（lean：无租约、无波次白名单）。
 
-def _lease_ttl_for_skill(skill: dict | None) -> int:
-    """计算单元的租约 TTL（分钟）。
-
-    非扇出单元默认 NON_FANOUT_LEASE_MINUTES（40）；扇出单元（roles.mode=
-    independent_then_integrator）需在单个租约内串行跑完多个角色子 Agent + 整合，
-    实际时长远超 40 分钟。TTL 按角色数倍增（integrator 是整合者不计独立角色），
-    避免租约过早到期后被编排器显式 mark_failed 回收重派（沪电 run 三个扇出单元
-    team/earnings/news 均因此过期）。
-    返回的 TTL 同时写入 lease，heartbeat 据此续期，保持派发/续期口径一致。
-    """
-    roles = (skill or {}).get("roles") or {}
-    if roles.get("mode") == "independent_then_integrator":
-        verifiable = [r for r in (roles.get("required_roles") or []) if r != "integrator"]
-        return LEASE_MINUTES * max(len(verifiable), 1)
-    return NON_FANOUT_LEASE_MINUTES
-
-
-def next_work(run_root: Path, *, methodology_mode: str = "full",
-              allowlist: tuple[str, ...] | None = None) -> dict:
-    """领取下一个可派发 work unit。
-
-    allowlist：可选 skill_id 白名单。非空时只从白名单内的单元中挑选候选，
-    用于编排器实现 W3 错峰（先只领 investment-team+earnings-review，
-    完成后再领 management-deep-dive+industry-research），避免轻单元在重
-    单元研究期间被编排器显式 mark_failed 回收重派（宏景/沪电 run 实证）。
-    白名单内无就绪单元时按正常逻辑返回 NO_WORK。
+    依赖由 depends_on 拓扑门禁决定就绪性；并发上限内连续租出多个就绪单元。
     """
     with runtime_lock(run_root):
-        return _next_work_locked(run_root, methodology_mode, allowlist)
+        return _next_work_locked(run_root, methodology_mode)
 
 
-def _next_work_locked(run_root: Path, methodology_mode: str = "full",
-                      allowlist: tuple[str, ...] | None = None) -> dict:
+def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
     state = load_state(run_root)
     budget = state["budget"]
     if budget["used"] >= budget["hard_max"]:
@@ -469,15 +443,12 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
     cooldown = parse_time(state["concurrency"].get("cooldown_until"))
     if cooldown and cooldown > now():
         return {"status": "NO_WORK", "reason": "RATE_LIMIT_COOLDOWN", "cooldown_until": iso(cooldown)}
-    # lean 模式（v3.7）：不再自动回收过期租约（v3.6.2 的 watchdog 跨回合失效且无收效）。
-    # 失败/卡死由编排器显式 mark_failed 判定并声明，避免静默卡死无人发现。
+    # lean（v3.7+）：不再自动回收过期租约（watchdog 跨回合失效且无收效），
+    # 失败/卡死由编排器显式 mark_failed 判定并声明。
     active = _active_units(state)
     if len(active) >= state["concurrency"]["max"]:
         return {"status": "NO_WORK", "reason": "CONCURRENCY_LIMIT"}
-    # v3.3.10 T5：依赖波次门禁——只有 depends_on 全 DONE 的单元才就绪可派发。
-    # 这把 registry 线性顺序升级为依赖图波次：编排器循环 next-work 时，每波内就绪的
-    # 多个单元会在并发上限内被连续租出（波次并行），跨波则被挡到上游 DONE。
-    # FAILED 依赖不放行（下游无法基于失败上游产出）；单元自身重跑时其依赖必已 DONE。
+    # 依赖门禁：只有 depends_on 全 DONE 的单元才就绪可派发；FAILED 依赖不放行。
     done_skills = {u["skill_id"] for u in state["work_units"] if u["status"] == "DONE"}
     candidates = []
     current = now()
@@ -494,44 +465,24 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
             deps = [] if unit["skill_id"] == PIPELINE_ROOT else [PIPELINE_ROOT]
         if any(dep not in done_skills for dep in deps):
             continue
-        if allowlist and unit["skill_id"] not in allowlist:
-            # W3 错峰（v3.4.1+）：白名单外的就绪单元本轮不派发，
-            # 留待编排器完成当前小批后再次调用 next-work 领取。
-            continue
         candidates.append(unit)
     if not candidates:
         waiting = any(u["status"] in {"PENDING", "RETRY_WAIT"} for u in state["work_units"])
-        if allowlist and waiting:
-            reason = "ALLOWLIST_DEPENDENCIES_PENDING"
-        elif waiting:
-            reason = "DEPENDENCIES_PENDING"
-        else:
-            reason = "QUEUE_EMPTY"
+        reason = "DEPENDENCIES_PENDING" if waiting else "QUEUE_EMPTY"
         return {"status": "NO_WORK", "reason": reason}
     unit = candidates[0]
-    # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）。
-    # 提前加载 skill 同时供租约 TTL 计算：fanout 单元多角色串行执行易超默认租约，
-    # 需足够大的 TTL 避免在研究期间被编排器显式 mark_failed 回收（沪电 run 三个扇出单元均踩坑）。
+    # 注入 skill 方法论，避免执行 Agent 退化为单遍写大纲（根因修复）。
     registry = _load_registry()
     skill = next(
         (s for s in registry.get("skills", [])
          if s.get("skill_id") == unit["skill_id"]),
         None,
     )
-    lease_ttl = _lease_ttl_for_skill(skill)
     attempt = unit["attempts"] + 1
-    material = f"{state['run_id']}:{unit['work_unit_id']}:{attempt}:{secrets.token_hex(4)}"
-    lease = {
-        "attempt_id": f"attempt-{hashlib.sha256(material.encode()).hexdigest()[:12]}",
-        "lease_nonce": secrets.token_hex(16),
-        "leased_at": iso(current),
-        "expires_at": iso(current + timedelta(minutes=lease_ttl)),
-        # per-lease TTL：heartbeat 据此续期（非扇出 NON_FANOUT_LEASE_MINUTES=40，fanout 按角色数倍增）
-        "lease_ttl_minutes": lease_ttl,
-    }
-    unit.update({"status": "LEASED", "attempts": attempt, "lease": lease})
+    attempt_id = f"attempt-{unit['work_unit_id']}-{attempt}"
+    unit.update({"status": "LEASED", "attempts": attempt})
     save_state(run_root, state)
-    event(run_root, "work_leased", work_unit_id=unit["work_unit_id"], attempt_id=lease["attempt_id"])
+    event(run_root, "work_leased", work_unit_id=unit["work_unit_id"], attempt_id=attempt_id)
     authorization = (
         state.get("authorization")
         or registry.get("authorization_profile")
@@ -547,8 +498,6 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
             if spec_path.is_file():
                 spec_text = spec_path.read_text(encoding="utf-8")
                 if methodology_mode == "ref":
-                    # Task 4：ref 模式不把完整 skill 文本放入 payload，
-                    # 只给规范路径 + SHA-256 + 稳定指令；执行适配器按 hash 加载或缓存。
                     methodology_ref = spec
                     methodology_sha256 = hashlib.sha256(spec_text.encode("utf-8")).hexdigest()
                     methodology_text = AUTHORIZATION_DIRECTIVE.format(run_root=Path(run_root))
@@ -566,14 +515,14 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
         "status": "LEASED",
         "work_unit_id": unit["work_unit_id"],
         "skill_id": unit["skill_id"],
+        "attempt_id": attempt_id,
         "methodology_path": skill.get("spec_source") if skill else None,
         "methodology_text": methodology_text,
         "methodology_ref": methodology_ref,
         "methodology_sha256": methodology_sha256,
         "methodology_mode": methodology_mode,
         # 校准路线（防凑数）：不把 min_bytes 具体数字暴露给执行 Agent——它是 Gate 的拒收
-        # 地板（挡空壳式坍塌），不是写作目标；奔字数写是凑数的根源。保留 key（值为 None）
-        # 以兼容下游派发脚本，深度由 _substance_errors 实质校验保证。
+        # 地板（挡空壳式坍塌），不是写作目标；奔字数写是凑数的根源。深度由 _substance_errors 实质校验保证。
         "min_bytes": None,
         "length_policy": (
             "min_bytes 仅是拒收地板，不是写作目标；数据写到位、推理写透即止，"
@@ -582,14 +531,11 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
         "skill_type": skill.get("skill_type") if skill else None,
         "min_dissent_points": skill.get("min_dissent_points") if skill else None,
         "min_substantive_sections": skill.get("min_substantive_sections") if skill else None,
-        "sections": skill.get("sections", []) if skill else [],
-        "evidence_rules": skill.get("evidence_rules", []) if skill else [],
         "roles": roles,
         "fanout_required": bool(roles.get("mode") == "independent_then_integrator"),
-        # E9 联动：rework 重置的单元带可复用基准 attempt，编排器按此复用 report/role-memo/raw
+        # rework 重置的单元带可复用基准 attempt，编排器按此复用 report/role-memo/raw
         "reuse_base_attempt": unit.get("reuse_attempt"),
         "authorization": authorization,
-        **lease,
     }
 
 
@@ -600,112 +546,14 @@ def _unit(state: dict, work_unit_id: str) -> dict:
     raise RuntimeErrorState(f"未知 work_unit_id: {work_unit_id}")
 
 
-def _check_lease(unit: dict, attempt_id: str, nonce: str) -> None:
-    lease = unit.get("lease") or {}
-    if lease.get("attempt_id") != attempt_id or lease.get("lease_nonce") != nonce:
-        raise RuntimeErrorState("租约不匹配")
-    expires = parse_time(lease.get("expires_at"))
-    if expires and expires <= now():
-        raise RuntimeErrorState("租约已过期")
-
-
-def job_started(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str, agent_job_id: str) -> dict:
-    """注册 Agent job 启动，将 work_unit 从 LEASED 切换到 RUNNING。
-
-    P1 幂等：若同一 attempt_id 已在前一次调用中切换为 RUNNING（但输出因工具断连丢失），
-    直接返回已有状态和 attempt_dir，不重复扣预算、不抛异常。调用方可安全重试。
-    """
-    with runtime_lock(run_root):
-        return _job_started_locked(
-            run_root, work_unit_id, attempt_id, nonce, agent_job_id)
-
-
-def _job_started_locked(
-    run_root: Path,
-    work_unit_id: str,
-    attempt_id: str,
-    nonce: str,
-    agent_job_id: str,
-) -> dict:
-    state = load_state(run_root)
-    if state["budget"]["used"] >= state["budget"]["hard_max"]:
-        raise RuntimeErrorState(
-            f"硬预算已达 {state['budget']['hard_max']}，拒绝启动 Agent job")
-    unit = _unit(state, work_unit_id)
-    # P1: 幂等检测 — 已 RUNNING 且 attempt_id 匹配 → 直接返回
-    if unit["status"] == "RUNNING":
-        lease = unit.get("lease") or {}
-        if lease.get("attempt_id") == attempt_id:
-            attempt_dir = Path(run_root) / "evidence/attempts" / unit["skill_id"] / attempt_id
-            event(run_root, "job_started_idempotent", work_unit_id=work_unit_id, attempt_id=attempt_id)
-            return {"status": "RUNNING", "attempt_dir": str(attempt_dir),
-                    "budget_used": state["budget"]["used"], "idempotent": True}
-    _check_lease(unit, attempt_id, nonce)
-    if unit["status"] != "LEASED":
-        raise RuntimeErrorState(f"work unit 不是 LEASED: {unit['status']}")
-    unit["status"] = "RUNNING"
-    unit["lease"]["agent_job_id"] = agent_job_id
-    unit["lease"]["started_at"] = iso(now())
-    state["budget"]["used"] += 1
-    save_state(run_root, state)
-    attempt_dir = Path(run_root) / "evidence/attempts" / unit["skill_id"] / attempt_id
-    attempt_dir.mkdir(parents=True, exist_ok=True)
-    event(run_root, "job_started", work_unit_id=work_unit_id, attempt_id=attempt_id, agent_job_id=agent_job_id, budget_used=state["budget"]["used"])
-    return {"status": "RUNNING", "attempt_dir": str(attempt_dir), "budget_used": state["budget"]["used"]}
-
-
-def heartbeat(run_root: Path, work_unit_id: str, attempt_id: str, nonce: str) -> dict:
-    with runtime_lock(run_root):
-        return _heartbeat_locked(run_root, work_unit_id, attempt_id, nonce)
-
-
-def _heartbeat_locked(
-    run_root: Path, work_unit_id: str, attempt_id: str, nonce: str,
-) -> dict:
-    state = load_state(run_root)
-    unit = _unit(state, work_unit_id)
-    _check_lease(unit, attempt_id, nonce)
-    # per-lease 续期：fanout 单元按派发时存储的 lease_ttl_minutes（倍增后）续期，
-    # 普通单元回退 NON_FANOUT_LEASE_MINUTES（向后兼容旧租约无该字段）。
-    ttl = unit["lease"].get("lease_ttl_minutes") or NON_FANOUT_LEASE_MINUTES
-    unit["lease"]["expires_at"] = iso(now() + timedelta(minutes=ttl))
-    save_state(run_root, state)
-    event(run_root, "heartbeat", work_unit_id=work_unit_id, attempt_id=attempt_id)
-    return {"status": "HEARTBEAT", "expires_at": unit["lease"]["expires_at"]}
-
-
-def record_failure(run_root: Path, work_unit_id: str, attempt_id: str, reason: str) -> dict:
-    with runtime_lock(run_root):
-        return _record_failure_locked(
-            run_root, work_unit_id, attempt_id, reason)
-
-
-def _record_failure_locked(
-    run_root: Path, work_unit_id: str, attempt_id: str, reason: str,
-) -> dict:
-    state = load_state(run_root)
-    unit = _unit(state, work_unit_id)
-    lease = unit.get("lease") or {}
-    if lease.get("attempt_id") != attempt_id or unit["status"] not in {"LEASED", "RUNNING"}:
-        raise RuntimeErrorState("失败记录与当前租约不匹配")
-    unit["lease"] = None
-    state["concurrency"]["current"] = max(0, state["concurrency"].get("current", 0) - 1)
-    if reason == "rate_limit":
-        state["concurrency"]["max"] = 1
-        state["concurrency"]["cooldown_until"] = iso(now() + timedelta(seconds=RATE_LIMIT_COOLDOWN_SECONDS))
-    if unit["attempts"] >= unit["max_attempts"]:
-        unit["status"] = "FAILED"
-    else:
-        unit["status"] = "RETRY_WAIT"
-        delay = RATE_LIMIT_COOLDOWN_SECONDS if reason == "rate_limit" else BACKOFF_SECONDS[min(unit["attempts"] - 1, 1)]
-        unit["next_retry_at"] = iso(now() + timedelta(seconds=delay))
-    save_state(run_root, state)
-    event(run_root, "job_failed", work_unit_id=work_unit_id, attempt_id=attempt_id, reason=reason, next_status=unit["status"])
-    return {"status": unit["status"], "attempts": unit["attempts"], "next_retry_at": unit.get("next_retry_at")}
-
-
 def _validate_result_lease(state: dict, bundle: dict, *, allow_expired: bool = False) -> dict:
-    """在 Gate 产生任何副作用前，将 Result Bundle 绑定到当前活动租约。"""
+    """在 Gate 产生任何副作用前，将 Result Bundle 绑定到当前活动单元。
+
+    lean（v3.7+）：已无租约身份机（无 nonce / 无 expiry / 无 agent_job_id）。
+    仅校验 Result Bundle 与当前单元的强身份一致：run_id / work_unit_id /
+    skill_id / attempt_id（attempt_id 由 `attempt-{work_unit_id}-{attempts}` 派生）。
+    allow_expired 保留为兼容参数（无过期概念，恒忽略）。
+    """
     if bundle.get("run_id") != state.get("run_id"):
         raise RuntimeErrorState("Result Bundle run_id 与 Runtime 不匹配")
     work_unit_id = bundle.get("work_unit_id")
@@ -716,29 +564,11 @@ def _validate_result_lease(state: dict, bundle: dict, *, allow_expired: bool = F
         raise RuntimeErrorState("Result Bundle skill_id 与 work unit 不匹配")
     if unit.get("status") not in {"RUNNING", "LEASED"}:
         raise RuntimeErrorState(f"submit-result 状态非法: {unit.get('status')}")
-    lease = unit.get("lease") or {}
-    expected = {
-        "attempt_id": lease.get("attempt_id"),
-        "lease_nonce": lease.get("lease_nonce"),
-        "agent_job_id": lease.get("agent_job_id"),
-    }
-    actual = {key: bundle.get(key) for key in expected}
-    # E15: 从未 job-started 的 LEASED 租约（编排器拿到空 Agent 返回、未能 job-started）
-    # 其 lease.agent_job_id 为 None——孤儿恢复/提交时不得用 None 与 bundle 中的自造 id
-    # 强比对（历史事故：W4 三单元 Agent 完成产物后返回为空，resume 孤儿恢复被拒，
-    # 租约过期卡死 run）。未 job-started 的租约只校验 attempt_id + lease_nonce 两个
-    # 强身份字段，agent_job_id 允许任意值（Gate 侧仍校验 bundle 自洽性）。
-    if lease.get("agent_job_id"):
-        if actual != expected or not all(expected.values()):
-            raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
-    else:
-        if actual["attempt_id"] != expected["attempt_id"] or not expected["attempt_id"]:
-            raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
-        if actual["lease_nonce"] != expected["lease_nonce"] or not expected["lease_nonce"]:
-            raise RuntimeErrorState("Result Bundle 与当前租约身份不匹配")
-    expires = parse_time(lease.get("expires_at"))
-    if not allow_expired and expires and expires <= now():
-        raise RuntimeErrorState("Result Bundle 对应租约已过期")
+    expected_attempt = f"attempt-{work_unit_id}-{unit['attempts']}"
+    if bundle.get("attempt_id") != expected_attempt:
+        raise RuntimeErrorState(
+            f"Result Bundle attempt_id 与当前单元不匹配: "
+            f"{bundle.get('attempt_id')} != {expected_attempt}")
     return unit
 
 
@@ -759,7 +589,6 @@ def _accept_result(
     if completed.returncode:
         raise RuntimeErrorState(completed.stdout + completed.stderr)
     unit["status"] = "DONE" if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"} else "FAILED"
-    unit["lease"] = None
     current_state["concurrency"]["current"] = max(
         0, current_state["concurrency"].get("current", 0) - 1)
     save_state(run_root, current_state)
@@ -789,77 +618,6 @@ def render_partial(run_root: Path, reason: str) -> None:
     )
     event(root, "partial_rendered", reason=reason)
 
-
-def resume(run_root: Path, now_value: datetime | None = None) -> dict:
-    with runtime_lock(run_root):
-        return _resume_locked(run_root, now_value=now_value)
-
-
-def _resume_locked(
-    run_root: Path, now_value: datetime | None = None,
-) -> dict:
-    state = load_state(run_root)
-    current = now_value or now()
-    started_at = parse_time(state.get("run_started_at"))
-    if started_at and current - started_at > timedelta(hours=24):
-        return {"status": "NEW_RUN_REQUIRED", "reason": "RUN_OLDER_THAN_24_HOURS"}
-    abandoned = []
-    recovered = []
-    for unit in state["work_units"]:
-        if unit["status"] in {"LEASED", "RUNNING"}:
-            lease = unit.get("lease") or {}
-            old_attempt = lease.get("attempt_id")
-            if old_attempt:
-                result_path = (
-                    Path(run_root) / "evidence/attempts" /
-                    unit["skill_id"] / old_attempt / "result.json"
-                )
-                if result_path.is_file():
-                    try:
-                        _accept_result(
-                            run_root,
-                            DEFAULT_REGISTRY,
-                            result_path,
-                            state=state,
-                            allow_expired=True,
-                            event_kind="orphan_result_recovered_on_resume",
-                        )
-                        recovered.append(unit["work_unit_id"])
-                        event(
-                            run_root,
-                            "orphan_result_validated_on_resume",
-                            work_unit_id=unit["work_unit_id"],
-                            attempt_id=old_attempt,
-                        )
-                        continue
-                    except (
-                        RuntimeErrorState, OSError, json.JSONDecodeError,
-                    ) as exc:
-                        event(
-                            run_root,
-                            "orphan_result_rejected_on_resume",
-                            work_unit_id=unit["work_unit_id"],
-                            attempt_id=old_attempt,
-                            reason=str(exc),
-                        )
-            abandoned.append(unit["work_unit_id"])
-            if old_attempt:
-                unit.setdefault("abandoned_attempts", []).append(old_attempt)
-            unit["status"] = "PENDING"
-            unit["lease"] = None
-    state["concurrency"]["current"] = 0
-    save_state(run_root, state)
-    event(
-        run_root, "runtime_resumed",
-        abandoned=abandoned, recovered=recovered,
-    )
-    return {
-        "status": "RESUMED",
-        "abandoned": abandoned,
-        "recovered": recovered,
-    }
-
-
 # ---------------------------------------------------------------- 失败声明（lean 核心）
 def mark_failed(run_root: Path, skill_id: str, reason: str, *, retry: bool = False) -> dict:
     """声明一个单元失败（lean 模式核心：允许失败，必须显式声明）。
@@ -877,13 +635,11 @@ def mark_failed(run_root: Path, skill_id: str, reason: str, *, retry: bool = Fal
         if retry:
             unit["status"] = "PENDING"
             unit["attempts"] = unit.get("attempts", 0) + 1
-            unit["lease"] = None
             event(run_root, "unit_retried", skill_id=skill_id, attempts=unit["attempts"])
             save_state(run_root, state)
             return {"status": "RETRIED", "skill_id": skill_id}
         unit["status"] = "FAILED"
         unit["failure"] = {"reason": reason, "declared_at": iso(now())}
-        unit["lease"] = None
         event(run_root, "unit_failed", skill_id=skill_id, reason=reason)
         save_state(run_root, state)
         return {"status": "FAILED", "skill_id": skill_id, "reason": reason}
@@ -1005,7 +761,7 @@ def record_usage(
 
 
 def rework(run_root: Path, work_unit_id: str, reason: str = "") -> dict:
-    """报告正文/artifact 类返工：DONE/PARTIAL → PENDING + 清租约 + 事件 + 复用指引。
+    """报告正文/artifact 类返工：DONE/PARTIAL → PENDING + 重置复用指引 + 事件。
 
     与 submit-correction 分工：确定性证据错误走 correction（不耗 attempt）；
     缺章节/缺正文/实质校验失败才走本命令（耗一次 attempt）。
@@ -1044,21 +800,16 @@ def _rework_locked(run_root: Path, work_unit_id: str, reason: str) -> dict:
             f"{work_unit_id} 无被 Gate 接受的 attempt，不能 rework（先提交合格产物）",
             code=1,
         )
-    lease = unit.get("lease") or {}
-    old_attempt = lease.get("attempt_id")
-    if old_attempt:
-        unit.setdefault("abandoned_attempts", []).append(old_attempt)
     base = accepted[-1]
     unit["reuse_attempt"] = base  # next-work 据此下发 reuse_base_attempt 指引
     unit["status"] = "PENDING"
-    unit["lease"] = None
     state.setdefault("rework_count", 0)
     state["rework_count"] += 1
     save_state(run_root, state)
     event(
         run_root, "rework_initiated",
         work_unit_id=work_unit_id, reason=reason,
-        base_attempt=base, previous_attempt=old_attempt,
+        base_attempt=base,
     )
     return {
         "status": "REWORKED",

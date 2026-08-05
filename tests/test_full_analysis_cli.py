@@ -14,10 +14,12 @@ class FullAnalysisCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("start", result.stdout)
         self.assertIn("status", result.stdout)
-        self.assertIn("resume", result.stdout)
+        self.assertIn("doctor", result.stdout)
         self.assertIn("cleanup", result.stdout)
+        self.assertNotIn("resume", result.stdout)
         self.assertNotIn("next-work", result.stdout)
         self.assertNotIn("submit-result", result.stdout)
+        self.assertNotIn("self-check", result.stdout)
 
 
 if __name__ == "__main__":

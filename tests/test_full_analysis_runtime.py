@@ -45,19 +45,11 @@ class RuntimeTests(unittest.TestCase):
     def state(self):
         return json.loads((self.run_root / "evidence/runtime-state.json").read_text())
 
-    def lease_and_start(self):
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        started = self.cli(
-            "job-started", "--run-root", self.run_root,
-            "--work-unit-id", leased["work_unit_id"],
-            "--attempt-id", leased["attempt_id"],
-            "--lease-nonce", leased["lease_nonce"],
-            "--agent-job-id", f"job-{leased['attempt_id']}",
-        )
-        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
-        return leased
+    def lease_only(self):
+        # lean（v3.7+）：next-work 直接返回就绪单元，无 job-started / 无租约登记。
+        return json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
 
-    def write_result(self, leased, *, attempt_id=None, lease_nonce=None, agent_job_id=None):
+    def write_result(self, leased, *, attempt_id=None, agent_job_id=None):
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
         skill = next(s for s in registry["skills"] if s["skill_id"] == leased["skill_id"])
         attempt_id = attempt_id or leased["attempt_id"]
@@ -75,7 +67,7 @@ class RuntimeTests(unittest.TestCase):
             "work_unit_id": leased["work_unit_id"],
             "attempt_id": attempt_id,
             "agent_job_id": agent_job_id or f"job-{leased['attempt_id']}",
-            "lease_nonce": lease_nonce or leased["lease_nonce"],
+            "lease_nonce": None,
             "skill_id": leased["skill_id"],
             "role_id": None,
             "status": "PASS",
@@ -153,25 +145,6 @@ class RuntimeTests(unittest.TestCase):
             '"formal": false,\n      "accepted": true', methodology)
         self.assertIn("是否非空以 evidence_rules 为准", methodology)
 
-    def test_next_work_and_job_started_enforce_two_concurrent_leases(self):
-        # v3.5.1：并发上限 2（用户指令，从 4 收紧）——完成 ashare 后 W2 就绪，
-        # 至多 2 个租约并行，第三个触发 CONCURRENCY_LIMIT。
-        self.start()
-        self._set_unit_done("ashare-data")
-        leases = [self.cli("next-work", "--run-root", self.run_root) for _ in range(2)]
-        third = self.cli("next-work", "--run-root", self.run_root)
-        for lease in leases:
-            self.assertEqual(lease.returncode, 0)
-            self.assertEqual(json.loads(lease.stdout)["status"], "LEASED")
-        self.assertEqual(json.loads(third.stdout)["status"], "NO_WORK")
-        self.assertEqual(json.loads(third.stdout)["reason"], "CONCURRENCY_LIMIT")
-        a = json.loads(leases[0].stdout)
-        started = self.cli("job-started", "--run-root", self.run_root,
-                           "--work-unit-id", a["work_unit_id"], "--attempt-id", a["attempt_id"],
-                           "--lease-nonce", a["lease_nonce"], "--agent-job-id", "job-1")
-        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
-        self.assertEqual(self.state()["budget"]["used"], 2)
-
     def _set_unit_done(self, skill_id):
         """直接把某单元置为 DONE（模拟上游完成），隔离测试依赖门禁逻辑。"""
         path = self.run_root / "evidence/runtime-state.json"
@@ -179,7 +152,6 @@ class RuntimeTests(unittest.TestCase):
         for unit in state["work_units"]:
             if unit["skill_id"] == skill_id:
                 unit["status"] = "DONE"
-                unit["lease"] = None
         path.write_text(json.dumps(state), encoding="utf-8")
 
     def test_dependency_gate_blocks_units_until_deps_done(self):
@@ -241,108 +213,6 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn(result["skill_id"],
                       {"investment-team", "management-deep-dive",
                        "earnings-review", "industry-research"})
-
-    def test_rate_limit_failure_enters_global_cooldown_and_retry_backoff(self):
-        self.start()
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        self.cli("job-started", "--run-root", self.run_root,
-                 "--work-unit-id", leased["work_unit_id"], "--attempt-id", leased["attempt_id"],
-                 "--lease-nonce", leased["lease_nonce"], "--agent-job-id", "job-1")
-        failed = self.cli("record-failure", "--run-root", self.run_root,
-                          "--work-unit-id", leased["work_unit_id"], "--attempt-id", leased["attempt_id"],
-                          "--reason", "rate_limit")
-        self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
-        state = self.state()
-        self.assertEqual(state["concurrency"]["max"], 1)
-        self.assertTrue(state["concurrency"]["cooldown_until"])
-        unit = next(x for x in state["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
-        self.assertEqual(unit["status"], "RETRY_WAIT")
-        self.assertEqual(unit["attempts"], 1)
-
-    def test_next_work_allowlist_enforces_w3_stagger(self):
-        # v3.4.2 fix（HIGH）：W3 错峰——契约顺序 investment-team(5) → mgmt(6) →
-        # earnings(7) → industry-research(8)，若无 allowlist，要领 earnings-review
-        # 必须先租出 management-deep-dive，错峰纪律在 Runtime 层不可实现。
-        # 本测试验证：--allowlist 只派发白名单内的就绪单元，白名单外单元被挡。
-        self.start()
-        # 完成 W1+W2 全部依赖，使 W3 四单元就绪
-        for skill in ("ashare-data", "financial-data", "quality-screen",
-                      "investment-checklist", "investment-research"):
-            self._set_unit_done(skill)
-        # 错峰第一批：只领 investment-team + earnings-review
-        leased = []
-        for _ in range(5):
-            result = json.loads(self.cli(
-                "next-work", "--run-root", self.run_root,
-                "--allowlist", "investment-team,earnings-review").stdout)
-            if result["status"] == "LEASED":
-                leased.append(result["skill_id"])
-            else:
-                break
-        self.assertEqual(set(leased), {"investment-team", "earnings-review"})
-        # management-deep-dive / industry-research 不得被白名单提前派发
-        state = self.state()
-        blocked = {u["skill_id"] for u in state["work_units"]
-                   if u["skill_id"] in {"management-deep-dive", "industry-research"}}
-        self.assertTrue(blocked)
-        for sid in blocked:
-            unit = next(u for u in state["work_units"] if u["skill_id"] == sid)
-            self.assertEqual(unit["status"], "PENDING", f"{sid} 不得在 W3a 阶段被派发")
-        # 释放并发（v3.5.1 上限 2：W3a 两单元占满后无法再领），再测
-        # 白名单为空 allowlist（错误输入）退化为不过滤：可派发白名单外单元
-        for sid in leased:
-            self._set_unit_done(sid)
-        result = json.loads(self.cli(
-            "next-work", "--run-root", self.run_root,
-            "--allowlist", "management-deep-dive").stdout)
-        self.assertEqual(result["status"], "LEASED")
-        self.assertEqual(result["skill_id"], "management-deep-dive")
-
-    def test_w3b_not_leased_until_w3a_done(self):
-        # v3.4.4 fix（HIGH）：W3 错峰屏障——W3b（management-deep-dive+industry-research）
-        # 只能在 W3a（investment-team+earnings-review）全部 DONE 后领取。
-        # allowlist 只限制本轮可领集合，不越过依赖；W3b 单元依赖（W2）已满足时就绪，
-        # 因此「W3a 全 DONE 前不得领 W3b」必须由编排纪律执行——本测试钉住该语义：
-        # ① W3a 未 DONE 时 W3b 单元确实就绪（证明屏障只能靠编排，不能靠 runtime）；
-        # ② W3a 全部 DONE 后，W3b allowlist 可正常收齐。
-        self.start()
-        for skill in ("ashare-data", "financial-data", "quality-screen",
-                      "investment-checklist", "investment-research"):
-            self._set_unit_done(skill)
-        # 领出 W3a 两单元（不 DONE）
-        w3a = []
-        for _ in range(5):
-            result = json.loads(self.cli(
-                "next-work", "--run-root", self.run_root,
-                "--allowlist", "investment-team,earnings-review").stdout)
-            if result["status"] == "LEASED":
-                w3a.append(result["skill_id"])
-            else:
-                break
-        self.assertEqual(set(w3a), {"investment-team", "earnings-review"})
-        # ① 编排器若误用 W3b allowlist（W3a 未 DONE），v3.5.1 起并发上限 2 已被
-        #    W3a 两单元占满 → W3b 领不到（CONCURRENCY_LIMIT）——证明
-        #    「W3a 全 DONE 后领 W3b」仍是硬前置，且并发 2 使误领在 runtime 层即被挡
-        leaked = json.loads(self.cli(
-            "next-work", "--run-root", self.run_root,
-            "--allowlist", "management-deep-dive,industry-research").stdout)
-        self.assertEqual(leaked["status"], "NO_WORK")
-        self.assertEqual(leaked["reason"], "CONCURRENCY_LIMIT")
-        # ② 正确顺序：W3a 全部 DONE 后（释放并发），W3b allowlist 可完整收齐两单元
-        for sid in w3a:
-            self._set_unit_done(sid)
-        w3b = []
-        for _ in range(5):
-            result = json.loads(self.cli(
-                "next-work", "--run-root", self.run_root,
-                "--allowlist", "management-deep-dive,industry-research").stdout)
-            if result["status"] == "LEASED":
-                w3b.append(result["skill_id"])
-            else:
-                break
-        self.assertEqual(len(w3b), 2)
-        self.assertEqual(set(w3b),
-                         {"management-deep-dive", "industry-research"})
 
     def test_budget_adjust_only_raises_and_logs_event(self):
         # v3.4.2 fix（MEDIUM）：budget 触顶 CHECKPOINT 的「调高预算继续」需要 CLI 闭环。
@@ -417,28 +287,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue((self.run_root / "PARTIAL_REPORT.md").is_file())
         self.assertTrue((self.run_root / "SUMMARY.md").is_file())
 
-    def test_cleanup_requires_dry_run_and_resume_marks_old_attempt_abandoned(self):
-        self.start()
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        self.cli("job-started", "--run-root", self.run_root,
-                 "--work-unit-id", leased["work_unit_id"], "--attempt-id", leased["attempt_id"],
-                 "--lease-nonce", leased["lease_nonce"], "--agent-job-id", "job-1")
-        denied = self.cli("cleanup", "--run-root", self.run_root)
-        self.assertNotEqual(denied.returncode, 0)
-        preview = self.cli("cleanup", "--run-root", self.run_root, "--dry-run")
-        self.assertEqual(preview.returncode, 0)
-        resumed = self.cli("resume", "--run-root", self.run_root)
-        self.assertEqual(resumed.returncode, 0)
-        state = self.state()
-        unit = next(x for x in state["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
-        self.assertIn(leased["attempt_id"], unit["abandoned_attempts"])
-
     def test_lease_binding_accepts_never_job_started_bundle_with_matching_ids(self):
-        """E15 回归：从未 job-started 的 LEASED 租约（lease.agent_job_id 为 None）
-        直接提交结果时，只校验 attempt_id + lease_nonce 两个强身份字段，
-        agent_job_id 允许是 Agent 自造值——否则 Agent 自提交路径会被整条拒死。
+        """lean（v3.7+）：已无租约身份机。submit-result 仅校验 Result Bundle 与当前
+        单元的强身份一致：run_id / work_unit_id / skill_id / status + 由
+        `attempt-{work_unit_id}-{attempts}` 派生的 attempt_id。lease_nonce /
+        agent_job_id 不再参与绑定（仅为 bundle 溯源字段，可空）。
 
-        直接测 runtime 的租约绑定原语而非走 CLI：submit-result 会继续调用 Gate 的
+        直接测 runtime 的身份绑定原语而非走 CLI：submit-result 会继续调用 Gate 的
         完整 ingest，而 ingest 的实质校验当前有独立缺陷（见文件末尾说明），
         会掩盖本测试要钉住的语义。
         """
@@ -451,66 +306,30 @@ class RuntimeTests(unittest.TestCase):
             "work_unit_id": leased["work_unit_id"],
             "skill_id": leased["skill_id"],
             "attempt_id": leased["attempt_id"],
-            "lease_nonce": leased["lease_nonce"],
+            "lease_nonce": None,
             "agent_job_id": "agent-self-attested-job-id",
         }
 
         unit = rt._validate_result_lease(state, bundle)
 
         self.assertEqual(unit["work_unit_id"], leased["work_unit_id"])
-        # 强身份字段仍不可伪造：nonce / attempt_id 任一不匹配都必须被拒
-        with self.assertRaises(rt.RuntimeErrorState):
-            rt._validate_result_lease(state, {**bundle, "lease_nonce": "foreign-nonce"})
+        # 强身份字段不可伪造：attempt_id / work_unit_id 任一不匹配都必须被拒
         with self.assertRaises(rt.RuntimeErrorState):
             rt._validate_result_lease(state, {**bundle, "attempt_id": "attempt-stale"})
-
-    def test_concurrent_job_started_updates_are_serialized_without_lost_budget(self):
-        self.start()
-        # v3.5.1：并发上限 2——完成 ashare 后 W2 就绪，2 个租约供并发 job-started 租用
-        self._set_unit_done("ashare-data")
-        leases = [
-            json.loads(
-                self.cli("next-work", "--run-root", self.run_root).stdout)
-            for _ in range(2)
-        ]
-        processes = []
-        for index, leased in enumerate(leases):
-            processes.append(subprocess.Popen(
-                [
-                    sys.executable, str(CLI), "job-started",
-                    "--run-root", str(self.run_root),
-                    "--work-unit-id", leased["work_unit_id"],
-                    "--attempt-id", leased["attempt_id"],
-                    "--lease-nonce", leased["lease_nonce"],
-                    "--agent-job-id", f"job-concurrent-{index}",
-                ],
-                cwd=self.root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            ))
-        completed = [process.communicate(timeout=20) for process in processes]
-
-        for process, (stdout, stderr) in zip(processes, completed):
-            self.assertEqual(process.returncode, 0, stdout + stderr)
-        state = self.state()
-        self.assertEqual(state["budget"]["used"], 3)  # preflight 1 + 2 job-started
+        with self.assertRaises(rt.RuntimeErrorState):
+            rt._validate_result_lease(state, {**bundle, "work_unit_id": "wu-foreign"})
+        # lease_nonce 不再参与绑定：伪造 nonce 也不影响（绑定只看 attempt_id 等）
         self.assertEqual(
-            sum(unit["status"] == "RUNNING" for unit in state["work_units"]),
-            2,
+            rt._validate_result_lease(state, {**bundle, "lease_nonce": "foreign-nonce"})["work_unit_id"],
+            leased["work_unit_id"],
         )
-        self.assertTrue(
-            (self.run_root / "evidence/locks/runtime-state.lock").is_file())
 
-    def test_submit_result_rejects_bundle_not_bound_to_current_lease_before_gate(self):
+    def test_submit_result_rejects_bundle_with_wrong_attempt_id(self):
+        """lean：submit-result 在调用 Gate 前先绑定 Result Bundle 到当前活动单元，
+        只接受派生的 attempt_id；伪造 attempt_id 必须被拒（不进入 Gate）。"""
         self.start()
-        leased = self.lease_and_start()
-        result_path = self.write_result(
-            leased,
-            attempt_id="attempt-stale",
-            lease_nonce="foreign-nonce",
-            agent_job_id="foreign-job",
-        )
+        leased = self.lease_only()
+        result_path = self.write_result(leased, attempt_id="attempt-stale")
 
         submitted = self.cli(
             "submit-result", "--run-root", self.run_root,
@@ -519,7 +338,7 @@ class RuntimeTests(unittest.TestCase):
 
         self.assertNotEqual(submitted.returncode, 0)
         unit = next(x for x in self.state()["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
-        self.assertEqual(unit["status"], "RUNNING")
+        self.assertEqual(unit["status"], "LEASED")  # 未进 Gate，状态不变
         manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
         item = next(x for x in manifest["skills"] if x["skill_id"] == leased["skill_id"])
         self.assertEqual(item["status"], "PENDING")
@@ -527,7 +346,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_fail_result_closes_runtime_unit_and_run_as_failed(self):
         self.start()
-        leased = self.lease_and_start()
+        leased = self.lease_only()
         result_path = self.write_result(leased)
         bundle = json.loads(result_path.read_text(encoding="utf-8"))
         bundle.update({
@@ -595,7 +414,7 @@ class RuntimeTests(unittest.TestCase):
         # lean 模式：租约不会被自动回收，卡死/失败必须由编排器显式声明，
         # 失败原因随单元落盘，供终稿如实标注缺口。
         self.start()
-        leased = self.lease_and_start()
+        leased = self.lease_only()
 
         marked = self.cli("mark-failed", "--run-root", self.run_root,
                           "--skill-id", leased["skill_id"],
@@ -610,14 +429,14 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(unit["status"], "FAILED")
         self.assertEqual(unit["failure"]["reason"], "数据源连续三次超时，判定不可完成")
         self.assertTrue(unit["failure"]["declared_at"])
-        self.assertIsNone(unit["lease"])
+        self.assertNotIn("lease", unit)  # lean：单元不携带租约字段
         events = (self.run_root / "evidence/events.jsonl").read_text(encoding="utf-8")
         self.assertIn("unit_failed", events)
 
     def test_next_work_reflects_mark_failed_unit(self):
         # FAILED 单元不再被派发；依赖它的下游保持阻塞（不放行、不静默跳过）。
         self.start()
-        leased = self.lease_and_start()
+        leased = self.lease_only()
         self.assertEqual(leased["skill_id"], "ashare-data")  # 根节点，全体下游依赖它
         self.cli("mark-failed", "--run-root", self.run_root,
                  "--skill-id", leased["skill_id"], "--reason", "数据源不可用")
@@ -630,7 +449,7 @@ class RuntimeTests(unittest.TestCase):
     def test_mark_failed_with_retry_requeues_unit_for_redispatch(self):
         # --retry 是显式重排一次（不置 FAILED），attempts 自增以保留重试痕迹。
         self.start()
-        leased = self.lease_and_start()
+        leased = self.lease_only()
 
         retried = self.cli("mark-failed", "--run-root", self.run_root,
                            "--skill-id", leased["skill_id"],
@@ -642,7 +461,7 @@ class RuntimeTests(unittest.TestCase):
                     if x["work_unit_id"] == leased["work_unit_id"])
         self.assertEqual(unit["status"], "PENDING")
         self.assertEqual(unit["attempts"], 2)
-        self.assertIsNone(unit["lease"])
+        self.assertNotIn("lease", unit)
         re_leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
         self.assertEqual(re_leased["status"], "LEASED")
         self.assertEqual(re_leased["work_unit_id"], leased["work_unit_id"])
@@ -819,66 +638,7 @@ class DependencyGraphTests(unittest.TestCase):
         for unit in state["work_units"]:
             if unit["skill_id"] == skill_id:
                 unit["status"] = status
-                unit["lease"] = None
         path.write_text(json.dumps(state), encoding="utf-8")
-
-    def _lease_duration_minutes(self, leased):
-        return (self._parse(leased["expires_at"])
-                - self._parse(leased["leased_at"])).total_seconds() / 60
-
-    def test_non_fanout_unit_gets_40min_lease_ttl(self):
-        # 非扇出单元 TTL = NON_FANOUT_LEASE_MINUTES = 40 分（宏景 run 实证：
-        # mgmt ~35min、ind-research ~25min，旧 TTL=20 频繁被 sweep 误回收）。
-        result = self.cli(
-            "start", "--registry", REGISTRY, "--repo-root", self.root,
-            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
-            "--run-root", self.run_root,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # ashare-data 是首个就绪单元（非扇出），应获得 TTL=40
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        self.assertEqual(leased["skill_id"], "ashare-data")
-        self.assertEqual(leased.get("lease_ttl_minutes"), 40)
-        self.assertEqual(self._lease_duration_minutes(leased), 40)
-
-    def test_fanout_unit_gets_multiplied_lease_ttl(self):
-        # investment-team 扇出 4 角色（integrator 不计）→ TTL = LEASE_MINUTES×4 = 80 分，
-        # lease 存 lease_ttl_minutes，防止多角色串行超时被 sweep 误回收。
-        result = self.cli(
-            "start", "--registry", REGISTRY, "--repo-root", self.root,
-            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
-            "--run-root", self.run_root,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for skill in ("ashare-data", "financial-data", "quality-screen",
-                      "investment-checklist", "investment-research"):
-            self._set_status(skill, "DONE")
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        self.assertEqual(leased["skill_id"], "investment-team")
-        self.assertEqual(leased.get("lease_ttl_minutes"), 80)
-        self.assertEqual(self._lease_duration_minutes(leased), 80)
-
-    def test_heartbeat_renews_by_stored_lease_ttl(self):
-        # fanout 单元的 heartbeat 按存储的 lease_ttl_minutes（80 分）续期，而非默认 40 分。
-        result = self.cli(
-            "start", "--registry", REGISTRY, "--repo-root", self.root,
-            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
-            "--run-root", self.run_root,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for skill in ("ashare-data", "financial-data", "quality-screen",
-                      "investment-checklist", "investment-research"):
-            self._set_status(skill, "DONE")
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        self.assertEqual(leased["skill_id"], "investment-team")
-        beat = json.loads(self.cli(
-            "heartbeat", "--run-root", self.run_root,
-            "--work-unit-id", leased["work_unit_id"],
-            "--attempt-id", leased["attempt_id"],
-            "--lease-nonce", leased["lease_nonce"]).stdout)
-        renewed = self._parse(beat["expires_at"]) - self._parse(leased["leased_at"])
-        # 续期后距初始 leased_at 应 ≥80 分（heartbeat 时刻 + 80 分 TTL）
-        self.assertGreaterEqual(renewed.total_seconds() / 60, 80)
 
 
 if __name__ == "__main__":

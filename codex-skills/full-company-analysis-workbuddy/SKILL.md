@@ -29,7 +29,7 @@ This skill is generated from `skills/full-company-analysis-workbuddy.md` so Clau
 1. **内容质量**：每份研究报告必须基于真实数据、遵循方法论、声明数据截止日 / 来源 / 免责。
 2. **失败显式声明**：任何单元做不出来、数据缺失、推理不成立，必须显式 `mark-failed` 声明，**不静默跳过、不自动重试、不伪造占位**。
 
-其余一切（速度、租约看门狗、波次错峰、证据账本 PLACEHOLDER、双源强制、版本钉死、自动恢复）已从流水线移除或降级为可选。报告是**唯一交付物**；证据账本（result.json）只是可选辅助，空账本合法，绝不合成 PLACEHOLDER 占位。
+其余一切（速度、租约看门狗与租约身份机、波次错峰白名单、证据账本 PLACEHOLDER、双源强制、版本钉死、自动恢复、job-started/heartbeat/record-failure 命令）已从流水线移除或降级为可选。报告是**唯一交付物**；证据账本（result.json）只是可选辅助，空账本合法，绝不合成 PLACEHOLDER 占位。
 
 > **为什么去掉冗余检查**：历史版本逐代叠加租约看门狗、波次错峰、证据账本 PLACEHOLDER 自动填充、双源强制、版本钉死等防御机制，目标是「让 run 不卡住、过 Gate」。但这些机制优化的是「流程不报错」而非「研究更深」，且 PLACEHOLDER 合成会伪造证据。lean 模式回退到本质：真实研究 + 显式失败声明。
 
@@ -58,11 +58,17 @@ python3 scripts/full_analysis.py next-work --run-root <run_root>
 1. 每次 `next-work` 返回 `LEASED` 后，用 **WorkBuddy 原生 Agent** 完成该 work unit。禁止用 Python/shell 再创建 Agent，禁止由主上下文直接撰写分析正文（主上下文只做调度——独立 Agent 有新鲜上下文与外部调研能力，是质量稳定的物理前提）。
 2. 把 `next-work` payload 的 `methodology_text`（`skills/<skill_id>.md` 完整方法论）作为 Agent 的**强制规范**完整落地，不得仅凭 skill 名称凭记忆发挥。
 3. Agent 把报告写入 attempt 目录与契约指定的正式产物路径（`artifact.formal_path`）。
-4. Agent 完成后调用 `submit-result`（如用生成器，运行 `mk_result_bundle` 生成 result.json；空账本合法，无 PLACEHOLDER）。
+4. **质量归属（优化点 1）：Agent 在调 `mk_result_bundle` / `submit-result` 之前，先对产出报告跑自我校验**：
+   ```text
+   python3 scripts/full_analysis.py self-check \
+     --run-root <run_root> --skill-id <skill_id> --report <attempt_dir>/report.md
+   ```
+   退出码 0 = 通过；非 0 = 发现实质错误（实质章节数 / 分歧交锋 / 标题占比 / 数据截止日·来源·免责三锚 / 字节下限），Agent 必须**修复报告后重跑 self-check**，或显式 `mark-failed` 声明放弃。**质量由 skill 自身在移交前确保**，Gate 仅在 submit-result 再做一次边界兜底（同一套 `_substance_errors`），双重保险但不重复劳动。
+5. Agent 自我校验通过后调用 `submit-result`（如用生成器，运行 `mk_result_bundle` 生成 result.json；空账本合法，无 PLACEHOLDER）。
 
-> 租约说明：lean 模式不再有看门狗 / 自动续租 / 孤儿恢复。next-work 返回的租约用于身份登记（job-started 可选轻量记录），Agent 完成后尽快 submit-result 即可；若 submit 因租约过期被拒，直接 `mark-failed` 声明并继续，不要等待或轮询。
+> 编排已极简（优化点 2）：lean 模式**完全没有租约 / job-started / heartbeat / record-failure / 波次白名单**。next-work 直接返回就绪单元，Agent 完成后尽快 submit-result 即可；不存在租约过期被拒的情形，也无需轮询或等待。
 
-**多角色 skill 真扇出**：当 `roles.mode == "fanout"` 时，为 `required_roles` 中每个角色启动独立原生 Agent，各自产出角色备忘录，最后由整合 Agent 读取全部备忘录产出正式报告。
+**多角色 skill 真扇出**：当 `roles.mode == "fanout"` 时，为 `required_roles` 中每个角色启动独立原生 Agent，各自产出角色备忘录，最后由整合 Agent 读取全部备忘录产出正式报告（多角色备忘录缺失也会被 self-check / Gate 拦截）。
 
 ## 报告质量要求（第一条底线）
 
@@ -93,7 +99,7 @@ python3 scripts/full_analysis.py mark-failed \
 - **不自动重试、不启动看门狗、不做孤儿恢复**。如需重试，显式加 `--retry` 重新排队一次。
 - 失败的单元不计入交付；最终交付物（HTML/报告集）明确标注哪些单元缺失及原因。
 
-> 已移除的机制（勿再用）：sweep 看门狗、resume 孤儿恢复、heartbeat 续租、波次错峰白名单、E1/E10 版本钉死、evidence_rules 账本核对、PLACEHOLDER 自动填充。这些曾为「不让 run 卡住」而存在，但牺牲了质量与诚实。
+> 已移除的机制（勿再用）：sweep 看门狗、resume 孤儿恢复、heartbeat 续租、**租约身份机（lease nonce / agent_job_id 校验）及其 job-started / heartbeat / record-failure 命令**、波次错峰白名单、E1/E10 版本钉死、evidence_rules 账本核对、PLACEHOLDER 自动填充。这些曾为「不让 run 卡住」而存在，但牺牲了质量与诚实。质量现已由每个 skill 的 `self-check` 在移交前确保，Gate 仅做边界兜底。
 
 ## 收口与交付（L1 主线）
 
