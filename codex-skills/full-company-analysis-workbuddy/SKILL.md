@@ -52,6 +52,23 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 5. **核对预算**：`start` 返回 `budget` 时，核对 `normal_target`。其唯一机器真源在 Gate `cmd_init`：`normal_target = 2 × 契约单元数 + 1`（当前 13 单元 → 27；+1 = preflight，它计入 used 一次；其余为全员一次成功 + 一轮全员返工余量）。口径与 runtime 的 `used` 计数严格对齐。它只是启动时的版本错配核对信号，无运行时阻断逻辑；派发阻断由 `stop_dispatch_at`（软停非 core）与 `hard_max`（硬停全部）承担。`used` 仅在 preflight 与 job-started 时递增（summary/review 不计入 used）。数量异常视为版本错配，停止并核对。
 6. **E10 机器强制（与 E1 互补）**：E1 是编排器启动前自查（文档纪律），E10 是 `finalize` 硬校验——finalize 重算当前契约 digest，与 run 记录不一致则拒绝准出（`CONTRACT_VERSION_MISMATCH`，无 `--force` 绕过），防「过期编排 run 被 APPROVED」。run 启动后更新过契约的旧 run 只能迁移产物重跑。
 
+## 流程分级（v3.6.0，用户指令）
+
+**把整条流程分为四级：L1 是唯一必经的生产主线（到 HTML 交付为止）；L2-L4 是评估验证层（需要评估验证时明确执行，各自独立可跑）。**
+
+| 级 | 名称 | 内容 | 终点 | 性质 |
+|----|------|------|------|------|
+| **L1** | 生产流水线 | E1+start → 波次调度 13 单元 → deep-summary → register-summary → render-html | **HTML 交付** | 必经主线，到此为止 |
+| **L2** | 结构验证 | audit（13 单元账本核对 + calc 重放）→ correction/rework 修复 → audit PASS | AUDIT_PASS | **需要评估验证时执行** |
+| **L3** | 语义评估 | review prepare → 评审 Agent（五维）→ ingest → summarize | REVIEW_PASSED | **需要评估验证时执行** |
+| **L4** | 准出与体检 | finalize（契约 digest/快照/评审校验）+ doctor（退化指纹） | APPROVED | **需要评估验证时执行** |
+
+**L1 边界（强制）**：13 单元全部 DONE + register-summary 通过后，`render-html` 即产出 HTML 展示件——**正常流程到此为止**，不要求 audit/review/finalize 前置（HTML 是确定性渲染，不依赖评估层）。用户未要求评估验证时，run 收口于 HTML 交付。
+
+**L2-L4 触发条件（需要评估验证时明确执行）**：发版前、正式对外交付、跨 run benchmark、用户明确要求质量评估、或需要 APPROVED 状态时，按 L2→L3→L4 顺序执行；各级可独立修复重跑（correction/rework → 重跑 audit；评审返工 → 重跑 review；契约/快照变动 → 重跑 finalize）。各级通过标志：L2 AUDIT_PASS / L3 REVIEW_PASSED / L4 APPROVED（+ doctor 结论）。
+
+**产物关系**：L1 产物（13 份 markdown + summary.md + HTML）是交付真源；L2-L4 只做校验与准出（返工修正除外），不改变交付内容。
+
 ## Agent 调度纪律
 
 **领单元命令（v3.4.4 起必须带 --allowlist 实现错峰，禁止裸调用）**：
@@ -67,7 +84,7 @@ python3 scripts/full_analysis.py next-work --run-root <run_root> --allowlist inv
 
 **波次并行派发（v3.3.10，强制）**——依赖波次的墙钟收益来自"一波内多单元并行"，而非逐个串行：
 
-1. **收齐一波**：连续调用 `next-work` 直到返回 `NO_WORK`（`CONCURRENCY_LIMIT` 或 `DEPENDENCIES_PENDING`），把这批 `LEASED` 单元收为一个波次批次（并发上限 `concurrency.max`，默认 4）。**错峰波次用带 `--allowlist` 的调用收齐（见第 5 条具体命令），白名单外的就绪单元不会在本轮被领。**
+1. **收齐一波（上限 2）**：连续调用 `next-work` 直到返回 `NO_WORK`（`CONCURRENCY_LIMIT` 或 `DEPENDENCIES_PENDING`），把这批 `LEASED` 单元收为一个波次批次（**v3.5.1 起并发上限 `concurrency.max` = 2，任何时刻至多 2 个并行 Agent**；单波超 2 个单元时按 2 个一批分多次领取）。**错峰波次用带 `--allowlist` 的调用收齐（见第 5 条具体命令），白名单外的就绪单元不会在本轮被领。**
 2. **并行派发**：把该批次的每个单元作为**独立前台 Agent**，在**同一条消息里一次性全部派发**（多个 Agent 工具调用并发运行）。禁止逐个前台串行（那会把波次退化为全串行，浪费依赖图的 ~90 分收益）。
 3. **并行 job-started**：所有 Agent 派发工具返回 `agent_job_id` 后，为每个单元调用 `job-started`。
 4. **收尾与下一波**：各 Agent 完成即 `submit-result`；全部提交后回到第 1 步领取下一波。
@@ -80,7 +97,7 @@ python3 scripts/full_analysis.py next-work --run-root <run_root> --allowlist inv
    - 若上游连续 429，配合下方 E12 lite 降级继续。
 6. **波次墙钟（错峰后实测）**：W1→W5 关键路径 ≈ 42-50 分（并行波次）；W3 拆分后墙钟略增（约 +8-10 分）但轻单元零重跑，净收益为正（待 v3.4.4 后 run 复验）。
 
-当前 13 单元的波次（契约 depends_on 的拓扑分层，**编排默认分派**）：W1 `ashare-data` → W2 `financial-data`/`quality-screen`/`investment-checklist`/`investment-research`（×4 并行）→ **W3 拆两部分**：W3a `investment-team`+`earnings-review`（扇出重单元并行）→ W3b `management-deep-dive`+`industry-research`（轻单元并行，W3a 全部 DONE 后领）→ **W4 先单独跑 `industry-funnel`**，完成后再并行 `bottleneck-hunter`/`news-pulse` → W5 `thesis-tracker`。关键路径墙钟 ≈ 42-50 分（vs 串行 ~142 分）。
+当前 13 单元的波次（契约 depends_on 的拓扑分层，**编排默认分派**）：W1 `ashare-data` → W2 `financial-data`/`quality-screen`/`investment-checklist`/`investment-research`（**v3.5.1 起并发上限 2：拆 2+2 两批并行，先 financial+quality，全 DONE 后再 checklist+research**）→ **W3 拆两部分**：W3a `investment-team`+`earnings-review`（扇出重单元并行，恰 2 个）→ W3b `management-deep-dive`+`industry-research`（轻单元并行，W3a 全部 DONE 后领）→ **W4 先单独跑 `industry-funnel`**，完成后再并行 `bottleneck-hunter`/`news-pulse` → W5 `thesis-tracker`。关键路径墙钟 ≈ 45-55 分（并发 2 较原 4 略增，换取零空返回/零租约误回收）。
 
 Agent 派发工具返回 `agent_job_id` 后立即调用（不可在派发前调用，因 `agent-job-id` 参数尚未取得；不等 Agent 任务完成）：
 
@@ -98,7 +115,7 @@ python3 scripts/full_analysis.py job-started \
 3. 若提交被拒（身份不匹配/实质校验/预提交门禁），当场修复 result.json 或报告后重提，**不要留到收口阶段批量处理**——批量返工会使整条返工链（audit→prepare→评审→ingest→summarize）连锁重跑。
 4. **长任务强制 heartbeat**：预计执行超过 10 分钟的 Agent（扇出单元、多模块研究单元），派发指令必须要求其每完成一个主要阶段调用一次 `heartbeat`（命令见 BUNDLE-SPEC，心跳按租约 TTL 续期）；全程零心跳的 run 会被 doctor 判「疑似主上下文直写」，需人工复核。
 5. **429 降级派发（E12）**：派发 Agent 遇模型 429 限流时，改派 `model:"lite"` 继续（不中止 run、不消耗 runtime 预算）；runtime 的 429 冷却仅约束 Agent job 预算侧，派发层的模型降级是编排器正常容错，两者不混淆。若 lite 亦连续失败，才走 `record-failure` 重试退避。
-6. **并行限流权衡（v3.3.10，W3 拆分后更新）**：峰值并行度受 `concurrency.max`（默认 4）约束，已从 1 起步调优。三个扇出单元（team/earnings/news）内部已是多角色独立上下文，叠加单元级并行峰值可达 8-10 Agent，易触发上游 429。纪律：数据类轻单元（ashare/financial/quality/checklist/research）大胆并行；**W3 按第 5 条拆两部分错峰**（重扇出与轻单元不混编），若仍连续 429 则把重单元内部两扇出也拆开错峰，配合本条第 5 项 lite 降级。
+6. **并行限流权衡（v3.5.1 起并发上限 2）**：峰值并行度受 `concurrency.max`（= 2）硬约束，已从 1 → 4 → 2 调优。三个扇出单元（team/earnings/news）内部已是多角色独立上下文，叠加单元级并行峰值可达 6-10 Agent，易触发上游 429 与空返回。**纪律（用户指令，最高优先级）**：任何时刻并行 Agent ≤ 2——单元级每次至多并行派 2 个 Agent；W2（4 单元）拆成 2+2 两批；W3 按第 5 条拆两部分错峰（重扇出与轻单元不混编）；若仍连续 429 则把重单元内部两扇出也拆开错峰，配合本条第 5 项 lite 降级。
 7. **Agent 返回空/未 job-started 的兜底（E15，强制）**：若并行 Agent 返回**空结果**（拿不到真实 `agent_job_id`，五粮液 run W4 三单元卡死根因），**不要等待租约自然过期**——立即对对应单元执行 `resume`（`python3 scripts/full_analysis.py resume --run-root <run_root>`）。v3.3.12 起 runtime 对「从未 job-started 的 LEASED 租约 + 磁盘存在 result.json」支持孤儿恢复：只要 bundle 的 `attempt_id` + `lease_nonce` 与租约一致即接管为 DONE（agent_job_id 不作强校验，因为从未登记），产物合格则直接晋级、不合格才标 abandoned 重新排队。**注意**：Agent 自提交路径（Agent 内部完成 mk_result_bundle 后自行 submit-result）同样受此兜底——即使 Agent 忘了 job-started，submit 不再因 agent_job_id 缺失被拒。
 
 派发给 Agent 的指令必须包含注册表分配的精确正式产物路径，并要求其把中间文件放在：
@@ -196,7 +213,7 @@ python3 scripts/full_analysis.py submit-result \
 | # | 禁令 | 后果 | 原文位置 |
 |---|------|------|---------|
 | 禁-1 | **禁止后台派发** Agent（`run_in_background`） | 不返回 job_id → 无法 job-started → 租约过期 requeue 灾难 | Agent 调度纪律 §1 |
-| 禁-2 | **禁止逐个前台串行**派发（同波单元必须在一条消息里并行） | 波次退化为全串行，浪费依赖图 ~90 分收益 | Agent 调度纪律 §2 |
+| 禁-2 | **禁止单条消息并行派发 >2 个 Agent**（v3.5.1 用户指令：任何时刻并行 ≤2；同波超 2 单元必须分批 2+2，禁止一次全发） | 波次退化 / 空返回 / 租约误回收（神华 run 实证） | Agent 调度纪律 §1 |
 | 禁-3 | **W3/W4 禁止裸调用 next-work**（必须带 `--allowlist`；W1/W2/W5 允许裸调用；W3a→W3b 错峰，W4a funnel 单独跑完成后再领 W4b） | 重扇出与轻单元混编 / funnel 全市场取数争并发 → 租约过期误回收重跑 | Agent 调度纪律 §5 |
 | 禁-4 | **禁止**用 Python/shell/旧版 orchestrator 再创建 Agent | 绕过 Runtime 租约/预算管控，导致状态不一致 | Agent 调度纪律 |
 | 禁-5 | **不得**提前调用 W3b 的 allowlist（必须在 W3a 全 DONE 后） | 轻单元会重蹈租约过期覆辙 | Agent 调度纪律 §5 屏障 |

@@ -5,6 +5,32 @@
 
 ---
 
+## [v3.6.1] — 2026-08-05
+
+> 中国神华全链路验收 run（v3.5.0 首个真实 run，APPROVED）暴露三类问题后的修复版：**并发上限 4→2**（用户指令"最多两个并发任务"，消除空返回/租约误回收）、**source 合并 last-write-wins 修复**（返工提交的 source 更新此前永不生效）、**流程分级**（用户指令：L1 生产流水线到 HTML 交付为止，L2-L4 评估验证层需明确触发）。同时完整走通并修复了语义评审暴露的跨单元一致性问题（三情景/PE/PB/现金流增速对齐、王祥喜案补入、summary 补煤价压力测试）。
+
+### 🐛 修复 (Fixed)
+
+- **并发上限 4→2（用户指令）**：`cmd_init` 的 `concurrency.max` 由 4 收紧为 2——中国神华 run 实证：4 并行时 quality-screen 空返回卡死、W5 派发 499、checklist 返工空返回（均靠 E15 resume 兜底恢复）。收紧后任意时刻至多 2 个并行 Agent。配套：W2 拆 2+2 分批、禁-2 更新（禁止单条消息并行派发 >2）、5 个 runtime 并发测试适配。
+- **sources 合并非 last-write-wins（机制 bug）**：`_merge_provenance` 对已存在 source_id 静默跳过，返工/修正提交的 source 更新（如 url/title 指向新 attempt）永远不生效，导致 run 级 manifest 残留指向旧产物的来源（thesis-tracker 第 4 轮返工实证）。改为与 facts/calcs/judgments 一致的 last-write-wins（同 id 覆盖）。
+- **跨单元数值不一致（语义评审暴露，全部闭环）**：三情景 37.8/29.3/18.6 vs 42.34/31.92/21.85、PE 15.8 vs 33.4、PB 1.96 vs 2.10、现金流增速 +98.1% vs +88.1%——6 单元返工 + thesis 连返 5 轮 + correction 清理残留 judgment，终审 8/8 PASS（9 low，0 high/medium）。
+- **王祥喜案被多单元回避（2 high）**：investment-research / investment-checklist 返工补入治理风险，评级封顶 B+，与 management-deep-dive / thesis-tracker 对齐。
+
+### ✨ 新增 (Added)
+
+- **流程分级（用户指令）**：编排文档新增「流程分级」章节——**L1 生产流水线**（E1+start → 波次 13 单元 → deep-summary → register-summary → render-html，到 HTML 交付为止，不要求 audit/review/finalize 前置）；**L2 结构验证**（audit + correction/rework）；**L3 语义评估**（review 五维）；**L4 准出与体检**（finalize + doctor）。L2-L4 为评估验证层，发版/正式交付/benchmark/用户明确要求时按序执行。
+- **前台使用指令**：对话触发模板（"全量分析 XXX" = L1；加"评估验证/完整评估到 APPROVED"字眼触发 L2-L4）。
+
+### 🧪 测试 (Tests)
+
+- `tests/test_full_analysis_runtime.py`：5 个并发相关测试适配 2（two_concurrent_leases / W2 只租 2 / W3 错峰退化先释放并发 / W3b 误领为 CONCURRENCY_LIMIT / 并发 job-started 2 租约）；gate_v2 + runtime 全绿。
+- check.sh 全量：**746 tests OK，CHECK_RC=0**（含攻击者视角回执验证）。
+
+### 🔬 验收实证
+
+- 中国神华 run（run-ed656b245e4f7c98）全链路 APPROVED：13 单元（3 次 resume 兜底）+ audit PASS（条件命令满足率 2.3%→44/44）+ 语义评审 3 轮终审 REVIEW_PASSED（0 high/medium）+ doctor PASS（heartbeat 覆盖率 92%，零退化指纹）。
+- **结论**：v3.5.0 回执防线（68+ 签名回执、攻击者 8 红）机器验证通过；"收敛点"不成立——语义/一致性/编排层问题大量暴露并已在本版修复或调整。
+
 ## [v3.5.0] — 2026-08-04
 
 > 新增「攻击者视角」回执防线验证并挂入 check.sh（minor：新防线，向后兼容）。回应 v3.4.15 收尾时的质疑——"收敛点"是未经三方验证的乐观宣称；本版把已知攻击面以攻击者身份钉死在"被正确防线拦截"上，收敛与否仍交由用户 review 与真实 run 裁决。

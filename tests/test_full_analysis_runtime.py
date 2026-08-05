@@ -152,18 +152,18 @@ class RuntimeTests(unittest.TestCase):
             '"formal": false,\n      "accepted": true', methodology)
         self.assertIn("是否非空以 evidence_rules 为准", methodology)
 
-    def test_next_work_and_job_started_enforce_four_concurrent_leases(self):
-        # v3.3.10：依赖门禁下，完成 ashare 后 W2 四个单元就绪，
-        # 并发上限 4 允许四个租约，第五个触发 CONCURRENCY_LIMIT。
+    def test_next_work_and_job_started_enforce_two_concurrent_leases(self):
+        # v3.5.1：并发上限 2（用户指令，从 4 收紧）——完成 ashare 后 W2 就绪，
+        # 至多 2 个租约并行，第三个触发 CONCURRENCY_LIMIT。
         self.start()
         self._set_unit_done("ashare-data")
-        leases = [self.cli("next-work", "--run-root", self.run_root) for _ in range(4)]
-        fifth = self.cli("next-work", "--run-root", self.run_root)
+        leases = [self.cli("next-work", "--run-root", self.run_root) for _ in range(2)]
+        third = self.cli("next-work", "--run-root", self.run_root)
         for lease in leases:
             self.assertEqual(lease.returncode, 0)
             self.assertEqual(json.loads(lease.stdout)["status"], "LEASED")
-        self.assertEqual(json.loads(fifth.stdout)["status"], "NO_WORK")
-        self.assertEqual(json.loads(fifth.stdout)["reason"], "CONCURRENCY_LIMIT")
+        self.assertEqual(json.loads(third.stdout)["status"], "NO_WORK")
+        self.assertEqual(json.loads(third.stdout)["reason"], "CONCURRENCY_LIMIT")
         a = json.loads(leases[0].stdout)
         started = self.cli("job-started", "--run-root", self.run_root,
                            "--work-unit-id", a["work_unit_id"], "--attempt-id", a["attempt_id"],
@@ -199,8 +199,8 @@ class RuntimeTests(unittest.TestCase):
                        "investment-checklist", "investment-research"})
 
     def test_dependency_gate_fills_wave_in_parallel_up_to_concurrency(self):
-        # 完成 ashare 后，编排器循环 next-work 可在并发上限内填满整个 W2（4 个），
-        # 第 5 个因 CONCURRENCY_LIMIT 停（不是 DEPENDENCIES_PENDING）
+        # v3.5.1：完成 ashare 后，编排器循环 next-work 至多租出 2 个（并发上限 2，
+        # 用户指令从 4 收紧），第 3 个因 CONCURRENCY_LIMIT 停（不是 DEPENDENCIES_PENDING）
         self.start()
         self._set_unit_done("ashare-data")
         leased, last = [], None
@@ -211,10 +211,10 @@ class RuntimeTests(unittest.TestCase):
                 leased.append(result["skill_id"])
             else:
                 break
-        self.assertEqual(len(leased), 4)
-        self.assertEqual(set(leased),
-                         {"financial-data", "quality-screen",
-                          "investment-checklist", "investment-research"})
+        self.assertEqual(len(leased), 2)
+        self.assertLessEqual(set(leased),
+                             {"financial-data", "quality-screen",
+                              "investment-checklist", "investment-research"})
         self.assertEqual(last["status"], "NO_WORK")
         self.assertEqual(last["reason"], "CONCURRENCY_LIMIT")
 
@@ -287,7 +287,10 @@ class RuntimeTests(unittest.TestCase):
         for sid in blocked:
             unit = next(u for u in state["work_units"] if u["skill_id"] == sid)
             self.assertEqual(unit["status"], "PENDING", f"{sid} 不得在 W3a 阶段被派发")
+        # 释放并发（v3.5.1 上限 2：W3a 两单元占满后无法再领），再测
         # 白名单为空 allowlist（错误输入）退化为不过滤：可派发白名单外单元
+        for sid in leased:
+            self._set_unit_done(sid)
         result = json.loads(self.cli(
             "next-work", "--run-root", self.run_root,
             "--allowlist", "management-deep-dive").stdout)
@@ -316,19 +319,17 @@ class RuntimeTests(unittest.TestCase):
             else:
                 break
         self.assertEqual(set(w3a), {"investment-team", "earnings-review"})
-        # ① 编排器若误用 W3b allowlist（W3a 未 DONE），W3b 单元因依赖已满足而就绪——
-        #    证明屏障必须由编排纪律执行（文档「W3a 全 DONE 后领 W3b」是硬前置条件）
+        # ① 编排器若误用 W3b allowlist（W3a 未 DONE），v3.5.1 起并发上限 2 已被
+        #    W3a 两单元占满 → W3b 领不到（CONCURRENCY_LIMIT）——证明
+        #    「W3a 全 DONE 后领 W3b」仍是硬前置，且并发 2 使误领在 runtime 层即被挡
         leaked = json.loads(self.cli(
             "next-work", "--run-root", self.run_root,
             "--allowlist", "management-deep-dive,industry-research").stdout)
-        self.assertEqual(leaked["status"], "LEASED")
-        self.assertIn(leaked["skill_id"],
-                      {"management-deep-dive", "industry-research"})
-        # ② 正确顺序：W3a 全部 DONE 后，W3b allowlist 收齐剩余单元
+        self.assertEqual(leaked["status"], "NO_WORK")
+        self.assertEqual(leaked["reason"], "CONCURRENCY_LIMIT")
+        # ② 正确顺序：W3a 全部 DONE 后（释放并发），W3b allowlist 可完整收齐两单元
         for sid in w3a:
             self._set_unit_done(sid)
-        # 上面误领了一个 W3b 单元，先把它也 DONE，再验证 W3b 可完整收齐
-        self._set_unit_done(leaked["skill_id"])
         w3b = []
         for _ in range(5):
             result = json.loads(self.cli(
@@ -338,9 +339,9 @@ class RuntimeTests(unittest.TestCase):
                 w3b.append(result["skill_id"])
             else:
                 break
-        self.assertEqual(len(w3b), 1)  # 剩余 1 个 W3b 单元
-        self.assertIn(w3b[0], {"management-deep-dive", "industry-research"})
-        self.assertNotEqual(w3b[0], leaked["skill_id"])
+        self.assertEqual(len(w3b), 2)
+        self.assertEqual(set(w3b),
+                         {"management-deep-dive", "industry-research"})
 
     def test_budget_adjust_only_raises_and_logs_event(self):
         # v3.4.2 fix（MEDIUM）：budget 触顶 CHECKPOINT 的「调高预算继续」需要 CLI 闭环。
@@ -512,12 +513,12 @@ class RuntimeTests(unittest.TestCase):
 
     def test_concurrent_job_started_updates_are_serialized_without_lost_budget(self):
         self.start()
-        # v3.3.10：依赖门禁下先完成 ashare，W2 四个单元就绪供并发 job-started 租用
+        # v3.5.1：并发上限 2——完成 ashare 后 W2 就绪，2 个租约供并发 job-started 租用
         self._set_unit_done("ashare-data")
         leases = [
             json.loads(
                 self.cli("next-work", "--run-root", self.run_root).stdout)
-            for _ in range(4)
+            for _ in range(2)
         ]
         processes = []
         for index, leased in enumerate(leases):
@@ -540,10 +541,10 @@ class RuntimeTests(unittest.TestCase):
         for process, (stdout, stderr) in zip(processes, completed):
             self.assertEqual(process.returncode, 0, stdout + stderr)
         state = self.state()
-        self.assertEqual(state["budget"]["used"], 5)
+        self.assertEqual(state["budget"]["used"], 3)  # preflight 1 + 2 job-started
         self.assertEqual(
             sum(unit["status"] == "RUNNING" for unit in state["work_units"]),
-            4,
+            2,
         )
         self.assertTrue(
             (self.run_root / "evidence/locks/runtime-state.lock").is_file())

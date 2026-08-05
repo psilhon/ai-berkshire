@@ -903,7 +903,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "normal_target": budget_normal_target, "stop_dispatch_at": 30, "hard_max": 33,
             "used": 0, "preflight_count": 0, "reserved": 0,
         },
-        "concurrency": {"max": 4, "current": 0, "cooldown_until": None},
+        "concurrency": {"max": 2, "current": 0, "cooldown_until": None},
         "authorization": registry["authorization_profile"],
         "run_started_at": now_iso(),
         "dependency_graph": dep_graph,
@@ -1051,14 +1051,24 @@ def _merge_provenance(
     manifest.setdefault("command_receipts", [])
     manifest.setdefault("role_runs", [])
     manifest.setdefault("capabilities", {})
-    known_sources = {s.get("source_id") for s in manifest["sources"] if s.get("source_id")}
+    # v3.6.0 修复：sources 与 facts/calcs/judgments 一致改为 last-write-wins（同 id 覆盖）。
+    # 此前对已存在 source_id 静默跳过，返工/修正提交的 source 记录（如 url/title 指向新
+    # attempt）永远不生效，导致 run 级 manifest 残留指向旧产物的来源（thesis-tracker 第 4 轮
+    # 返工实证：正文/判断已用新口径，证据索引层却无法闭环）。
+    source_index = {
+        s.get("source_id"): i for i, s in enumerate(manifest["sources"])
+        if s.get("source_id")
+    }
     for src in bundle.get("source_records") or []:
         sid = src.get("source_id")
-        if not sid or sid in known_sources:
+        if not sid:
             continue
         src = {**src, "skill_id": owner_skill} if owner_skill else src
-        manifest["sources"].append(src)
-        known_sources.add(sid)
+        if sid in source_index:
+            manifest["sources"][source_index[sid]] = src
+        else:
+            source_index[sid] = len(manifest["sources"])
+            manifest["sources"].append(src)
 
     fact_index = {f.get("fact_id"): i for i, f in enumerate(manifest["facts"]) if f.get("fact_id")}
     for fact in bundle.get("fact_updates") or []:
