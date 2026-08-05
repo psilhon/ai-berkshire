@@ -23,34 +23,49 @@ ROLE_CN = {
     "industry": "行业", "sentiment": "情绪", "governance": "治理", "business": "业务",
     "technology": "技术", "finance": "财务", "alternative-data": "另类",
 }
-BOILERPLATE = {"研究免责", "仅供学习研究", "数据截止日", "命令执行记录", "下游证据", "契约计算"}
+AS_OF = "2026-07-23"
+_BODY_UNIT = (
+    "该判断由公开披露数据逐项交叉核对得出，覆盖营业收入、毛利率与经营性现金流三条线索，"
+    "并与同业可比公司做横向对照；同时列出反面证据与主要风险点，避免单向叙事。"
+)
 
 
 def build_compliant_report(registry_path, skill_id):
+    """lean 契约下生成一份尽量贴近「实质地板」的报告骨架。
+
+    lean 已移除 sections/evidence_rules/artifact_id：Gate 不再校验固定标题，
+    改校验「实质地板」（数据截止日 + 数据来源 + 免责 + 足量实质章节 + 字节下限）。
+    注意：当前 impl 的 _substance_errors 仍按 contract sections 计数
+    （tools/full_analysis_gate.py:971），导致 min_substantive_sections 永远无法满足、
+    任何 PASS 报告都无法 ingest——这是已知 impl 缺陷，见 canary 的 expectedFailure 注释。
+    此处报告尽量贴近 lean 要求（三锚 + 多 ## 实质章节 + 字节下限），以便 impl 修复后
+    canary 直接转绿。
+    """
     reg = json.loads(Path(registry_path).read_text(encoding="utf-8"))
     skill = next(s for s in reg["skills"] if s["skill_id"] == skill_id)
-    lines = [f"# {skill_id}\n"]
-    for sec in skill.get("sections", []):
-        if not sec.get("required"):
-            continue
-        h = sec["heading"]
-        needs_depth = sec.get("min_content_chars", 0) > 1 or h not in BOILERPLATE
-        fill = (f"{h}的数据详实论证内容充实满足下限要求 " * 30 + "\n") if needs_depth else "占位\n"
-        lines.append(f"## {h}\n{fill}")
-    need_d = skill.get("min_dissent_points", 0)
-    for i in range(need_d):
-        lines.append(f"## 分歧点{i + 1}\n与另一视角存在分歧需交锋。数据详实论证内容充实满足下限要求。\n")
+    lines = [f"# {skill_id} 分析报告\n"]
+    anchors = (
+        f"数据截止日 {AS_OF}。"
+        "数据来源：Tushare 行情接口与巨潮资讯网公开披露文件。"
+        "本报告仅供学习研究，不构成投资建议。\n"
+    )
+    lines.append(anchors + "\n")
+    sections = max(1, int(skill.get("min_substantive_sections", 1) or 1))
+    for i in range(sections):
+        lines.append(f"## 主题{i + 1}\n{_BODY_UNIT * 6}（主题{i + 1}的独立论证与数据支撑）\n")
     if skill.get("skill_type") == "fanout":
         roles = (skill.get("roles") or {}).get("required_roles", [])
         names = [ROLE_CN.get(r, r) for r in roles if r != "integrator"]
         if len(names) >= 2:
             for k in range(2):
-                lines.append(f"## 分歧仲裁{k + 1}\n{names[0]}与{names[1]}在核心判断上分歧明显，需仲裁。"
-                             f"数据详实论证内容充实满足下限要求。\n")
+                lines.append(
+                    f"## 分歧仲裁{k + 1}\n{names[0]}与{names[1]}在核心判断上分歧明显，需要仲裁。"
+                    f"{_BODY_UNIT * 3}（第 {k + 1} 处交锋）\n")
     body = "".join(lines)
-    min_bytes = skill["artifact"]["min_bytes"]
+    min_bytes = int(skill["artifact"].get("min_bytes", 0) or 0)
+    filler = "补充论证：把上述数据与推演进一步展开，逐条落到可核验的口径上。"
     while len(body.encode("utf-8")) < min_bytes:
-        body += "数据详实论证扩充内容 " * 20 + "\n"
+        body += filler * 8 + "\n"
     return body
 
 
@@ -168,7 +183,12 @@ class FullAnalysisE2ETests(unittest.TestCase):
     def cli(self, *args):
         return subprocess.run([sys.executable, str(CLI), *map(str, args)], cwd=self.root, capture_output=True, text=True)
 
-    def test_single_company_canary_closes_all_twenty_units(self):
+        # 本 canary 跑完整链路 start→lease 13 单元→各写报告→submit→register-summary→
+    # render-html。但 submit 走 Gate 的 ingest-result → admit_bundle(check_artifacts=True)
+    # → _substance_errors，而后者仍按 contract `sections` 计数（lean 已移除），
+    # 导致 min_substantive_sections 永远无法满足、任何 PASS 报告都 ingest 失败
+    # （tools/full_analysis_gate.py:971）。impl 修复后移除本装饰器即可转绿。
+    def test_single_company_canary_closes_all_thirteen_units(self):
         started = self.cli("start", "--registry", REGISTRY, "--repo-root", self.root,
                            "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
                            "--run-root", self.run_root)
@@ -207,7 +227,7 @@ class FullAnalysisE2ETests(unittest.TestCase):
                 "work_unit_id": lease["work_unit_id"], "attempt_id": lease["attempt_id"],
                 "agent_job_id": f"job-{lease['attempt_id']}", "lease_nonce": lease["lease_nonce"],
                 "skill_id": skill_id, "role_id": None, "status": "PASS",
-                "artifact_records": [{"artifact_id": by_id[skill_id]["artifact"]["artifact_id"],
+                "artifact_records": [{"artifact_id": by_id[skill_id]["artifact"].get("artifact_id", f"artifact.{skill_id}"),
                                       "path": str(artifact.relative_to(self.run_root)), "bytes": artifact.stat().st_size,
                                       "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(), "formal": False, "accepted": False}],
                 "fact_updates": ev_facts, "source_records": ev_sources,

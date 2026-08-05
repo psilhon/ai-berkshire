@@ -326,67 +326,6 @@ def _active_units(state: dict) -> list[dict]:
     return [unit for unit in state["work_units"] if unit.get("status") in {"LEASED", "RUNNING"}]
 
 
-def _sweep_expired_leases(state: dict, run_root: Path) -> int:
-    """清理过期租约（LEASED）和卡住 job（RUNNING 过期无心跳）。
-
-    处理三种来源的僵死状态：
-    1. job-started 工具断连 → unit 卡在 LEASED
-    2. Agent 启动后心跳中断（崩溃/无限循环/网络断开）→ unit 卡在 RUNNING
-    3. Agent 正常完成但 submit-result 通知丢失 → orphan result 在磁盘上
-
-    每种状态先检查孤儿产物（Agent 静默完成），再决定 PENDING/RETRY_WAIT/DONE。
-    """
-    current = now()
-    swept = 0
-    for unit in state["work_units"]:
-        if unit["status"] not in {"LEASED", "RUNNING"}:
-            continue
-        lease = unit.get("lease") or {}
-        expires = parse_time(lease.get("expires_at"))
-        if not expires or expires > current:
-            continue
-        attempt_id = lease.get("attempt_id")
-        if attempt_id:
-            # 通用孤儿产物恢复：Agent 已完成但 submit-result 通知丢失
-            result_path = Path(run_root) / "evidence/attempts" / unit["skill_id"] / attempt_id / "result.json"
-            if result_path.is_file():
-                try:
-                    old_status = unit["status"]
-                    _accept_result(
-                        run_root, DEFAULT_REGISTRY, result_path,
-                        state=state, allow_expired=True, event_kind="orphan_result_recovered",
-                    )
-                    swept += 1
-                    event(run_root, "orphan_result_validated", work_unit_id=unit["work_unit_id"],
-                          attempt_id=attempt_id, from_status=old_status)
-                    continue
-                except (RuntimeErrorState, OSError, json.JSONDecodeError) as exc:
-                    event(run_root, "orphan_result_rejected", work_unit_id=unit["work_unit_id"],
-                          attempt_id=attempt_id, reason=str(exc))
-            unit.setdefault("abandoned_attempts", []).append(attempt_id)
-        # P2: RUNNING 过期无产物 → Agent 心跳丢失（崩溃/超时），记录失败
-        if unit["status"] == "RUNNING":
-            reason = "heartbeat_lost" if unit["lease"].get("started_at") else "job_timeout"
-            if unit["attempts"] >= unit["max_attempts"]:
-                unit["status"] = "FAILED"
-                event(run_root, "job_failed", work_unit_id=unit["work_unit_id"],
-                      attempt_id=attempt_id, reason=reason, max_attempts_reached=True)
-            else:
-                unit["status"] = "RETRY_WAIT"
-                delay = BACKOFF_SECONDS[min(unit["attempts"] - 1, 1)]
-                unit["next_retry_at"] = iso(current + timedelta(seconds=delay))
-                event(run_root, "job_timed_out", work_unit_id=unit["work_unit_id"],
-                      attempt_id=attempt_id, reason=reason, next_retry_at=unit["next_retry_at"])
-        else:  # LEASED
-            unit["status"] = "PENDING"
-        unit["lease"] = None
-        swept += 1
-    if swept:
-        save_state(run_root, state)
-        event(run_root, "expired_or_stuck_swept", swept=swept)
-    return swept
-
-
 def _load_registry() -> dict:
     try:
         return json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
@@ -495,12 +434,9 @@ def _lease_ttl_for_skill(skill: dict | None) -> int:
     非扇出单元默认 NON_FANOUT_LEASE_MINUTES（40）；扇出单元（roles.mode=
     independent_then_integrator）需在单个租约内串行跑完多个角色子 Agent + 整合，
     实际时长远超 40 分钟。TTL 按角色数倍增（integrator 是整合者不计独立角色），
-    避免被 _sweep_expired_leases 误判 heartbeat_lost 回收后触发 resume/requeue
-    （沪电 run 三个扇出单元 team/earnings/news 均因此过期）。
+    避免租约过早到期后被编排器显式 mark_failed 回收重派（沪电 run 三个扇出单元
+    team/earnings/news 均因此过期）。
     返回的 TTL 同时写入 lease，heartbeat 据此续期，保持派发/续期口径一致。
-
-    宏景 run 实证：非扇出重单元（management-deep-dive ~35min、industry-research ~25min）
-    在旧 TTL=20 下频繁被 sweep abandoned 重跑；提高到 40 分钟消除误回收。
     """
     roles = (skill or {}).get("roles") or {}
     if roles.get("mode") == "independent_then_integrator":
@@ -516,7 +452,7 @@ def next_work(run_root: Path, *, methodology_mode: str = "full",
     allowlist：可选 skill_id 白名单。非空时只从白名单内的单元中挑选候选，
     用于编排器实现 W3 错峰（先只领 investment-team+earnings-review，
     完成后再领 management-deep-dive+industry-research），避免轻单元在重
-    单元研究期间租约过期被 sweep 误回收（宏景/沪电 run 实证）。
+    单元研究期间被编排器显式 mark_failed 回收重派（宏景/沪电 run 实证）。
     白名单内无就绪单元时按正常逻辑返回 NO_WORK。
     """
     with runtime_lock(run_root):
@@ -533,8 +469,8 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
     cooldown = parse_time(state["concurrency"].get("cooldown_until"))
     if cooldown and cooldown > now():
         return {"status": "NO_WORK", "reason": "RATE_LIMIT_COOLDOWN", "cooldown_until": iso(cooldown)}
-    # P1+P2: 清理过期租约和卡住的 RUNNING job（心跳丢失/工具断连）
-    _sweep_expired_leases(state, run_root)
+    # lean 模式（v3.7）：不再自动回收过期租约（v3.6.2 的 watchdog 跨回合失效且无收效）。
+    # 失败/卡死由编排器显式 mark_failed 判定并声明，避免静默卡死无人发现。
     active = _active_units(state)
     if len(active) >= state["concurrency"]["max"]:
         return {"status": "NO_WORK", "reason": "CONCURRENCY_LIMIT"}
@@ -575,7 +511,7 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full",
     unit = candidates[0]
     # 注入 skill 方法论与扇出要求，避免执行 Agent 退化为单遍写大纲（根因修复）。
     # 提前加载 skill 同时供租约 TTL 计算：fanout 单元多角色串行执行易超默认租约，
-    # 被 _sweep_expired_leases 误判 heartbeat_lost 回收（沪电 run 三个扇出单元均踩坑）。
+    # 需足够大的 TTL 避免在研究期间被编排器显式 mark_failed 回收（沪电 run 三个扇出单元均踩坑）。
     registry = _load_registry()
     skill = next(
         (s for s in registry.get("skills", [])
@@ -922,6 +858,35 @@ def _resume_locked(
         "abandoned": abandoned,
         "recovered": recovered,
     }
+
+
+# ---------------------------------------------------------------- 失败声明（lean 核心）
+def mark_failed(run_root: Path, skill_id: str, reason: str, *, retry: bool = False) -> dict:
+    """声明一个单元失败（lean 模式核心：允许失败，必须显式声明）。
+
+    - retry=False：将该单元置 FAILED 并记录 reason；依赖它的下游保持阻塞，
+      由编排器在终稿中声明缺口。
+    - retry=True：重新置 PENDING（attempts+1），供编排器重新派发。
+    不自动回收租约——失败由编排器显式判定并声明，避免静默卡死无人发现。
+    """
+    with runtime_lock(run_root):
+        state = load_state(run_root)
+        unit = next((u for u in state["work_units"] if u["skill_id"] == skill_id), None)
+        if unit is None:
+            raise RuntimeErrorState(f"未知 skill_id: {skill_id}")
+        if retry:
+            unit["status"] = "PENDING"
+            unit["attempts"] = unit.get("attempts", 0) + 1
+            unit["lease"] = None
+            event(run_root, "unit_retried", skill_id=skill_id, attempts=unit["attempts"])
+            save_state(run_root, state)
+            return {"status": "RETRIED", "skill_id": skill_id}
+        unit["status"] = "FAILED"
+        unit["failure"] = {"reason": reason, "declared_at": iso(now())}
+        unit["lease"] = None
+        event(run_root, "unit_failed", skill_id=skill_id, reason=reason)
+        save_state(run_root, state)
+        return {"status": "FAILED", "skill_id": skill_id, "reason": reason}
 
 
 # ---------------------------------------------------------------- usage 计量

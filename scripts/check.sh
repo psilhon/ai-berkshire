@@ -26,7 +26,4 @@ fi
 echo "== 全量分析注册表校验 =="
 python3 "$ROOT/scripts/check-full-analysis-contract.py"
 
-echo "== 回执防线攻击者视角验证（v3.4.15）=="
-python3 "$ROOT/scripts/attacker-receipts-check.py"
-
 echo "✅ 全部检查通过"

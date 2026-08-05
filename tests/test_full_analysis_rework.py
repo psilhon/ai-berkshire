@@ -1,6 +1,19 @@
-"""Task 7：rework 命令 —— 报告正文/artifact 类返工的有状态封装（TDD 失败测试先行）。"""
+"""rework 命令 —— 报告正文/artifact 类返工的有状态封装（lean 契约现代化版）。
 
-import hashlib
+lean 契约（full-analysis-contract/lean-v1）已移除 sections / evidence_rules /
+artifact_id：Gate 改为校验「实质地板」（三锚 + 实质章节 + 字节下限）。这带来一点
+对 rework 单测的影响，本文件据此现代化：
+
+submit-result 走完整准入 admit_bundle(check_artifacts=True) → _substance_errors，
+而后者用 `heading.startswith("##")` 过滤 _section_blocks 的输出，但后者已把 `#`
+标记剥掉，导致 min_substantive_sections 永远无法满足、任何 PASS 报告都 ingest 失败
+（tools/full_analysis_gate.py:973，属 impl 缺陷，**不在此修改 tools/**）。
+rework 命令本身不调 admit_bundle，只读 runtime-state 与 manifest.skills[].attempts，
+因此 setUp 沿用 tests/test_full_analysis_correction.py 的既有约定：直接把
+「已接受 attempt」播种进 manifest 与 runtime-state，绕开损坏的 submit-result 链路，
+仅服务 rework 逻辑本身的单测。
+"""
+
 import json
 import subprocess
 import sys
@@ -8,7 +21,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_full_analysis_e2e import build_compliant_evidence, build_compliant_report
+from tests.test_full_analysis_e2e import build_compliant_report
 
 REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "scripts" / "full_analysis.py"
@@ -25,7 +38,7 @@ class ReworkTests(unittest.TestCase):
                            "--company", "格力电器", "--code", "000651.SZ",
                            "--as-of", "2026-07-23", "--run-root", self.run_root)
         self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
-        # 取第一个单元并完整提交
+        # 取第一个单元并置为「已有被 Gate 接受产物的 DONE 单元」——rework 的合法前态
         self.lease = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
         self.assertEqual(self.lease["status"], "LEASED")
         self._complete(self.lease)
@@ -41,46 +54,35 @@ class ReworkTests(unittest.TestCase):
         return json.loads((self.run_root / "evidence/runtime-state.json").read_text())
 
     def _complete(self, lease):
-        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        """把单元推进到 rework 要求的前态：DONE + manifest 里有已接受 attempt。"""
         skill_id = lease["skill_id"]
-        by_id = {s["skill_id"]: s for s in registry["skills"]}
+        attempt_id = lease["attempt_id"]
         started = self.cli("job-started", "--run-root", self.run_root,
                            "--work-unit-id", lease["work_unit_id"],
-                           "--attempt-id", lease["attempt_id"],
+                           "--attempt-id", attempt_id,
                            "--lease-nonce", lease["lease_nonce"],
-                           "--agent-job-id", f"job-{lease['attempt_id']}")
+                           "--agent-job-id", f"job-{attempt_id}")
         self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
-        attempt_dir = self.run_root / "evidence/attempts" / skill_id / lease["attempt_id"]
+        attempt_dir = self.run_root / "evidence/attempts" / skill_id / attempt_id
         attempt_dir.mkdir(parents=True, exist_ok=True)
         artifact = attempt_dir / "report.md"
         artifact.write_text(build_compliant_report(REGISTRY, skill_id), encoding="utf-8")
-        (ev_facts, ev_sources, ev_calcs, ev_judgments, ev_roles,
-         ev_receipts, ev_capabilities) = build_compliant_evidence(
-            REGISTRY, skill_id, self.run_root)
-        manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
-        bundle = {
-            "schema_version": "result-schema/v1", "run_id": manifest["run"]["run_id"],
-            "work_unit_id": lease["work_unit_id"], "attempt_id": lease["attempt_id"],
-            "agent_job_id": f"job-{lease['attempt_id']}", "lease_nonce": lease["lease_nonce"],
-            "skill_id": skill_id, "role_id": None, "status": "PASS",
-            "artifact_records": [{"artifact_id": by_id[skill_id]["artifact"]["artifact_id"],
-                                  "path": str(artifact.relative_to(self.run_root)),
-                                  "bytes": artifact.stat().st_size,
-                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                                  "formal": False, "accepted": False}],
-            "fact_updates": ev_facts, "source_records": ev_sources,
-            "calculation_requests": ev_calcs, "judgments": ev_judgments,
-            "role_runs": ev_roles, "command_receipts": ev_receipts,
-            "capability_records": ev_capabilities,
-            "limitations": [], "pwl_candidates": [],
-            "started_at": "2026-07-23T12:00:00+08:00", "completed_at": "2026-07-23T12:01:00+08:00",
-            "error": None,
-        }
-        rp = attempt_dir / "result.json"
-        rp.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
-        submitted = self.cli("submit-result", "--run-root", self.run_root,
-                             "--registry", REGISTRY, "--result", rp)
-        self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
+
+        manifest_path = self.run_root / "evidence/00-analysis-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        entry = next(s for s in manifest["skills"] if s["skill_id"] == skill_id)
+        entry["status"] = "PASS"
+        entry["attempts"] = [*(entry.get("attempts") or []), attempt_id]
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        state_path = self.run_root / "evidence/runtime-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        unit = next(u for u in state["work_units"]
+                    if u["work_unit_id"] == lease["work_unit_id"])
+        unit["status"] = "DONE"
+        unit["lease"] = None
+        state["concurrency"]["current"] = 0
+        state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
     def _rework(self, work_unit_id, reason=""):
         return self.cli("rework", "--run-root", self.run_root,

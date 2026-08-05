@@ -195,124 +195,16 @@ def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
     def vals(kind):
         return next((r.get("values", []) for r in rules if r.get("kind") == kind), [])
 
-    # ---- 来源：提供真实来源时只用真实来源；否则给带水印的结构地板（Gate 会拒收）----
-    if extra_sources:
-        sources = [dict(s) for s in extra_sources]
-    else:
-        sources = [{
-            "source_id": f"src-{sid}-primary",
-            "url": f"https://example.invalid/{sid}/placeholder-primary",
-            "retrieved_at": now_iso()[:10],
-            "source_type": "other",
-            "publisher": f"PLACEHOLDER 占位一手来源（{sid}，未核实）",
-            "title": f"{sid} 结构地板占位来源——非真实检索，必须用真实来源替换",
-        }]
-        min_dual = n("min_dual_source_facts")
-        if min_dual > 0:
-            sources.append({
-                "source_id": f"src-{sid}-secondary",
-                "url": f"https://example.invalid/{sid}/placeholder-secondary",
-                "retrieved_at": now_iso()[:10],
-                "source_type": "other",
-                "publisher": f"PLACEHOLDER 占位二次来源（{sid}，未核实）",
-                "title": f"{sid} 结构地板占位交叉来源——非真实检索，必须用真实来源替换",
-            })
-
-    # ---- 事实：提供真实事实时只用真实事实；否则给带水印的结构地板（Gate 会拒收）----
-    # 关键修复（v3.4.12）：真实证据与占位地板不再按 id 合并共存——一旦提供真实证据，
-    # 必须零占位残留。此前占位始终生成并与真实证据并列，导致「提供 3 条真实事实仍残留
-    # 3 条占位事实 + 1 条占位来源」，Gate 占位预检直接拒收整包。
-    if extra_facts:
-        facts = [dict(f) for f in extra_facts]
-    else:
-        min_facts = n("min_facts")
-        req_fields = list(dict.fromkeys(vals("required_fact_fields")))
-        min_dual = n("min_dual_source_facts")
-        fields = list(req_fields)
-        while len(fields) < max(min_facts, 1):
-            fields.append(f"{sid}_fact_{len(fields) + 1}")
-        facts = []
-        for i, field in enumerate(fields):
-            srcs = [f"src-{sid}-primary"]
-            if i < min_dual:
-                srcs.append(f"src-{sid}-secondary")
-            facts.append({
-                "fact_id": f"fact-{sid}-{field}",
-                "field": field,
-                # v3.4.10：占位值必须自报身份（PLACEHOLDER 前缀），禁止伪装成真实数值——
-                # 此前 value={sid}::{field} 配 confidence=high 会被误读为已核实事实。
-                "value": f"PLACEHOLDER::{sid}::{field}",
-                "source_ids": srcs,
-                "confidence": "low",
-            })
-
-    # ---- 计算：真实优先；地板 calculation_id 带水印（operation 仍须是 financial_rigor
-    # 真子命令 `calc`，否则 audit 重放 returncode=2 → calculation_not_replayed）----
-    if extra_calcs:
-        calcs = [dict(c) for c in extra_calcs]
-    else:
-        min_calcs = n("min_calculations")
-        calcs = [{
-            "calculation_id": f"calculation-{sid}-{PLACEHOLDER}-{j + 1}",
-            "operation": "calc",
-            "args": {"expr": f"{j + 1}+1"},
-        } for j in range(min_calcs)]
-
-    # ---- 判断：真实优先；地板 conclusion 自报占位，禁止伪装成已完成的分析结论 ----
-    if extra_judgments:
-        judgments = [dict(j) for j in extra_judgments]
-    else:
-        judgment_rules = list(vals("required_judgment_rule_ids"))
-        min_judg = n("min_judgments_with_falsification")
-        while len(judgment_rules) < min_judg:
-            judgment_rules.append(f"{sid}_falsification_{len(judgment_rules) + 1}")
-        base_fact = facts[0]["fact_id"] if facts else f"fact-{sid}-stub"
-        judgments = [{
-            "judgment_id": f"judgment-{sid}-{PLACEHOLDER}-{i + 1}",
-            "rule_id": rid,
-            "conclusion": f"{PLACEHOLDER}::未作出真实判断——{sid} / {rid} 的结构地板占位",
-            "falsification": [f"{PLACEHOLDER}::未给出真实反证条件，必须由 Agent 替换"],
-            "fact_ids": [base_fact],
-        } for i, rid in enumerate(judgment_rules)]
-
-    min_roles = n("min_role_runs")
-    required_roles = (skill.get("roles") or {}).get("required_roles", [])
-    role_ids = [r for r in required_roles if r != "integrator"]
-    while len(role_ids) < min_roles:
-        role_ids.append(f"role-{len(role_ids) + 1}")
-    role_runs = [{"role_id": rid, "status": "PASS"} for rid in role_ids[:max(min_roles, 0)]]
-
-    conditional = next((r for r in rules
-                        if r.get("kind") == "conditional_command_operations"), None)
-
-    # ---- 回执：真实优先。地板**绝不伪造 PASS**——status=UNAVAILABLE + 水印 reason。
-    # 这是 v3.4.13 P0 的核心：此前地板为 ashare-data 一口气签发 51 条 status=PASS
-    # 的"命令已成功执行"回执，而实际一条命令都没跑，Gate 却接受为 DONE。----
-    if extra_receipts:
-        receipts = [dict(r) for r in extra_receipts]
-    else:
-        required_ops = list(vals("required_command_operations"))
-        operations = list(required_ops)
-        if conditional:
-            operations.extend(item["op"] for item in conditional.get("values", []))
-        min_receipts = n("min_command_receipts")
-        while len(operations) < min_receipts:
-            operations.append(f"receipt-op-{len(operations) + 1}")
-        operations = list(dict.fromkeys(operations))
-        receipts = [{
-            "receipt_id": f"rcpt-{sid}-{PLACEHOLDER}-{i + 1}",
-            "operation": op,
-            "status": "UNAVAILABLE",
-            "reason": f"{PLACEHOLDER}::命令未实际执行，生成器结构地板不得充当成功回执",
-        } for i, op in enumerate(operations)]
-
-    # ---- 能力：真实优先；地板一律 available=false（未验证即不可用，不得默认自称可用）。
-    # schema 禁止额外字段，故此处以 false 本身承担"未验证"语义。----
-    if extra_capabilities:
-        capabilities = [dict(c) for c in extra_capabilities]
-    else:
-        capabilities = ([{"capability": conditional["capability"], "available": False}]
-                        if conditional else [])
+    # ---- lean 模式（v3.7）：证据账本只承载 Agent 真实提供的部分；未提供则留空，
+    # **绝不合成 PLACEHOLDER 占位**。报告才是唯一交付物，契约已移除 evidence_rules，
+    # Gate 不再强制账本形状，故空账本合法。失败单元由调用方在 status/error 中声明。----
+    sources = [dict(s) for s in extra_sources] if extra_sources else []
+    facts = [dict(f) for f in extra_facts] if extra_facts else []
+    calcs = [dict(c) for c in extra_calcs] if extra_calcs else []
+    judgments = [dict(j) for j in extra_judgments] if extra_judgments else []
+    role_runs = []
+    receipts = [dict(r) for r in extra_receipts] if extra_receipts else []
+    capabilities = [dict(c) for c in extra_capabilities] if extra_capabilities else []
 
     return facts, sources, calcs, judgments, role_runs, receipts, capabilities
 
@@ -599,7 +491,7 @@ def main() -> int:
     # NA 走负向验收产物 id（Gate: expected_na = f"artifact.na.{skill_id}"）；
     # 沿用正常 artifact_id 会被 Gate 以「负向验收 artifact_id 不匹配」直接拒收。
     art_id = (f"artifact.na.{args.skill_id}" if is_na
-              else skill["artifact"]["artifact_id"])
+              else skill["artifact"].get("artifact_id", f"artifact.{args.skill_id}"))
     artifact_records = [{
         "artifact_id": art_id,
         "path": rel,

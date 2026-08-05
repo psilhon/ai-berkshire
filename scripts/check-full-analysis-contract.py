@@ -179,7 +179,7 @@ def _validate_evidence(errors: list[str], label: str, rules: object,
             _err(errors, f"{label} 注册 operation 不存在于 ashare CLI: {missing}")
 
 
-def validate(registry_path: Path, repo_root: Path) -> list[str]:
+def validate_v2(registry_path: Path, repo_root: Path) -> list[str]:
     errors: list[str] = []
     try:
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -395,19 +395,172 @@ def validate(registry_path: Path, repo_root: Path) -> list[str]:
     return errors
 
 
+LEAN_FORBIDDEN_SKILL_KEYS = {"sections", "evidence_rules", "artifact_id", "predicates",
+                                "audit_policy", "dual_source", "negative_acceptance_dir"}
+LEAN_FORBIDDEN_TOP_LEVEL_KEYS = {"result_schema_version", "predicates",
+                                 "pwl_allowlist", "pwl_forbidden",
+                                 "generic_required_sections", "negative_acceptance_dir"}
+
+
+def validate_lean(registry: dict, repo_root: Path) -> list[str]:
+    """lean-v1 契约校验：仅保留报告路径、实质下限、扇出与依赖图；不校验已移除的
+    sections/evidence_rules/artifact_id 等 v2 专有字段。"""
+    errors: list[str] = []
+    if registry.get("schema_version") != "full-analysis-contract/lean-v1":
+        _err(errors, f"顶层 schema_version 必须为 full-analysis-contract/lean-v1, 实际 {registry.get('schema_version')!r}")
+    if registry.get("manifest_schema_version") != "full-analysis-manifest/lean-v1":
+        _err(errors, "manifest_schema_version 必须为 full-analysis-manifest/lean-v1")
+    for key in LEAN_FORBIDDEN_TOP_LEVEL_KEYS:
+        if key in registry:
+            _err(errors, f"lean-v1 禁止顶层键 {key!r}")
+    if registry.get("authorization_profile") != EXPECTED_AUTHORIZATION:
+        _err(errors, "authorization_profile 必须与 full-analysis-internal/v1 封闭授权边界完全一致")
+    stage_dirs = registry.get("stage_dirs")
+    if not isinstance(stage_dirs, dict) or not stage_dirs:
+        _err(errors, "stage_dirs 必须为非空对象")
+        stage_dirs = {}
+    stage_roots = set(stage_dirs.values())
+    skills = registry.get("skills")
+    if not isinstance(skills, list):
+        return errors + ["顶层 skills 必须为数组"]
+    if len(skills) != 13:
+        _err(errors, f"skills 必须恰好 13 项, 实际 {len(skills)} 项")
+    ids = [s.get("skill_id") for s in skills if isinstance(s, dict)]
+    if set(ids) != EXPECTED_SKILLS or len(ids) != len(set(ids)):
+        _err(errors, "skill_id 必须与 13 项白名单完全一致且无重复")
+    known = set(ids)
+    paths: dict[str, str] = {}
+    for item in skills:
+        if not isinstance(item, dict):
+            _err(errors, f"skill 条目必须为对象: {item!r}"); continue
+        sid = item.get("skill_id"); label = f"[{sid}:lean]"
+        for fk in LEAN_FORBIDDEN_SKILL_KEYS:
+            if fk in item:
+                _err(errors, f"{label} 禁止 v2-only 字段 {fk!r}")
+            elif fk in (item.get("artifact") or {}):
+                _err(errors, f"{label} artifact 禁止 v2-only 字段 {fk!r}")
+        stage = item.get("stage_dir")
+        if stage not in stage_dirs:
+            _err(errors, f"{label} stage_dir 不在 stage_dirs: {stage!r}")
+        spec = item.get("spec_source")
+        if not isinstance(spec, str) or not (repo_root / spec).is_file():
+            _err(errors, f"{label} spec_source 不存在: {spec!r}")
+        artifact = item.get("artifact")
+        if not isinstance(artifact, dict):
+            _err(errors, f"{label} artifact 必须为对象"); artifact = {}
+        path = artifact.get("formal_path")
+        if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+            _err(errors, f"{label} formal_path 非法: {path!r}")
+        elif stage in stage_dirs and not path.startswith(stage_dirs[stage] + "/"):
+            _err(errors, f"{label} formal_path 不在阶段目录下: {path!r}")
+        elif path in paths:
+            _err(errors, f"{label} formal_path 与 {paths[path]} 冲突")
+        else:
+            paths[path] = label
+        if "artifact_id" in artifact:
+            _err(errors, f"{label} artifact 不得含 artifact_id（lean 由 skill_id 推导）")
+        minb = artifact.get("min_bytes")
+        if not isinstance(minb, int) or isinstance(minb, bool) or minb <= 0:
+            _err(errors, f"{label} min_bytes 必须为正整数")
+        mins = item.get("min_substantive_sections")
+        if not isinstance(mins, int) or isinstance(mins, bool) or mins < 1:
+            _err(errors, f"{label} min_substantive_sections 必须为 >=1 的整数")
+        rg = item.get("report_guidance")
+        if not isinstance(rg, str) or not rg.strip():
+            _err(errors, f"{label} report_guidance 必须为非空字符串")
+        sub = item.get("substance")
+        if not isinstance(sub, dict):
+            _err(errors, f"{label} substance 必须为对象")
+        else:
+            for key in ("require_as_of", "require_sources", "require_disclaimer"):
+                if not isinstance(sub.get(key), bool):
+                    _err(errors, f"{label} substance.{key} 必须为 bool")
+        app = item.get("applicability")
+        if not isinstance(app, dict) or not isinstance(app.get("predicate"), str) or not app["predicate"]:
+            _err(errors, f"{label} applicability.predicate 必须为非空字符串")
+        elif app.get("alternative") is not None and not isinstance(app["alternative"], str):
+            _err(errors, f"{label} applicability.alternative 必须为 null 或字符串")
+        roles = item.get("roles")
+        if not isinstance(roles, dict) or not isinstance(roles.get("required_roles"), list):
+            _err(errors, f"{label} roles.required_roles 必须为数组")
+        elif roles.get("mode") not in {"single_agent", "independent_then_integrator"}:
+            _err(errors, f"{label} roles.mode 非法")
+
+    # depends_on 依赖图校验（自包含，与 runtime.build_dependency_graph 语义一致）
+    graph: dict[str, list[str]] = {}
+    for item in skills:
+        sid = item.get("skill_id")
+        if not isinstance(sid, str):
+            continue
+        if sid == "ashare-data":
+            deps = []
+        else:
+            deps = item.get("depends_on")
+            if deps is None:
+                deps = ["ashare-data"]
+            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+                _err(errors, f"[{sid}:lean] depends_on 必须为字符串数组")
+                deps = []
+        unknown = [d for d in deps if d not in known]
+        if unknown:
+            _err(errors, f"[{sid}:lean] depends_on 引用未注册 skill: {unknown}")
+        if sid in deps:
+            _err(errors, f"[{sid}:lean] depends_on 不得自引用")
+        graph[sid] = [d for d in deps if d in known and d != sid]
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in graph}
+
+    def _has_cycle(node: str, stack: list) -> list | None:
+        color[node] = GRAY
+        stack.append(node)
+        for dep in graph.get(node, []):
+            if dep not in color:
+                continue
+            if color[dep] == GRAY:
+                return stack[stack.index(dep):] + [dep]
+            if color[dep] == WHITE:
+                found = _has_cycle(dep, stack)
+                if found:
+                    return found
+        stack.pop()
+        color[node] = BLACK
+        return None
+
+    for node in graph:
+        if color[node] == WHITE:
+            cycle = _has_cycle(node, [])
+            if cycle:
+                _err(errors, f"depends_on 存在依赖环: {' -> '.join(cycle)}")
+                break
+    return errors
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    parser = argparse.ArgumentParser(description="全量公司分析 Contract v2 校验器")
+    parser = argparse.ArgumentParser(description="全量公司分析 Contract 校验器（v2 / lean-v1 自动识别）")
     parser.add_argument("--registry", type=Path, default=root / "tools" / "full_analysis_contract.json")
     parser.add_argument("--repo-root", type=Path, default=root)
     args = parser.parse_args()
-    errors = validate(args.registry, args.repo_root)
+    try:
+        registry = json.loads(args.registry.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"❌ 注册表不可读或非法 JSON: {exc}")
+        raise SystemExit(1)
+    sv = registry.get("schema_version")
+    if sv == "full-analysis-contract/v2":
+        errors = validate_v2(args.registry, args.repo_root)
+    elif sv == "full-analysis-contract/lean-v1":
+        errors = validate_lean(registry, args.repo_root)
+    else:
+        print(f"❌ 不支持的 schema_version: {sv!r}（仅支持 v2 / lean-v1）")
+        raise SystemExit(1)
     if errors:
         print(f"❌ 注册表校验失败, 共 {len(errors)} 项:")
         for error in errors:
             print(f"  - {error}")
         raise SystemExit(1)
-    print("✅ 注册表校验通过: Contract v2 的 13 项契约结构合法")
+    print(f"✅ 注册表校验通过: {sv} 契约结构合法")
 
 
 if __name__ == "__main__":

@@ -261,8 +261,9 @@ def load_json(path: Path, label: str) -> dict:
 
 def load_registry(path: Path) -> dict:
     registry = load_json(path, "注册表")
-    if registry.get("schema_version") != "full-analysis-contract/v2":
-        raise GateError("只接受 full-analysis-contract/v2 注册表", 2)
+    sv = registry.get("schema_version")
+    if sv not in ("full-analysis-contract/v2", "full-analysis-contract/lean-v1"):
+        raise GateError(f"不支持的注册表 schema_version: {sv}", 2)
     if len(registry.get("skills", [])) != 13:
         raise GateError("注册表必须恰好包含 13 个 skill", 2)
     return registry
@@ -500,7 +501,7 @@ def admit_bundle(bundle: dict, run_root: Path, registry: dict, *,
     if not isinstance(bundle.get("artifact_records"), list):
         errs.append("artifact_records 必须为数组")
     else:
-        expected = skill["artifact"]["artifact_id"]
+        expected = skill["artifact"].get("artifact_id", f"artifact.{skill['skill_id']}")
         if status in {"PASS", "PASS_WITH_LIMITATIONS"}:
             if len(bundle["artifact_records"]) != 1:
                 errs.append(f"{skill['skill_id']} 必须恰好提交 1 个正式 artifact")
@@ -873,7 +874,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     manifest = {
         "manifest_schema_version": "full-analysis-manifest/v2",
         "contract": {"schema_version": registry["schema_version"],
-                      "result_schema_version": registry["result_schema_version"],
+                      "result_schema_version": registry.get("result_schema_version", "result-schema/v1"),
                       "registry_sha256": sha256_file(Path(args.registry)),
                       "skill_count": len(registry["skills"])},
         "run": {"run_id": run_id, "status": "RUNNING", "created_at": now_iso(), "updated_at": now_iso(),
@@ -965,23 +966,27 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
     for heading, body in blocks:
         bodies_by_heading.setdefault(heading, []).append(body)
 
-    # 1. 必需章节与章节最小内容
+    # 1. 实质章节计数（lean：不再依赖契约 sections，直接统计报告自身的 ## 小节，
+    #    与 v2「契约固定标题规则」解耦——lean 契约已移除固定标题，改为检查报告自身深度）。
+    #    _section_blocks 会把 # 标记剥掉、无法判断层级，故此处直接按 ^#{2,6} 重扫原文。
     substantive_bodies = set()
-    for section in skill.get("sections", []):
-        if not section.get("required"):
-            continue
-        heading = section.get("heading", "")
-        bodies = bodies_by_heading.get(heading, [])
-        if not bodies:
-            errors.append(f"缺必需章节: {heading}")
-            continue
-        normalized = re.sub(r"\s+", "", "\n".join(bodies))
-        minimum = section.get("min_content_chars", 0)
-        if len(normalized) < minimum:
-            errors.append(f"章节 {heading} 正文 {len(normalized)} < 下限 {minimum}")
-            continue
-        if section.get("section_id") not in NON_SUBSTANTIVE_SECTION_IDS and len(normalized) >= max(SUBSTANTIVE_MIN_CHARS, minimum):
-            substantive_bodies.add(normalized)
+    rlines = text.splitlines()
+    k = 0
+    klen = len(rlines)
+    while k < klen:
+        hm = re.match(r"^(#{2,6})\s+(.+)$", rlines[k])
+        if hm:
+            body_pieces = []
+            j = k + 1
+            while j < klen and not re.match(r"^#{1,6}\s", rlines[j]):
+                body_pieces.append(rlines[j])
+                j += 1
+            normalized = re.sub(r"\s+", "", "\n".join(body_pieces))
+            if len(normalized) >= SUBSTANTIVE_MIN_CHARS:
+                substantive_bodies.add(normalized)
+            k = j
+        else:
+            k += 1
     required_substantive = skill.get("min_substantive_sections", 0)
     if required_substantive and len(substantive_bodies) < required_substantive:
         errors.append(
@@ -1025,6 +1030,15 @@ def _substance_errors(skill: dict, text: str) -> list[str]:
                 errors.append(
                     f"章节「{m_h2.group(1).strip()}」后紧跟 ### 子标题，"
                     "缺少正文段落（需在 ## 与 ### 之间插入 ≥150 字正文）")
+    # 6. lean 契约 substance 底线：报告必须声明数据截止日、来源、免责（可信度三锚）。
+    # 不强制固定标题，但要求内容层面出现这三要素；缺失即视为不可发布。
+    sub = skill.get("substance", {})
+    if sub.get("require_as_of") and not re.search(r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}", text):
+        errors.append("缺数据截止日声明（需含 YYYY-MM-DD 形式日期）")
+    if sub.get("require_sources") and not re.search(r"(来源|source|数据来自|取自|出处)", text, re.I):
+        errors.append("缺数据来源声明")
+    if sub.get("require_disclaimer") and not re.search(r"(仅供学习研究|免责|本研究不构成|非投资建议|学习研究)", text):
+        errors.append("缺仅供学习研究/免责声明")
     return errors
 
 
@@ -1198,12 +1212,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if not source.is_file() or source.is_symlink() or not str(rel).startswith("evidence/attempts/"):
             raise GateError(f"artifact 必须来自 evidence/attempts 且为普通文件: {rel}")
         # 注：bytes/sha256/字节下限已由 admit_bundle(_admit_artifact_checks) 统一校验，此处不再重复。
-        formal_rel = safe_relative(
-            root,
-            skill["artifact"]["formal_path"]
-            if accepted_status
-            else f"{registry['negative_acceptance_dir']}/{skill['skill_id']}.md",
-        )
+        if accepted_status:
+            formal_rel = safe_relative(root, skill["artifact"]["formal_path"])
+        else:
+            # FAIL / NOT_APPLICABLE：lean 契约已无 negative_acceptance_dir，不晋级正式路径；
+            # 证据保留在 attempt 目录，仅登记为未接受。
+            formal_rel = rel
         prepared.append((source, root / formal_rel, formal_rel, record))
 
     # 多角色 skill 的角色备忘录：存在性/字节下限已由 admit_bundle 校验；此处仅登记晋级记录。
@@ -1242,7 +1256,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     # ===== 阶段二：内存准备（所有数据处理成功前不得写正式文件）=====
     records = []
     for source, formal, formal_rel, record in prepared:
-        records.append({**record, "path": str(formal_rel), "formal": True, "accepted": True})
+        records.append({**record, "path": str(formal_rel), "formal": accepted_status, "accepted": accepted_status})
     verified_role_runs = [record for _, _, record in verified_role_memos]
     next_manifest = copy.deepcopy(manifest)
     entry = next(

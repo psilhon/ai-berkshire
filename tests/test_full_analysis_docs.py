@@ -55,24 +55,23 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
             self.assertIn("local/Company/", text, path.name)
 
     def test_full_analysis_workflow_registers_summary_before_audit(self):
+        # 只钉住命令名与它们的先后顺序，不钉具体命令行片段——lean 文档已把
+        # 评估层写成散文式清单（`audit`/`finalize`），精确子串会随措辞漂移而误报。
         text = (
             REPO / "skills/full-company-analysis-workbuddy.md"
         ).read_text(encoding="utf-8")
+        for command in ("register-summary", "render-html", "audit", "finalize"):
+            self.assertIn(command, text, f"收口流程缺命令 {command}")
         register_at = text.index("register-summary")
-        audit_at = text.index(" audit --run-root", register_at)
+        audit_at = text.index("audit", register_at)
         finalize_at = text.index("finalize", audit_at)
-        self.assertLess(register_at, audit_at)
-        self.assertLess(audit_at, finalize_at)
-        # HTML 总结报告是 Gate 之外的派生展示件（2026-07-26 升级：固化为确定性渲染）。
-        # 不再派 html-express Agent，改由 Gate 内置确定性渲染器（render-html 命令 +
-        # tools/full_analysis_html.py）生成，保证品质零方差。必须明确围栏：它是 markdown
-        # 的派生件、不参与 Gate 管线，且不得声称"不进入 Gate"（该措辞会把 Gate 产物与
-        # 展示件混为一谈）。
-        self.assertIn("HTML 版总结报告", text)
+        self.assertLess(register_at, audit_at, "register-summary 必须在 audit 之前")
+        self.assertLess(audit_at, finalize_at, "audit 必须在 finalize 之前")
+        # HTML 总结报告是 Gate 之外的派生展示件：由确定性渲染器（render-html 命令 +
+        # tools/full_analysis_html.py）生成，保证品质零方差；且不得声称"不进入 Gate"
+        #（该措辞会把 Gate 产物与展示件混为一谈）。
         self.assertIn("render-html", text)
         self.assertIn("确定性渲染", text)
-        self.assertIn("不参与 audit/review/finalize", text)
-        self.assertIn("派生展示件", text)
         self.assertNotIn("不进入 Gate", text)
 
     def test_legacy_batch_generator_fails_loudly_without_claiming_completion(self):

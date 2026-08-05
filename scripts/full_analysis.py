@@ -26,7 +26,7 @@ def emit(value: object) -> None:
 class PublicParser(argparse.ArgumentParser):
     """隐藏内部桥接命令，避免把 Runtime 协议误当成用户 API。"""
 
-    INTERNAL = ("next-work", "audit", "job-started", "heartbeat", "record-failure", "submit-result", "record-usage", "submit-correction", "rework")
+    INTERNAL = ("next-work", "audit", "job-started", "heartbeat", "record-failure", "submit-result", "record-usage", "submit-correction", "rework", "mark-failed")
 
     def format_help(self):
         text = super().format_help()
@@ -81,6 +81,13 @@ def parser() -> argparse.ArgumentParser:
         # v3.4.2 fix：W3 错峰支持——只从白名单 skill 中派发（逗号分隔 skill_id 列表）
         cmd.add_argument("--allowlist", default=None,
                          help="逗号分隔的 skill_id 白名单；非空时只派发白名单内的就绪单元（W3 错峰用）")
+    # lean 模式（v3.7）：移除租约 watchdog（sweep）——失败由编排器显式 mark-failed 判定并声明，
+    # 不再依赖常驻进程自动回收。保留 mark-failed 作为失败声明的唯一入口。
+    mf = sub.add_parser("mark-failed", help=argparse.SUPPRESS)
+    mf.add_argument("--run-root", required=True)
+    mf.add_argument("--skill-id", required=True)
+    mf.add_argument("--reason", required=True)
+    mf.add_argument("--retry", action="store_true", help="不置 FAILED，改为重新置 PENDING 供重派")
     aud = sub.add_parser("audit", help=argparse.SUPPRESS)
     aud.add_argument("--run-root", required=True); aud.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     fin = sub.add_parser("finalize", help=argparse.SUPPRESS)
@@ -189,6 +196,8 @@ def main(argv=None) -> int:
         if args.command == "next-work":
             allowlist = tuple(s.strip() for s in args.allowlist.split(",")) if args.allowlist else None
             emit(runtime.next_work(root, methodology_mode=args.methodology_mode, allowlist=allowlist)); return 0
+        if args.command == "mark-failed":
+            emit(runtime.mark_failed(root, args.skill_id, args.reason, retry=args.retry)); return 0
         if args.command == "audit":
             report, code = audit_tool.audit(root, Path(args.registry)); emit(report); return code
         if args.command == "job-started": emit(runtime.job_started(root, args.work_unit_id, args.attempt_id, args.lease_nonce, args.agent_job_id)); return 0

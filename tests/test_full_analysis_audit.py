@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import sys
@@ -7,6 +8,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 AUDIT = REPO / "tools" / "full_analysis_audit.py"
+LEAN_CONTRACT = REPO / "tools" / "full_analysis_contract.json"
 sys.path.insert(0, str(REPO / "tools"))
 import full_analysis_audit as audit_module  # noqa: E402
 
@@ -156,8 +158,16 @@ class ConditionalReceiptTests(unittest.TestCase):
 
 
 class EvidenceSufficiencyTests(unittest.TestCase):
-    """P1 层 2：per-skill 证据充分性。以 financial-data 为例
-    （required_fact_fields=[revenue], min_dual_source_facts=1, min_calculations=1）。"""
+    """lean 契约（full-analysis-contract/lean-v1）下的 per-skill 证据校验。
+
+    lean 已移除 evidence_rules（required_fact_fields / min_dual_source_facts /
+    min_calculations 等），故本层在真实契约下只剩两条 Audit 仍执行的判定：
+      - 产出报告（PASS / PASS_WITH_LIMITATIONS）的单元不得零事实（no_skill_evidence）；
+      - 层 1 可追溯性（来源存在、计算已重放、id 不重复）。
+    报告实质地板（as_of / 来源 / 免责）与 artifact min_bytes 由 Gate 执行
+    （full_analysis_gate._substance_errors 与 artifact 检查），已在
+    tests/test_full_analysis_gate_v2.py 覆盖，Audit 不重复判定。
+    """
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -199,7 +209,7 @@ class EvidenceSufficiencyTests(unittest.TestCase):
 
     def audit(self):
         return subprocess.run([sys.executable, str(AUDIT), "--run-root", self.root,
-                               "--registry", str(REPO / "tools/full_analysis_contract.json")],
+                               "--registry", str(LEAN_CONTRACT)],
                               capture_output=True, text=True)
 
     def test_compliant_skill_passes(self):
@@ -224,48 +234,65 @@ class EvidenceSufficiencyTests(unittest.TestCase):
         codes = [item["code"] for item in report["errors"]]
         self.assertIn("no_skill_evidence", codes)
 
-    def test_missing_required_fact_field_fails(self):
-        # 有事实但 field 不是 revenue（缺 required_fact_fields）
+    def test_lean_contract_registers_no_evidence_rules(self):
+        # lean 契约不再声明 evidence_rules，Audit 的规则引擎在真实契约下无规则可执行；
+        # per_skill.required_rules 必须为 0（若契约回退带回规则，此断言会立刻炸出来）。
+        contract = json.loads(LEAN_CONTRACT.read_text(encoding="utf-8"))
+        self.assertEqual(contract["schema_version"], "full-analysis-contract/lean-v1")
+        for skill in contract["skills"]:
+            self.assertNotIn("evidence_rules", skill, skill["skill_id"])
+
+        facts, sources, calcs = self._compliant_skill()
+        self._manifest_with_skill("financial-data", "PASS", facts, sources, calcs)
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
+        self.assertEqual(report["evidence"]["per_skill"][0]["required_rules"], 0)
+
+    def test_single_source_fact_without_calculation_passes_under_lean(self):
+        # 这份证据在 v2 会同时触发 missing_required_fact_fields /
+        # insufficient_dual_source_facts / insufficient_calculations；
+        # lean 移除 evidence_rules 后，只要事实可追溯即通过。
         facts = [{"fact_id": "f.1", "field": "other", "value": "1",
                   "source_ids": ["s.filing"], "skill_id": "financial-data"}]
         sources = [{"source_id": "s.filing", "url": "https://example.invalid/a",
                     "retrieved_at": "2026-07-23", "source_type": "filing"}]
-        calcs = [{"calculation_id": "calc.1", "operation": "verify", "args": {}, "skill_id": "financial-data"}]
-        self._manifest_with_skill("financial-data", "PASS", facts, sources, calcs)
-        result = self.audit()
-        self.assertNotEqual(result.returncode, 0)
-        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
-        codes = [item["code"] for item in report["errors"]]
-        self.assertIn("missing_required_fact_fields", codes)
-
-    def test_insufficient_dual_source_facts_fails(self):
-        # revenue 事实但只挂单源（min_dual_source_facts=1 要求至少 1 条双源）
-        facts = [{"fact_id": "fact.revenue", "field": "revenue", "value": "100",
-                  "source_ids": ["s.filing"], "skill_id": "financial-data"}]
-        sources = [{"source_id": "s.filing", "url": "https://example.invalid/a",
-                    "retrieved_at": "2026-07-23", "source_type": "filing"}]
-        calcs = [{"calculation_id": "calc.1", "operation": "verify", "args": {}, "skill_id": "financial-data"}]
-        self._manifest_with_skill("financial-data", "PASS", facts, sources, calcs)
-        result = self.audit()
-        self.assertNotEqual(result.returncode, 0)
-        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
-        codes = [item["code"] for item in report["errors"]]
-        self.assertIn("insufficient_dual_source_facts", codes)
-
-    def test_insufficient_calculations_fails(self):
-        # 有双源 revenue 事实但零计算（min_calculations=1）
-        facts = [{"fact_id": "fact.revenue", "field": "revenue", "value": "100",
-                  "source_ids": ["s.filing", "s.market"], "skill_id": "financial-data"}]
-        sources = [
-            {"source_id": "s.filing", "url": "https://example.invalid/a", "retrieved_at": "2026-07-23", "source_type": "filing"},
-            {"source_id": "s.market", "url": "https://example.invalid/b", "retrieved_at": "2026-07-23", "source_type": "web"},
-        ]
         self._manifest_with_skill("financial-data", "PASS", facts, sources, [])
         result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
+        self.assertEqual(report["status"], "PASS")
+        codes = {item["code"] for item in report["errors"]}
+        self.assertEqual(codes & {
+            "missing_required_fact_fields",
+            "insufficient_dual_source_facts",
+            "insufficient_calculations",
+        }, set())
+
+    def test_audit_does_not_judge_report_substance_or_artifact_bytes(self):
+        # 分层边界：实质三锚（as_of / 来源 / 免责）与 artifact min_bytes 归 Gate；
+        # 报告即使是空壳、远低于 min_bytes=3000，Audit 也只看证据账本，不改判。
+        artifact = self.root / "01-数据与快筛/02-financial-data.md"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("# 空壳\n", encoding="utf-8")
+        facts, sources, calcs = self._compliant_skill()
+        self._manifest_with_skill("financial-data", "PASS", facts, sources, calcs)
+        result = self.audit()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["evidence"]["violation_count"], 0)
+
+    def test_untraceable_fact_still_fails_under_lean(self):
+        # lean 放松了证据充分性，但层 1 可追溯性仍是硬地板：事实不挂来源即 FAIL。
+        facts = [{"fact_id": "f.1", "field": "revenue", "value": "1",
+                  "source_ids": [], "skill_id": "financial-data"}]
+        self._manifest_with_skill("financial-data", "PASS", facts, [], [])
+        result = self.audit()
         self.assertNotEqual(result.returncode, 0)
         report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
         codes = [item["code"] for item in report["errors"]]
-        self.assertIn("insufficient_calculations", codes)
+        self.assertIn("fact_without_source", codes)
 
     def test_na_skill_not_required_to_have_evidence(self):
         # N/A 单元零证据不应产生违规
@@ -286,6 +313,110 @@ class EvidenceSufficiencyTests(unittest.TestCase):
         self.assertEqual(scorecard["scorecard_schema_version"], "quality-scorecard/v1")
         self.assertEqual(scorecard["claim_source_coverage"], 1.0)
         self.assertEqual(scorecard["evidence_sufficiency"]["violation_count"], 0)
+
+
+class LeanFullRunAuditTests(unittest.TestCase):
+    """完整 lean 交付（13 单元报告 + manifest）应整体通过 Audit。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "run"
+        (self.root / "evidence/audit").mkdir(parents=True)
+        self.contract = json.loads(LEAN_CONTRACT.read_text(encoding="utf-8"))
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _write_report(self, skill: dict) -> dict:
+        """按 lean 实质要求写一份合规报告：含数据截止日、来源、免责，并满足 min_bytes。"""
+        path = self.root / skill["artifact"]["formal_path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"# {skill['skill_id']}\n\n"
+            "## 核心结论\n\n数据截止日 2026-07-23。来源：交易所公告与公司年报。\n"
+            + "结论正文，覆盖经营质量、竞争格局与估值区间的判断。\n" * 60
+            + "\n## 限制与缺口\n\n数据缺口已逐条登记。\n\n"
+            "## 声明\n\n本报告仅供学习研究，不构成投资建议。\n"
+        )
+        while len(body.encode("utf-8")) < skill["artifact"].get("min_bytes", 0):
+            body += "补充分析段落，说明关键假设及其证伪条件。\n"
+        path.write_text(body, encoding="utf-8")
+        payload = path.read_bytes()
+        return {
+            "skill_id": skill["skill_id"],
+            "path": skill["artifact"]["formal_path"],
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    def _compliant_run(self) -> dict:
+        skills, facts, artifacts = [], [], []
+        for index, skill in enumerate(self.contract["skills"], start=1):
+            skill_id = skill["skill_id"]
+            skills.append({"skill_id": skill_id, "status": "PASS", "limitations": []})
+            facts.append({
+                "fact_id": f"fact.{index}", "field": "revenue", "value": "100",
+                "source_ids": ["s.filing"], "skill_id": skill_id,
+            })
+            artifacts.append(self._write_report(skill))
+        manifest = {
+            "manifest_schema_version": self.contract["manifest_schema_version"],
+            "run": {"run_id": "run-lean", "status": "RUNNING", "as_of": "2026-07-23"},
+            "skills": skills,
+            "artifacts": artifacts,
+            "facts": facts,
+            "sources": [{"source_id": "s.filing", "url": "https://example.invalid/a",
+                         "publisher": "Exchange", "retrieved_at": "2026-07-23",
+                         "source_type": "filing"}],
+            "calculations": [{
+                "calculation_id": "calc.1", "operation": "verify", "args": {},
+                "expected": {"replayed": True, "outcome": "PASS"},
+                "skill_id": "financial-data",
+            }],
+            "limitations": [],
+        }
+        (self.root / "evidence/00-analysis-manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        return manifest
+
+    def audit(self):
+        return subprocess.run(
+            [sys.executable, str(AUDIT), "--run-root", self.root,
+             "--registry", str(LEAN_CONTRACT)],
+            capture_output=True, text=True,
+        )
+
+    def test_fully_compliant_lean_run_passes(self):
+        manifest = self._compliant_run()
+
+        result = self.audit()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["errors"], [])
+        self.assertEqual(report["evidence"]["skills_checked"], len(manifest["skills"]))
+        self.assertEqual(report["evidence"]["violation_count"], 0)
+        scorecard = json.loads(
+            (self.root / "evidence/quality-scorecard.json").read_text(encoding="utf-8"))
+        self.assertEqual(scorecard["claim_source_coverage"], 1.0)
+        self.assertEqual(scorecard["evidence_sufficiency"]["skills_with_violations"], [])
+
+    def test_one_skill_without_evidence_fails_the_whole_run(self):
+        manifest = self._compliant_run()
+        orphan = manifest["skills"][-1]["skill_id"]
+        manifest["facts"] = [f for f in manifest["facts"] if f["skill_id"] != orphan]
+        (self.root / "evidence/00-analysis-manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        result = self.audit()
+
+        self.assertNotEqual(result.returncode, 0)
+        report = json.loads((self.root / "evidence/audit/audit-result.json").read_text())
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(
+            [(item["code"], item["skill_id"]) for item in report["errors"]],
+            [("no_skill_evidence", orphan)])
 
 
 class CompleteEvidenceRuleTests(unittest.TestCase):

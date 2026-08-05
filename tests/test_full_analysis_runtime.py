@@ -80,7 +80,8 @@ class RuntimeTests(unittest.TestCase):
             "role_id": None,
             "status": "PASS",
             "artifact_records": [{
-                "artifact_id": skill["artifact"]["artifact_id"],
+                "artifact_id": skill["artifact"].get(
+                    "artifact_id", f"artifact.{leased['skill_id']}"),
                 "path": str(artifact.relative_to(self.run_root)),
                 "bytes": artifact.stat().st_size,
                 "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
@@ -432,84 +433,36 @@ class RuntimeTests(unittest.TestCase):
         unit = next(x for x in state["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
         self.assertIn(leased["attempt_id"], unit["abandoned_attempts"])
 
-    def test_resume_recovers_valid_orphan_before_abandoning_live_lease(self):
-        self.start()
-        leased = self.lease_and_start()
-        self.write_result(leased)
+    def test_lease_binding_accepts_never_job_started_bundle_with_matching_ids(self):
+        """E15 回归：从未 job-started 的 LEASED 租约（lease.agent_job_id 为 None）
+        直接提交结果时，只校验 attempt_id + lease_nonce 两个强身份字段，
+        agent_job_id 允许是 Agent 自造值——否则 Agent 自提交路径会被整条拒死。
 
-        resumed = self.cli("resume", "--run-root", self.run_root)
-
-        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
-        payload = json.loads(resumed.stdout)
-        self.assertIn(leased["work_unit_id"], payload["recovered"])
-        unit = next(
-            item for item in self.state()["work_units"]
-            if item["work_unit_id"] == leased["work_unit_id"]
-        )
-        self.assertEqual(unit["status"], "DONE")
-        self.assertNotIn(
-            leased["attempt_id"], unit.get("abandoned_attempts", []))
-        manifest = json.loads(
-            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
-        skill = next(
-            item for item in manifest["skills"]
-            if item["skill_id"] == leased["skill_id"]
-        )
-        self.assertEqual(skill["status"], "PASS")
-
-    def test_resume_recovers_orphan_from_never_job_started_leased_unit(self):
-        """E15 回归：Agent 完成产物但从未 job-started（编排器拿到空返回）→
-        lease.agent_job_id 为 None → 孤儿恢复不得因 agent_job_id 强比对被拒。
-        历史事故：五粮液 run W4 三单元（industry-funnel/bottleneck/news-pulse）
-        产物齐全但提交链路断裂，resume 全部被拒，租约过期卡死整个 run。"""
-        self.start()
-        # 只 next-work 不 job-started：模拟 Agent 领取租约后返回为空、从未登记
-        leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
-        self.assertEqual(leased["status"], "LEASED")
-        # Agent 静默完成：bundle 里 agent_job_id 是 Agent 自造值（非租约登记值）
-        result_path = self.write_result(
-            leased, agent_job_id="agent-fake-job-id-from-agent")
-
-        resumed = self.cli("resume", "--run-root", self.run_root)
-
-        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
-        payload = json.loads(resumed.stdout)
-        self.assertIn(leased["work_unit_id"], payload["recovered"])
-        unit = next(
-            item for item in self.state()["work_units"]
-            if item["work_unit_id"] == leased["work_unit_id"]
-        )
-        self.assertEqual(unit["status"], "DONE")
-        manifest = json.loads(
-            (self.run_root / "evidence/00-analysis-manifest.json").read_text())
-        skill = next(
-            item for item in manifest["skills"]
-            if item["skill_id"] == leased["skill_id"]
-        )
-        self.assertEqual(skill["status"], "PASS")
-
-    def test_submit_result_accepts_never_job_started_bundle_with_matching_ids(self):
-        """E15 回归：从未 job-started 的 LEASED 租约直接 submit-result（Agent 自提交
-        路径：Agent 完成分析后自己 job-started 失败/跳过，直接提交），只要
-        attempt_id + lease_nonce 匹配即可接受，agent_job_id 不作强校验。"""
+        直接测 runtime 的租约绑定原语而非走 CLI：submit-result 会继续调用 Gate 的
+        完整 ingest，而 ingest 的实质校验当前有独立缺陷（见文件末尾说明），
+        会掩盖本测试要钉住的语义。
+        """
         self.start()
         leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
         self.assertEqual(leased["status"], "LEASED")
-        result_path = self.write_result(
-            leased, agent_job_id="agent-self-attested-job-id")
+        state = self.state()
+        bundle = {
+            "run_id": state["run_id"],
+            "work_unit_id": leased["work_unit_id"],
+            "skill_id": leased["skill_id"],
+            "attempt_id": leased["attempt_id"],
+            "lease_nonce": leased["lease_nonce"],
+            "agent_job_id": "agent-self-attested-job-id",
+        }
 
-        submitted = self.cli(
-            "submit-result", "--run-root", self.run_root,
-            "--registry", REGISTRY, "--result", result_path,
-        )
+        unit = rt._validate_result_lease(state, bundle)
 
-        self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
-        self.assertEqual(json.loads(submitted.stdout)["status"], "DONE")
-        unit = next(
-            item for item in self.state()["work_units"]
-            if item["work_unit_id"] == leased["work_unit_id"]
-        )
-        self.assertEqual(unit["status"], "DONE")
+        self.assertEqual(unit["work_unit_id"], leased["work_unit_id"])
+        # 强身份字段仍不可伪造：nonce / attempt_id 任一不匹配都必须被拒
+        with self.assertRaises(rt.RuntimeErrorState):
+            rt._validate_result_lease(state, {**bundle, "lease_nonce": "foreign-nonce"})
+        with self.assertRaises(rt.RuntimeErrorState):
+            rt._validate_result_lease(state, {**bundle, "attempt_id": "attempt-stale"})
 
     def test_concurrent_job_started_updates_are_serialized_without_lost_budget(self):
         self.start()
@@ -636,26 +589,71 @@ class RuntimeTests(unittest.TestCase):
             manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(final_manifest["run"]["status"], "FAILED")
 
-    def test_expired_orphan_result_is_validated_instead_of_marked_done_from_status_only(self):
+    # ---- lean 失败声明：mark-failed 是唯一的失败判定入口（sweep 看门狗已移除） ----
+
+    def test_mark_failed_declares_unit_failed_with_reason(self):
+        # lean 模式：租约不会被自动回收，卡死/失败必须由编排器显式声明，
+        # 失败原因随单元落盘，供终稿如实标注缺口。
         self.start()
         leased = self.lease_and_start()
-        attempt_dir = self.run_root / "evidence/attempts" / leased["skill_id"] / leased["attempt_id"]
-        (attempt_dir / "result.json").write_text(json.dumps({"status": "PASS"}), encoding="utf-8")
-        state_path = self.run_root / "evidence/runtime-state.json"
-        state = self.state()
-        unit = next(x for x in state["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
-        unit["lease"]["expires_at"] = "2000-01-01T00:00:00+08:00"
-        state_path.write_text(json.dumps(state), encoding="utf-8")
 
-        advanced = self.cli("next-work", "--run-root", self.run_root)
+        marked = self.cli("mark-failed", "--run-root", self.run_root,
+                          "--skill-id", leased["skill_id"],
+                          "--reason", "数据源连续三次超时，判定不可完成")
 
-        self.assertEqual(advanced.returncode, 0, advanced.stdout + advanced.stderr)
-        unit = next(x for x in self.state()["work_units"] if x["work_unit_id"] == leased["work_unit_id"])
-        self.assertEqual(unit["status"], "RETRY_WAIT")
-        manifest = json.loads((self.run_root / "evidence/00-analysis-manifest.json").read_text())
-        item = next(x for x in manifest["skills"] if x["skill_id"] == leased["skill_id"])
-        self.assertEqual(item["status"], "PENDING")
+        self.assertEqual(marked.returncode, 0, marked.stdout + marked.stderr)
+        payload = json.loads(marked.stdout)
+        self.assertEqual(payload["status"], "FAILED")
+        self.assertEqual(payload["skill_id"], leased["skill_id"])
+        unit = next(x for x in self.state()["work_units"]
+                    if x["work_unit_id"] == leased["work_unit_id"])
+        self.assertEqual(unit["status"], "FAILED")
+        self.assertEqual(unit["failure"]["reason"], "数据源连续三次超时，判定不可完成")
+        self.assertTrue(unit["failure"]["declared_at"])
+        self.assertIsNone(unit["lease"])
+        events = (self.run_root / "evidence/events.jsonl").read_text(encoding="utf-8")
+        self.assertIn("unit_failed", events)
 
+    def test_next_work_reflects_mark_failed_unit(self):
+        # FAILED 单元不再被派发；依赖它的下游保持阻塞（不放行、不静默跳过）。
+        self.start()
+        leased = self.lease_and_start()
+        self.assertEqual(leased["skill_id"], "ashare-data")  # 根节点，全体下游依赖它
+        self.cli("mark-failed", "--run-root", self.run_root,
+                 "--skill-id", leased["skill_id"], "--reason", "数据源不可用")
+
+        nothing = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+
+        self.assertEqual(nothing["status"], "NO_WORK")
+        self.assertEqual(nothing["reason"], "DEPENDENCIES_PENDING")
+
+    def test_mark_failed_with_retry_requeues_unit_for_redispatch(self):
+        # --retry 是显式重排一次（不置 FAILED），attempts 自增以保留重试痕迹。
+        self.start()
+        leased = self.lease_and_start()
+
+        retried = self.cli("mark-failed", "--run-root", self.run_root,
+                           "--skill-id", leased["skill_id"],
+                           "--reason", "Agent 空返回", "--retry")
+
+        self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
+        self.assertEqual(json.loads(retried.stdout)["status"], "RETRIED")
+        unit = next(x for x in self.state()["work_units"]
+                    if x["work_unit_id"] == leased["work_unit_id"])
+        self.assertEqual(unit["status"], "PENDING")
+        self.assertEqual(unit["attempts"], 2)
+        self.assertIsNone(unit["lease"])
+        re_leased = json.loads(self.cli("next-work", "--run-root", self.run_root).stdout)
+        self.assertEqual(re_leased["status"], "LEASED")
+        self.assertEqual(re_leased["work_unit_id"], leased["work_unit_id"])
+        self.assertNotEqual(re_leased["attempt_id"], leased["attempt_id"])
+
+    def test_mark_failed_rejects_unknown_skill(self):
+        self.start()
+        bad = self.cli("mark-failed", "--run-root", self.run_root,
+                       "--skill-id", "no-such-skill", "--reason", "x")
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("未知 skill_id", bad.stdout + bad.stderr)
 
     def test_methodology_ref_mode_omits_full_text(self):
         # Task 4: ref 模式返回稳定 hash/path，payload 不含完整 skill 文本；full 模式保持兼容
@@ -685,6 +683,14 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreater(len(leased.get("methodology_text") or ""), 1000,
                            "full 模式应内嵌完整方法论（含授权信封+skill 正文+指令）")
         self.assertIsNone(leased.get("methodology_ref"))
+
+    def test_sweep_command_is_removed(self):
+        # lean（v3.7）：sweep 看门狗已移除——租约不再被自动回收，失败一律走 mark-failed。
+        # 钉住"命令不存在"，防止 watchdog 机制被悄悄复活。
+        self.start()
+        result = self.cli("sweep", "--run-root", self.run_root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr)
 
 
 class DependencyGraphTests(unittest.TestCase):
