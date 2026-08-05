@@ -58,7 +58,7 @@ python3 scripts/full_analysis.py next-work --run-root <run_root>
 1. 每次 `next-work` 返回 `LEASED` 后，用 **WorkBuddy 原生 Agent** 完成该 work unit。禁止用 Python/shell 再创建 Agent，禁止由主上下文直接撰写分析正文（主上下文只做调度——独立 Agent 有新鲜上下文与外部调研能力，是质量稳定的物理前提）。
 2. 把 `next-work` payload 的 `methodology_text`（`skills/<skill_id>.md` 完整方法论）作为 Agent 的**强制规范**完整落地，不得仅凭 skill 名称凭记忆发挥。
 3. Agent 把报告写入 attempt 目录与契约指定的正式产物路径（`artifact.formal_path`）。
-4. **质量归属（优化点 1）：Agent 在调 `mk_result_bundle` / `submit-result` 之前，先对产出报告跑自我校验**：
+4. 🔴 **CHECKPOINT · 移交前质量门（优化点 1）**：Agent 在调 `mk_result_bundle` / `submit-result` **之前**，必须先对产出报告跑自我校验（未过 self-check 不得移交，质量由 skill 自身在移交前确保）：
    ```text
    python3 scripts/full_analysis.py self-check \
      --run-root <run_root> --skill-id <skill_id> --report <attempt_dir>/report.md
@@ -84,7 +84,7 @@ python3 scripts/full_analysis.py next-work --run-root <run_root>
 
 ## 失败处理（第二条底线，核心）
 
-**允许任务失败。失败必须显式声明，绝不静默。**
+🛑 **STOP · 失败显式声明点（第二条底线）**：**允许任务失败。失败必须显式声明，绝不静默。**
 
 当 Agent 无法完成某单元（数据缺失、推理不成立、取数失败、超时中断）时：
 
