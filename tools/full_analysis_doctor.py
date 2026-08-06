@@ -6,16 +6,16 @@
 但"过下限≠同等深度"，深度取决于执行架构（是否真派子 Agent + 外部取数）。
 本工具把坍塌指纹显性化，让退化永远可见、可复核，而不是被静默放行。
 
-为什么不做硬闸门（实测标定，勿回退）：
-- canary（tests/test_full_analysis_e2e）全程 0 heartbeat 且产物仅压到刚过下限；
-- 合法真 run（中际旭创）也只 12/19 单元发 heartbeat（覆盖率 0.63，尾部缺口 4）；
-  → heartbeat 与"余量"都无法作为硬闸门，否则误伤合法 run。
-因此本工具默认 advisory（退出码恒 0）；仅 --strict 时 WARN 抬升为退出码 3，供人工/CI 选用。
+为什么不做硬闸门（lean 语义，勿回退）：
+- 提交事件是 submit-result 的强制副作用（runtime.submit_result 成功必写 result_submitted/ingested），
+  合法 run 覆盖率可达 100%，理论上可做硬闸门；
+- 但 doctor 定位是"顾问式非阻断"，且手工构造/legacy run 可能缺事件日志——
+  一律 WARN 不阻断，避免误伤；仅 --strict 时 WARN 抬升为退出码 3，供人工/CI 选用。
 
 指纹清单：
 1. 分布坍塌：适用分析单元贴线（margin<1.15×下限）占比过高；
 2. 事件完整性：events.jsonl 缺失/损坏 → 指纹不可用，显式 WARN（不允许静默 PASS）；
-3. 心跳覆盖：全程零心跳 / 覆盖率偏低 / 尾部连续缺口（后半程疑似主上下文直写）；
+3. 提交覆盖：全程零提交事件 / 覆盖率偏低 / 尾部连续缺口（疑似绕过 submit-result 直接改 manifest）；
 4. 深度分化不足：按标准化 margin（bytes/floor）计算的变异系数过低且贴线单元多。
 
 用法：
@@ -43,9 +43,10 @@ LIGHT_SKILLS = set()
 # 指纹4：深度分化不足的判定阈值（基于标准化 margin 的变异系数）
 CV_FLOOR = 0.25                    # margin 变异系数低于该值 → 离散度过低
 DIVERGENCE_THIN_SHARE = 0.30       # 且贴线单元占比 ≥ 该值 → 批量骨架化嫌疑
-# 指纹3：心跳覆盖判定阈值（按合法真 run 标定：旭创覆盖率 0.63 / 尾部缺口 4 须保持 PASS）
+# 指纹3：提交覆盖判定阈值（lean 语义：result_submitted/ingested 事件是 submit-result 的
+# 强制副作用，合法 run 覆盖率应达 100%；低于该值 → 部分单元疑似绕过 submit-result）
 COVERAGE_FLOOR = 0.50              # 覆盖率低于该值 → 执行完整性存疑
-TAIL_GAP_THRESHOLD = 8             # 尾部连续无心跳单元 ≥ 该值 → 后半程疑似主上下文直写
+TAIL_GAP_THRESHOLD = 8             # 尾部连续无提交事件单元 ≥ 该值 → 后半程疑似绕过提交
 # 参与"贴线/分化"统计的状态：只有真正产出报告的单元
 REPORTABLE_STATUSES = {"PASS", "PASS_WITH_LIMITATIONS"}
 # 终态（用于区分未完成的 PENDING/RUNNING/FAILED）
@@ -121,16 +122,17 @@ def diagnose(run_root: Path, registry_path: Path) -> dict:
     thin_analytic = [u for u in analytic_units if u["thin"]]
     thin_share = (len(thin_analytic) / len(analytic_units)) if analytic_units else 0.0
 
-    # ---- 事件完整性 + 心跳覆盖（execution-integrity 指纹）----
+    # ---- 事件完整性 + 提交覆盖（execution-integrity 指纹）----
+    # lean 语义：heartbeat/job_started 事件已随租约身份机移除，执行完整性证据改为
+    # submit-result 的强制副作用事件 result_submitted / result_ingested。
     ev_path = run_root / "evidence/events.jsonl"
-    hb_total = 0
-    job_started = 0
+    submit_total = 0
     total_lines = 0
     bad_lines = 0
-    # 按 (skill_id, attempt_id) 关联心跳：只认最终被接受 attempt 的心跳，
-    # 避免旧失败 attempt 的心跳替零心跳的 accepted attempt "背书"
-    hb_pairs: set = set()
-    hb_skill_any: set = set()
+    # 按 (skill_id, attempt_id) 关联提交事件：只认最终被接受 attempt 的提交，
+    # 避免旧失败 attempt 的提交替零提交的 accepted attempt "背书"
+    submit_pairs: set = set()
+    submit_skill_any: set = set()
     if not ev_path.exists():
         events_status = "missing"
     else:
@@ -144,13 +146,11 @@ def diagnose(run_root: Path, registry_path: Path) -> dict:
                 bad_lines += 1
                 continue
             t = e.get("type")
-            if t == "heartbeat":
-                hb_total += 1
+            if t in ("result_submitted", "result_ingested"):
+                submit_total += 1
                 sid = _work_unit_to_skill(e.get("work_unit_id") or e.get("skill_id"))
-                hb_pairs.add((sid, e.get("attempt_id")))
-                hb_skill_any.add(sid)
-            elif t in ("job_started", "job-started"):
-                job_started += 1
+                submit_pairs.add((sid, e.get("attempt_id")))
+                submit_skill_any.add(sid)
         events_status = "ok"
         if total_lines > 0 and bad_lines == total_lines:
             events_status = "corrupt"
@@ -158,19 +158,19 @@ def diagnose(run_root: Path, registry_path: Path) -> dict:
             events_status = "partial"
 
     # 覆盖率/尾部缺口按 manifest 顺序的"已执行单元"（REPORTABLE）计算；
-    # 心跳归属优先匹配 (skill, accepted_attempt_id)，accepted attempt 无记录时回退到 skill 级
+    # 提交事件归属优先匹配 (skill, accepted_attempt_id)，accepted attempt 无记录时回退到 skill 级
     ran_unit_list = [u for u in units if u["status"] in REPORTABLE_STATUSES]
     ran_units = [u["skill_id"] for u in ran_unit_list]
 
     def _covered(u) -> bool:
         aid = u.get("accepted_attempt_id")
         if aid is not None:
-            return (u["skill_id"], aid) in hb_pairs
-        return u["skill_id"] in hb_skill_any
+            return (u["skill_id"], aid) in submit_pairs
+        return u["skill_id"] in submit_skill_any
 
     covered_set = {u["skill_id"] for u in ran_unit_list if _covered(u)}
-    hb_covered = [s for s in ran_units if s in covered_set]
-    coverage = (len(hb_covered) / len(ran_units)) if ran_units else 0.0
+    submit_covered = [s for s in ran_units if s in covered_set]
+    coverage = (len(submit_covered) / len(ran_units)) if ran_units else 0.0
     tail_gap = 0
     for s in reversed(ran_units):
         if s in covered_set:
@@ -192,26 +192,26 @@ def diagnose(run_root: Path, registry_path: Path) -> dict:
     if events_status in ("missing", "corrupt"):
         label = "缺失" if events_status == "missing" else "损坏"
         warnings.append(
-            f"事件日志{label}：heartbeat/job 指纹不可用，执行完整性无法核验；"
+            f"事件日志{label}：提交事件指纹不可用，执行完整性无法核验；"
             f"不能据此判定为健康，请人工核查或重跑")
     elif events_status == "partial":
         warnings.append(
             f"事件日志部分损坏：{bad_lines}/{total_lines} 行无法解析，"
-            f"心跳/覆盖指纹不完整、可能低估真实退化；不能据此判定为健康，请人工核查")
-    # 指纹 3：心跳覆盖（仅事件日志可信时评估；missing/corrupt 已由指纹2告警，不再叠加）
+            f"提交覆盖指纹不完整、可能低估真实退化；不能据此判定为健康，请人工核查")
+    # 指纹 3：提交覆盖（仅事件日志可信时评估；missing/corrupt 已由指纹2告警，不再叠加）
     if events_status not in ("missing", "corrupt"):
         if len(ran_units) >= 5:
             if coverage == 0:
                 warnings.append(
-                    f"全程零 heartbeat：{len(ran_units)} 个已执行单元无一心跳，"
-                    f"疑似主上下文直写而非真子 Agent；若经历过会话压缩务必复核 10 号后单元")
+                    f"全程零提交事件：{len(ran_units)} 个已执行单元无一条 submit 记录，"
+                    f"疑似绕过 submit-result 直接改 manifest/result.json；务必逐一核查")
             elif coverage < COVERAGE_FLOOR:
                 warnings.append(
-                    f"心跳覆盖率偏低：{coverage:.0%}（{len(hb_covered)}/{len(ran_units)}），"
-                    f"部分单元缺乏真子 Agent 执行证据，建议复核")
+                    f"提交事件覆盖率偏低：{coverage:.0%}（{len(submit_covered)}/{len(ran_units)}），"
+                    f"部分单元缺乏 submit-result 提交证据，建议复核")
         if tail_gap >= TAIL_GAP_THRESHOLD:
             warnings.append(
-                f"尾部连续 {tail_gap} 个单元无心跳：疑似后半程（会话压缩后）改为主上下文直写，"
+                f"尾部连续 {tail_gap} 个单元无提交事件：疑似后半程未走 submit-result 提交，"
                 f"务必逐一核查这些单元的取数与深度")
     # 指纹 4：深度分化不足（按标准化 margin 的变异系数，避免 skill 下限差异造成的假性高离散）
     margins = [u["margin"] for u in analytic_units if u["margin"] is not None]
@@ -236,11 +236,10 @@ def diagnose(run_root: Path, registry_path: Path) -> dict:
         "missing_artifact": missing_artifact,
         "thin_units": thin_units,
         "thin_share_analytic": round(thin_share, 3),
-        "heartbeat_total": hb_total,
-        "heartbeat_units": len([s for s in hb_skill_any if s]),
-        "heartbeat_coverage": round(coverage, 3),
+        "submit_total": submit_total,
+        "submit_units": len([s for s in submit_skill_any if s]),
+        "submit_coverage": round(coverage, 3),
         "tail_gap": tail_gap,
-        "job_started": job_started,
         "bad_event_lines": bad_lines,
         "total_event_lines": total_lines,
         "warnings": warnings,
@@ -254,7 +253,7 @@ def render(report: dict) -> str:
     mark = "✅ PASS" if v == "PASS" else "⚠️  WARN"
     lines.append(f"[doctor] {mark}  总量 {report['total_kb']}KB  单元 {report['unit_count']}"
                  f"（适用 {report['applicable_count']} / N/A {len(report['na_units'])}）  "
-                 f"heartbeat {report['heartbeat_total']}（覆盖率 {report['heartbeat_coverage']:.0%}，"
+                 f"submit {report['submit_total']}（覆盖率 {report['submit_coverage']:.0%}，"
                  f"尾部缺口 {report['tail_gap']}）")
     if report["events_status"] != "ok":
         lines.append(f"[doctor] ⚠️  事件日志状态: {report['events_status']}")
