@@ -209,6 +209,13 @@ tbody tr:last-child td{border-bottom:none}
 td.num,th.num{font-family:var(--mono);font-size:13px;text-align:right;white-space:nowrap}
 td.first-col{font-weight:700;color:var(--trust);white-space:nowrap}
 
+/* ============ 图表（内联 SVG） ============ */
+.fig{
+  margin:22px 0;border:1px solid var(--line);border-radius:10px;
+  background:var(--card);box-shadow:var(--shadow);padding:14px 16px;overflow-x:auto;
+}
+.fig svg{display:block;max-width:100%;height:auto;margin:0 auto}
+
 /* ============ 页脚 / 返回顶部 ============ */
 footer{
   border-top:3px double var(--line-strong);margin-top:50px;padding:26px 0 40px;
@@ -384,6 +391,7 @@ def _render_blocks(lines: list[str]) -> str:
     list_tag: str | None = None
     table_rows: list[list[str]] = []
     in_code = False
+    in_svg = False
     para_buf: list[str] = []
     quote_buf: list[str] = []
 
@@ -420,18 +428,31 @@ def _render_blocks(lines: list[str]) -> str:
         flush_table()
 
     for ln in lines:
-        # 代码块
+        # 代码块（含 svg 内联图）
         if ln.strip().startswith("```"):
+            fence = ln.strip().strip("`").strip().lower()
             if in_code:
-                out.append("</code></pre>")
+                if in_svg:
+                    out.append("</div>")
+                else:
+                    out.append("</code></pre>")
                 in_code = False
+                in_svg = False
             else:
                 flush_all()
-                out.append("<pre><code>")
+                if fence == "svg":
+                    out.append('<div class="fig reveal">')
+                    in_svg = True
+                else:
+                    out.append("<pre><code>")
+                    in_svg = False
                 in_code = True
             continue
         if in_code:
-            out.append(_esc(ln))
+            if in_svg:
+                out.append(ln + "\n")  # SVG 源码原样输出，不转义
+            else:
+                out.append(_esc(ln))
             continue
 
         stripped = ln.strip()
@@ -500,7 +521,7 @@ def _render_blocks(lines: list[str]) -> str:
         para_buf.append(stripped)
 
     if in_code:
-        out.append("</code></pre>")
+        out.append("</div>" if in_svg else "</code></pre>")
     flush_all()
     return "\n".join(out)
 
@@ -526,20 +547,31 @@ def _extract_stamp(overview_text: str, fallback: str) -> tuple[str, str]:
 
 
 def _parse_sections(markdown: str) -> tuple[str, list[tuple[str, list[str]]]]:
-    """拆出 h1 标题与各 `##` 章节；h1 之前/章节之间的引言块归入前一章节末尾或丢弃。"""
+    """拆出 h1 标题与各章节。
+
+    兼容 Gate 强制要求的一级标题（#）与常见二级标题（##）两种层级：
+    首个标题同时作为页面 title 与第一个 section，其余标题各自开一个新 section。
+    章节之间的内容块归入当前 section；首个标题之前的内容块丢弃。
+    """
     title = ""
     sections: list[tuple[str, list[str]]] = []
     current: list[str] | None = None
+
+    def _open(heading: str) -> None:
+        nonlocal current, title
+        if not title:
+            title = heading
+        current = []
+        sections.append((heading, current))
+
     for ln in markdown.splitlines():
-        m = re.match(r"^#\s+(.*)$", ln)
-        if m and not ln.startswith("##"):
-            if not title:
-                title = m.group(1).strip()
-            continue
         m = re.match(r"^##\s+(.*)$", ln)
         if m:
-            current = []
-            sections.append((m.group(1).strip(), current))
+            _open(m.group(1).strip())
+            continue
+        m = re.match(r"^#\s+(.*)$", ln)
+        if m:
+            _open(m.group(1).strip())
             continue
         if current is not None:
             current.append(ln)

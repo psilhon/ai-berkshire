@@ -120,6 +120,10 @@ python3 scripts/full_analysis.py render-html --run-root <run_root>
 
 - **HTML 是确定性展示件**：同一 markdown 逐字节一致渲染，零 LLM、零方差，品质不随 run 漂移。
 - 总结报告须如实标注缺失单元（来自 mark-failed 记录），不得隐瞒失败。
+- **总结报告是全流水线最核心交付物**（HTML 完全依赖它），写作必须遵循
+  `docs/delivery-summary-quality-standard.md`：长文深度（25-40KB）、≥6 表格、≥5 SVG 图示
+  （` ```svg ` fence 内联）、财报/行业/投资建议三大章节深化、冲突剖析、正反两面、
+  数字溯源抽查、渲染后验收（`<main>` 非空 / `<svg>` 数 / `<table>` 数）。禁止索引式速览。
 
 ## 可选评估层（需要验证时执行）
 

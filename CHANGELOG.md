@@ -5,6 +5,25 @@
 
 ---
 
+## [v3.8.1] — 2026-08-07
+
+> 华能国际（600011.SH）全量分析 run 收口暴露总结报告质量短板后的修复+增强版：**渲染器空壳 HTML 修复**（`_parse_sections` 只认 `##` 而 Gate 强制 `#` 一级标题，导致 `<main>` 全空）、**渲染器支持内联 SVG 图表**（` ```svg ` fence）、**交付总结质量标准沉淀**（表格+图示+三大章节深化+数字溯源+渲染后验收，防再退回索引式速览）。
+
+### 🐛 修复 (Fixed)
+
+- **总结 HTML 空壳（渲染器 bug）**：`tools/full_analysis_html.py` 的 `_parse_sections` 硬编码只认 `##` 二级标题作章节分隔，而 `register-summary` Gate 强制 8 个收口章节标题必须是 `#` 一级标题——解析出 0 个 section，`<main>` 与导航全空（13KB 全是 CSS/JS 外壳）。改为同时接受 `#` 与 `##`，首个标题兼作页面 title 与首 section。
+
+### ✨ 新增 (Added)
+
+- **渲染器支持内联 SVG**：`_render_blocks` 新增 ` ```svg ` fence——SVG 源码原样内联（不转义），包 `<div class="fig reveal">`；普通 ` ``` ` 代码块行为不变（转义为 `<pre><code>`）。`_CSS` 增 `.fig` 图表容器样式。
+- **`docs/delivery-summary-quality-standard.md`**：交付总结（delivery-summary）质量标准——长文深度 25-40KB、≥6 表格、≥5 SVG 图示、财报/行业/投资建议三大章节深化、冲突剖析、正反两面、数字溯源抽查（≥20 个高特异性数字）、渲染后验收清单（`<main>` 非空/`<svg>` 数/`<table>` 数/导航数/关键论断）。明确"总结报告是全流水线最核心交付物，HTML 完全依赖它"。
+- **编排 skill 收口章节引用质量标准**：`skills/full-company-analysis-workbuddy.md` 收口与交付小节挂接该标准；deep-summary 蒸馏指引同步加入表格/SVG/三章深化要求。
+
+### 🔬 验收实证
+
+- 华能国际 run（run-898c86f3b2510600）收口重做：总结报告 7.4KB 索引速览 → 57KB 深度长文（7 表格 + 5 SVG 图表：ROE 多口径条形/5 年 FCF 柱状/估值三情景/行业漏斗/投资逻辑链），`register-summary`（sha256 入 manifest）+ `render-html`（82KB，`<svg>`×5、`<table>`×7、0 转义残留）。
+- `bash scripts/check.sh`：**CHECK_EXIT=0**（734 tests OK；codex-skills `--check` 通过）。
+
 ## [v3.6.1] — 2026-08-05
 
 > 中国神华全链路验收 run（v3.5.0 首个真实 run，APPROVED）暴露三类问题后的修复版：**并发上限 4→2**（用户指令"最多两个并发任务"，消除空返回/租约误回收）、**source 合并 last-write-wins 修复**（返工提交的 source 更新此前永不生效）、**流程分级**（用户指令：L1 生产流水线到 HTML 交付为止，L2-L4 评估验证层需明确触发）。同时完整走通并修复了语义评审暴露的跨单元一致性问题（三情景/PE/PB/现金流增速对齐、王祥喜案补入、summary 补煤价压力测试）。
