@@ -38,7 +38,6 @@ LEGACY_ALLOWLIST = {
     "CHANGELOG.md": "发版记录：历史版本条目必须保留当时的真实标识",
     "skills/.darwin-results.tsv": "Darwin 评分档案：历史行按当时的 skill_id 记录",
     "docs/ashare-data-tiered-upgrade-plan.md": "历史规划档案（改名前）",
-    "docs/skill-system-analysis.md": "历史分析档案（改名前）",
     "docs/superpowers/plans/2026-07-18-full-company-analysis-review-fixes.md": "dated plan 史实",
     "docs/superpowers/plans/2026-07-19-tushare-market-precedence.md": "dated plan 史实",
     "docs/superpowers/plans/2026-07-19-tushare-verification-source.md": "dated plan 史实",

@@ -164,13 +164,13 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 
 **三层设计哲学**：
-- **Skill 层**：13 个业务入口覆盖数据、公司、财报、行业、论文与风险，另有 1 个受治理的全量编排入口
+- **Skill 层**：16 个业务入口覆盖数据、快筛、公司、财报、行业、风险、论文与市场级/IPO 研究，另有 1 个受治理的全量编排入口（契约 13 单元）
 - **Agent 层**：团队型 skill（如 `/investment-team`、`/earnings-review`）由 Team Lead 并行调度 4 个大师视角 Agent——各自独立搜索、独立判断、互相挑战，最后综合研判；轻量 skill 不经过这一层，直连工具快进快出
 - **工具层**：精确计算、实时检索、报告抽检——保证每份报告的数据严谨性可验证
 
 ### 单公司全量分析（WorkBuddy）
 
-无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis-workbuddy/SKILL.md`](workbuddy-skills/full-company-analysis-workbuddy/SKILL.md) 进入，由 WorkBuddy 原生 Agent 执行 13 项业务契约。Runtime 负责租约、重试、恢复与 33 次硬预算；Gate 负责 Result Bundle v1、N/A 负向验收、正式产物与总结报告原子晋级、共享 Audit、语义 Review 和最终准出。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
+无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis-workbuddy/SKILL.md`](workbuddy-skills/full-company-analysis-workbuddy/SKILL.md) 进入（lean 模式），由 WorkBuddy 原生 Agent 按 `tools/full_analysis_contract.json`（schema `full-analysis-contract/lean-v1`）执行 13 项业务契约。两条底线：**内容质量 + 失败显式 `mark-failed`**——已移除租约/重试/恢复/波次错峰等冗余机制，报告是唯一交付物。每单元移交前跑 `self-check`，Gate 在 `submit-result` 再做 substance 边界兜底（双层互不信任）；收口经 deep-summary → `register-summary` → `render-html`（确定性渲染，零 LLM）。Audit / Review / finalize 为可选评估层（L2-L4），不强制。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
 
 ```bash
 python3 scripts/full_analysis.py start \
@@ -181,7 +181,7 @@ python3 scripts/full_analysis.py start \
 
 ---
 
-## Skills 一览（13 个业务 Skill + 1 个编排 Skill）
+## Skills 一览（16 个业务 Skill + 1 个编排 Skill）
 
 ### 🔬 深度研究类
 
@@ -190,6 +190,7 @@ python3 scripts/full_analysis.py start \
 | [`/investment-research`](skills/investment-research.md) | 四大师综合深度分析 | 对一家上市公司进行全方位投资研究 |
 | [`/investment-team`](skills/investment-team.md) | 多Agent并行投研团队 | 4个Agent并行研究，最快速、最全面 |
 | [`/management-deep-dive`](skills/management-deep-dive.md) | 管理层纵深研究 | "买股票就是买人"——当管理层是核心变量时深挖 |
+| [`/a-share-prospectus-analysis`](skills/a-share-prospectus-analysis.md) | A股招股书深度分析 | 打新/IPO 研究：概念层六步 + 操作层九步精读（含步骤9 需求真实性检验/买单主体分解）+ 七缺口补强 |
 
 ### 📊 财报分析类
 
@@ -221,11 +222,18 @@ python3 scripts/full_analysis.py start \
 | [`/financial-data`](skills/financial-data.md) | 财务数据获取与交叉验证规范 | 确保关键数据来自2个独立来源，误差>1%告警 |
 | [`/ashare-data`](skills/ashare-data.md) | A股数据管线统一入口 | 行情/财务/公告/市场信号一键取数，标注来源与数据时间 |
 
+### 📡 市场监测类（独立于全量契约）
+
+| Skill | 用途 | 适合场景 |
+|-------|------|---------|
+| [`/a-share-market-sentiment`](skills/a-share-market-sentiment.md) | A股市场情绪监测 | "现在贪婪还是恐慌"：5 指标（两融/北向/估值分位/换手/开户发基）→ 评级 + 仓位分档 |
+| [`/macro-liquidity`](skills/macro-liquidity.md) | 宏观流动性监测 | "钱够不够"：美元层（Fed 净流动性/SOFR/MOVE/日元套息）+ A股层（两融/北向/中债/Shibor）双水位 |
+
 ### 🎛 编排层
 
 | Skill | 用途 | 适合场景 |
 |-------|------|---------|
-| [`/full-company-analysis-workbuddy`](skills/full-company-analysis-workbuddy.md) | 13 项单公司全量分析 | 需要 Runtime、Gate、Audit、Review 和总结报告完整闭环 |
+| [`/full-company-analysis-workbuddy`](skills/full-company-analysis-workbuddy.md) | 13 项单公司全量分析（lean 模式） | 需要契约调度、self-check、失败显式声明和总结报告/HTML 闭环；评估层按需触发 |
 
 ---
 

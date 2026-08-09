@@ -42,6 +42,12 @@
 - 落地流程：先并行侦察仓库约定（skill 格式/同步机制/CLI 能力面/产品触点），写完再过三视角对抗校验（约定合规/技术准确/集成完整）
 - 校验揪出两个真工具缺陷并如实写进 skill 数据陷阱：signals 两融块 reportName 是未替换占位符（恒"未找到记录"，已修）、financials 北交所号段误判（已修，含 920 新号段迁移）——教训：数据类 skill 的每条能力声明都要拿实测退出码/源码验证，不能照工具 docstring 转述
 
+**V4（17 个 canonical，2026-08-09）— lean 收敛 + 市场级/IPO 扩展：**
+- 仓库 `skills/` 收敛为 **17 个 canonical（16 业务 + 1 编排层）**；编排层 `full-company-analysis-workbuddy` 走 **lean-v1**（契约 13 业务单元，`tools/full_analysis_contract.json` 唯一机器真源）。
+- 契约外新增 3 个独立 skill：`a-share-market-sentiment`（市场情绪 5 指标→评级+仓位分档）、`macro-liquidity`（美元层+A股层双水位）、`a-share-prospectus-analysis`（IPO 招股书三层框架，内置宇树科技示例）。
+- 架构纪律：契约 13 单元（单公司全量）、契约外 3 件（市场级/IPO 独立运行）；源真值 `skills/<name>.md`，codex-skills / workbuddy-skills 副本由 `sync-codex-skills.py` 生成，frontmatter 6 字段由 `check-skill-frontmatter.py` CI 卡点强制。
+- 教训：新增 skill 必须跑完整 `bash scripts/check.sh`（不能只跑 `--check`）——8/9 曾因 `category: 公司` 取值非法致 check 变红，已修。
+
 ## 项目核心卖点（README中已体现）
 
 1. **强制给结论不打太极** — 通过/不通过/灰色，带具体价格区间

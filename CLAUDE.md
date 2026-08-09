@@ -30,11 +30,11 @@ skills/*.md（Claude Code slash command 源文件，权威）
 
 单一公司端到端投研的编排 + 验收体系，三个文件各司其职：
 
-- `tools/full_analysis_contract.json` — 13 项业务契约注册表，是契约集合、产物路径、适用性谓词、角色要求、证据规则与运行授权的**唯一机器真源**
-- `skills/full-company-analysis-workbuddy.md` — WorkBuddy 总控编排层，只负责调度、登记总结和触发质量闭环，不直接代写业务单元
-- `tools/full_analysis_gate.py` — 确定性验收器（v2），生命周期：`init` → Runtime 租约与 `ingest-result` → `register-summary` →共享 Audit →语义 Review → `finalize`；N/A 必须通过谓词事实和负向验收报告证明
+- `tools/full_analysis_contract.json` — 13 项业务契约注册表（schema `full-analysis-contract/lean-v1`），是契约集合、产物路径、适用性谓词、角色要求与运行授权的**唯一机器真源**
+- `skills/full-company-analysis-workbuddy.md` — WorkBuddy 总控编排层（lean 模式），只负责调度、登记总结和触发质量闭环，不直接代写业务单元
+- `tools/full_analysis_gate.py` — 确定性验收器，生命周期：`start` → `next-work`（拓扑派发）→ 独立 Agent + `self-check` → `submit-result`（substance 边界兜底）→ `register-summary` → `render-html`；L2-L4 评估层（Audit / 语义 Review / finalize+doctor）按需触发，不强制。失败单元必须 `mark-failed` 显式声明，N/A 通过适用性谓词与负向验收证明
 
-运行产物落盘到 `local/Company/<code>-<公司>/<run_id>/`，其中 `evidence/` 保存租约、账本、Audit、Review 和过程事件。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
+运行产物落盘到 `local/Company/<code>-<公司>/<run_id>/`，其中 `evidence/` 保存各单元 attempt 报告、总结报告与 manifest（租约/账本/PLACEHOLDER 机制已移除）。改注册表或 skill 规范后跑 `python3 scripts/check-full-analysis-contract.py` 独立校验（check.sh 已包含）。
 
 ## 常用命令
 
@@ -111,6 +111,9 @@ docs/            — ROADMAP 与专题文档
 | /industry-research | `{行业名}-industry-{YYYYMMDD}.md` | 根目录 |
 | /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
 | /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `local/reports/bottleneck-map/` |
+| /a-share-market-sentiment | `A股市场情绪-{YYYYMMDD}.md`（情绪评级 + 仓位分档） | 根目录 |
+| /macro-liquidity | `宏观流动性-{YYYYMMDD}.md`（美元层 + A股层双水位） | 根目录 |
+| /a-share-prospectus-analysis | `{公司名}-招股书-{YYYYMMDD}.md`（独立归档于 `local/IPO/{公司名}-{代码}/`） | `local/IPO/{公司名}-{代码}/` |
 |  /full-company-analysis-workbuddy | `<run_id>/` 运行目录（路径由 Gate 生成） | `local/Company/<code>-<公司>/` |
 
 ## 投研分析核心原则（最高优先级）

@@ -1,15 +1,17 @@
 # Skills 使用指南
 
-本仓库当前包含 13 个投研业务 Skill 和 1 个编排 Skill。`skills/*.md` 是 workflow 权威源；`codex-skills/*/SKILL.md` 与 WorkBuddy 全量分析适配器由 `python3 scripts/sync-codex-skills.py` 生成并通过 `--check` 校验。
+本仓库当前包含 **16 个投研业务 Skill 和 1 个编排 Skill**（共 17 个 canonical 源）。`skills/*.md` 是 workflow 权威源；`codex-skills/*/SKILL.md` 与 WorkBuddy 全量分析适配器由 `python3 scripts/sync-codex-skills.py` 生成并通过 `--check` 校验。
 
-> 数据截止：2026-07-25。具体章节、证据和适用性要求以各 Skill 源文件及 `tools/full_analysis_contract.json` 为准。
+其中 **13 个业务 Skill 组成单公司全量分析契约**（`tools/full_analysis_contract.json`，schema `full-analysis-contract/lean-v1`），另有 **3 个市场级 / IPO 独立 Skill**（`a-share-market-sentiment`、`macro-liquidity`、`a-share-prospectus-analysis`）不参与契约、独立运行。
+
+> 数据截止：2026-08-09。具体章节、证据和适用性要求以各 Skill 源文件及 `tools/full_analysis_contract.json` 为准。
 
 ## 通用前提
 
 - 研究开始前运行 `date`，并在报告头标注数据截止日。
 - 关键财务数据至少使用两个独立来源；差异必须解释。
 - 估值和精确计算使用 `python3 tools/financial_rigor.py`。
-- 报告交付前运行 `python3 tools/report_audit.py`；全量分析还必须通过 Gate、共享 Audit 和独立语义 Review。
+- 报告交付前运行 `python3 tools/report_audit.py`；全量分析还必须通过 self-check 与 Gate 的 substance 兜底，需要质量验证时再跑 Audit 与语义 Review。
 - 数据不足时明确记录限制，不用猜测补齐。
 - 修改 Skill 后运行 `python3 scripts/sync-codex-skills.py`，完成前运行 `bash scripts/check.sh`。
 
@@ -30,6 +32,11 @@
 | 行业 | `bottleneck-hunter` | 寻找产业链物理瓶颈 | 判断瓶颈是否真实、可持续和可投资 |
 | 风险 | `news-pulse` | 股价异动快速归因 | 公司、监管、行业和情绪四路侦察 |
 | 论文 | `thesis-tracker` | 买入后持续跟踪 | 记录证伪条件、触发器和论文健康度 |
+| 市场级 | `a-share-market-sentiment` | A股市场情绪水位（独立于契约） | 5 指标（两融/北向/估值分位/换手/开户发基）→ 预警计数 → 评级与仓位分档 |
+| 市场级 | `macro-liquidity` | 宏观流动性监测（独立于契约） | 美元层（Fed 净流动性/SOFR/MOVE/日元套息）+ A股层（两融/北向/中债/Shibor）双水位 |
+| IPO | `a-share-prospectus-analysis` | 招股书深度分析（独立于契约） | 概念层六步 + 操作层九步精读（含**步骤9 需求真实性检验/买单主体分解**）+ 七缺口补强（G1–G7），内置宇树科技示例 |
+
+> 标注「独立于契约」的 3 个 Skill 不参与 `full-company-analysis-workbuddy` 的 13 单元调度，各自按需独立运行。
 
 ## 选择建议
 
@@ -38,35 +45,46 @@
 - 财报发布后：用 `earnings-review`；管理层判断仍是主要分歧时补 `management-deep-dive`。
 - 从行业找公司：先 `industry-research` 看结构，再用 `industry-funnel` 收敛候选；物理供给约束明显时补 `bottleneck-hunter`。
 - 股价突然异动：先 `news-pulse` 判断事件性质，再决定是否重跑公司研究或更新 `thesis-tracker`。
-- 需要完整单公司闭环：使用 `full-company-analysis-workbuddy`，不要手工串联后自行宣称“全量完成”。
+- 判断"市场现在贪婪还是恐慌 / 是否过热"：用 `a-share-market-sentiment`；判断"全球或本土流动性水位"：用 `macro-liquidity`（两者互补：流动性回答"钱够不够"，情绪回答"人有多疯/多怕"）。
+- 打新 / IPO 研究：用 `a-share-prospectus-analysis`，基于一手招股书做独立判断。
+- 需要完整单公司闭环：使用 `full-company-analysis-workbuddy`，不要手工串联后自行宣称"全量完成"。
 
-## 编排 Skill：full-company-analysis-workbuddy
+## 编排 Skill：full-company-analysis-workbuddy（lean-v1）
 
-`full-company-analysis-workbuddy` 是 WorkBuddy 生产入口，不是额外的业务分析方法。它按 Contract 调度 13 个业务单元，并强制执行以下闭环：
+`full-company-analysis-workbuddy` 是 WorkBuddy 生产入口，不是额外的业务分析方法。它按契约 `tools/full_analysis_contract.json`（schema `full-analysis-contract/lean-v1`）调度 13 个业务单元，只保证两件事（两条底线）：
 
-1. `start` 创建运行目录、预算、授权信封和 13 个 work unit。
-2. `next-work` 租约注入完整方法论；独立 Agent 写入 attempt 目录。
-3. `submit-result` 绑定租约并由 Gate 晋级正式产物。N/A 必须提交可验证谓词事实、来源和负向验收报告；始终适用的单元不得 N/A。
-4. 全部业务单元终态后，主上下文只读综合正式产物，写入 `evidence/attempts/summary/summary.md` 并执行 `register-summary`。
-5. 运行共享 Audit；随后 `review prepare` 为核心单元和 `delivery-summary` 生成独立评审简报，逐份 `review ingest` 后 `review summarize`。
-6. `finalize` 只在正式产物、总结报告、Audit 快照和语义 Review 全部有效时写入 `APPROVED`。
-7. `doctor` 提供非阻断退化诊断；重复运行用 `benchmark` 比较稳定性。
+1. **内容质量**：每份研究报告基于真实数据、遵循方法论、声明数据截止日 / 来源 / 免责。
+2. **失败显式声明**：任何单元做不出来、数据缺失、推理不成立，必须显式 `mark-failed`，**不静默跳过、不自动重试、不伪造占位**。
+
+lean 模式已移除租约看门狗 / 租约身份机 / 波次错峰白名单 / 证据账本 PLACEHOLDER / 双源强制 / 版本钉死 / 自动恢复等冗余机制。报告是**唯一交付物**；证据账本（result.json）只是可选辅助，空账本合法。
+
+闭环流程：
+
+1. `start` 创建运行目录与 13 个 work unit（依赖由 `next-work` 按其 `depends_on` 拓扑自动返回就绪单元）。
+2. `next-work` 返回 `LEASED` 后派 **WorkBuddy 原生 Agent**（禁止主上下文直写正文），Agent 完整落地 `methodology_text` 并写入 attempt 目录 + `artifact.formal_path`。
+3. 移交前必须跑 `self-check`（实质章节数 / 三锚 / 字节下限）；通过后 `submit-result`（或 `mk_result_bundle` 生成 result.json；空账本合法）。Gate 在 `submit-result` 再做一次 substance 边界兜底（双层互不信任）。
+4. 失败单元：`mark-failed --reason ...`（可选 `--retry` 重排一次），不自动重试、不启动看门狗、不做孤儿恢复。
+5. 全部业务单元终态后，派 deep-summary Agent 熔炼总结 → `register-summary` 冻结 → `render-html` 确定性渲染（零 LLM 零方差）。总结须如实标注缺失单元，且遵循 `docs/delivery-summary-quality-standard.md`（25-40KB、≥6 表格、≥5 内联 SVG、三大章节深化、数字溯源抽查）。
+6. **L2-L4 可选评估层**（不强制）：`audit`（结构验证）→ `review`（五维语义）→ `finalize`+`doctor`（digest 校验 + 退化指纹，advisory 非阻断）。L1 交付不依赖评估层。
 
 ```bash
 python3 scripts/full_analysis.py start \
   --company 格力电器 --code 000651.SZ --as-of 2026-07-25
 
+python3 scripts/full_analysis.py next-work --run-root <run_root>
+python3 scripts/full_analysis.py self-check \
+  --run-root <run_root> --skill-id <skill_id> --report <attempt_dir>/report.md
+python3 scripts/full_analysis.py submit-result --run-root <run_root> ...
 python3 scripts/full_analysis.py register-summary \
-  --run-root <run_root> \
-  --summary <run_root>/evidence/attempts/summary/summary.md
+  --run-root <run_root> --summary <run_root>/evidence/attempts/summary/summary.md
+python3 scripts/full_analysis.py render-html --run-root <run_root>
 
+# 可选评估层（需要质量验证 / 正式交付 / benchmark 时）
 python3 scripts/full_analysis.py audit --run-root <run_root>
 python3 scripts/full_analysis.py review prepare --run-root <run_root>
 python3 scripts/full_analysis.py review summarize --run-root <run_root>
 python3 tools/full_analysis_gate.py finalize --run-root <run_root>
 ```
-
-Runtime 的硬预算是 33 个 Agent job，30 次后停止非核心派生重试；并发上限为 4。共享状态使用跨进程锁，`resume` 会先验证孤儿结果再决定接管或重排。
 
 全量运行的启动请求只授权只读外部研究、`run_root` 内写入和研究结论。它不授权 push、PR、发布、发送、外部系统写入、越界写入或敏感数据访问。
 

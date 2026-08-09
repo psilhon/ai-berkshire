@@ -5,6 +5,57 @@
 
 ---
 
+## [v3.9.0] — 2026-08-09
+
+> **A股招股书分析 skill 首次实战（宇树科技 688836）+ 三轮迭代收口版**：skill 首跑暴露"买单主体分解"盲区（v1 把 76% 卖给科研教育的收入误读为生产力业务成色），经 v2 重写 + 根因分析后把需求真实性检验固化为程序化强制步骤；同期落地两个市场级新 skill 与 investment-research 增强。
+
+### ✨ 新增 (Added)
+
+- **`skills/a-share-prospectus-analysis.md` 首次实战并完成三轮迭代**（附录结构内嵌：附录一 章节对照/红警清单/估值模板，附录二 宇树快照）：
+  - **操作层八步→九步**：新增**步骤 9"需求真实性检验：买单主体分解 + 同族盲区"**——9a 收入结构三问（谁在买/买去干什么/会不会重复买）、9b 同族盲区清单 7 项（产品线vs场景口径、出货量≠有效部署、一次性vs经常性、数据飞轮燃料质量、**管理层口头证据强制收集**、伪B端检测、降价≠渗透率）、9c 数据落点（分应用领域收入表几乎只在问询函回复）与估值口径校准。
+  - **六缺口→七缺口**：新增 **G7 生产模式/资产结构**（机器设备占总资产比、外协外包比例、募投产能 vs 现有产能倍数）。
+  - **方法论总览新增两道护栏**：需求真实性护栏（优先级最高）+ **根因自觉段**（注意力梯度/叙事锚定/口径信任三层根因——需求真实性不能靠"记得去查"，必须程序化强制）。
+  - **G5 估值模板强化**：SOTP 分段拆分纪律（逐项标【估算】）+ **按应用领域拆分（联动步骤9）** + reverse-DCF/TAM 实测值 + 新增**估值跳升**观测（最后一轮投后 vs 发行市值，宇树 127→609.93 亿 ≈4.8 倍）。
+  - 反例黑名单 +4、if-then 失败表 +4（含"分场景收入不可得→保守口径""路演措辞矛盾→取保守侧"）、检查清单同步九步化。
+  - 附录二宇树快照按一手文件（三版招股书各~369页 + 两轮问询回复 283+45 页）全量核验修订，新增"客户结构解剖"专节（人形 76% 科教/真实工业 ≤2.6%/境外 68.37% vs 境内 46.35%/信仰税科教口径上修 69%~79%/管理层路演口头证据）。
+- **`skills/macro-liquidity.md`**（市场级，独立于契约）：美元层 D1-D4 + A股层 A1-A4 双层流动性监测，预警计数→分档评级，Tushare/WebSearch 取数，fail-close（整层全缺不评级）。
+- **`skills/a-share-market-sentiment.md`**（市场级，独立于契约）：A股口径 5 指标情绪系统（两融/北向/估值分位/换手/开户发基），**双向出警计数**（贪婪+1/恐慌-1 独立统计，防极端市况评级反转），与 macro-liquidity 分工互补。
+- **`investment-research` 增强**：新增第〇步**关键力量识别（Key Forces）**（先锁 1-3 个决定性力量，相关模块 2-3 倍覆盖，治"面面俱到都不深"）+ 第七步半**差异观点（Variant View）**（市场共识/我们认为/他们错在，无差异须显式声明）。
+- **IPO 产出目录约定**：所有 IPO 研究产出统一归档 `local/IPO/<公司名>-<代码>/`（报告 md + HTML + evidence 一手取证）；每份报告须同时生成自包含 HTML（html-express 规范）。
+
+### 🔧 修复 (Fixed)
+
+- `a-share-prospectus-analysis` frontmatter `category: 公司` 非法值 → `深度公司研究`（check.sh frontmatter 门禁此前一直为它变红的隐患）。
+- SKILLS-GUIDE 更新：16 业务 Skill 登记、契约/独立 Skill 区分、lean-v1 编排节重写（移除已废弃的 resume/并发4 旧描述）。
+
+### 🔬 验收实证
+
+- 宇树 IPO 首跑取证：三版招股书 + 两轮问询回复全部 PDF 逐页提取核验；G6 三版 diff 精确定位上会稿新增 2 处针对性风险；信仰税 39%~71% → 科教口径上修 69%~79%；产出 v1/v2 报告 + HTML 可视化报告（`local/IPO/宇树科技-688836/`）。
+- 三副本同步：`skills/*.md`（源）→ `codex-skills/*/SKILL.md`（sync-codex-skills）→ `~/.workbuddy/skills/`（berkshire-skill-sync），均 `--check` 通过。
+- `bash scripts/check.sh`：**退出码 0**（734 tests OK + frontmatter 17 个合规 + codex 同步 + 注册表校验）。
+
+## [v3.9.1] — 2026-08-09（文档体系刷新）
+
+> 承接 v3.9.0：**全仓文档体系整体同步到 2026-08-09 最新状态**。v3.9.0 条目中声明的「SKILLS-GUIDE 更新」在磁盘上实际未落地（实测仍为 07-25 旧版），本轮一并补齐；并完成 README / 体系分析 / CLAUDE / ai_CLAUDE 的同步刷新与 check.sh 实测闭环。docs-only，无代码行为变更。
+
+### 📝 文档刷新 (Docs)
+
+- **`SKILLS-GUIDE.md` 重写**（数据截止 2026-08-09）：17 个 canonical（16 业务 + 1 编排）；3 个契约外 skill（`a-share-market-sentiment` / `macro-liquidity` / `a-share-prospectus-analysis`）入表并标注「独立于契约」；「选择建议」补充市场情绪/流动性/招股书入口；编排层章节按 **lean-v1** 重写（两条底线、self-check、L1 收口 + L2-L4 可选评估层，移除已废弃的租约/波次/33 次硬预算/Audit-Review-finalize 强制链描述）。
+- **`README.md`**：Skill 层描述 13→16 业务；编排段 lean 化（去掉"Runtime 负责租约、重试、恢复与 33 次硬预算"等已移除机制）；Skills 一览 16+1、新增「📡 市场监测类」分类（情绪/流动性）、深度研究类补招股书；编排层行改为 lean 描述。
+- **`docs/skill-system-analysis.md` 快照刷新至 2026-08-09**：资产清单（skills 17 / codex-skills 18 = 17 生成 + 1 Codex-only / workbuddy-skills 1 adapter）、契约边界（13 入契约 + 3 契约外）、功能分类、同步健康度（实测）、新增 P4 修复存档（category 合规回归），开发规范同步（frontmatter 取值受 check.sh 卡点约束）。
+- **`CLAUDE.md`**：编排三段描述 lean 化（生命周期 start→next-work→self-check→submit-result→register-summary→render-html；L2-L4 可选；evidence 保存 attempt/总结/manifest，租约账本已移除）；报告命名表补 3 个新 skill（情绪/流动性 → 根目录，招股书 → `local/IPO/<公司名>-<代码>/`）。
+- **`ai_CLAUDE.md`**：Skill 体系演进追加 **V4（17 个 canonical，2026-08-09）** 条目（lean 收敛 + 市场级/IPO 扩展 + 架构纪律 + 教训）。
+
+### 🐛 修复 (Fixed)
+
+- **v3.9.0 记录的 SKILLS-GUIDE 更新实际未落地**：实测磁盘文件仍为 07-25 旧版（13 业务、租约式编排描述），本轮已按 v3.9.0 意图完整重写（见上）。
+- **frontmatter 合规回归（与 v3.9.0 同源，本轮实测闭环）**：`skills/a-share-prospectus-analysis.md` `category: 公司` 非法 → `深度公司研究`；重跑 `sync-codex-skills.py`（17 + WorkBuddy adapter）+ 重建 `local/reports/INDEX.md`（报告索引漂移）。
+
+### 🔬 验收实证
+
+- `bash scripts/check.sh`：**REAL_EXIT=0**（734 单测 OK；17/17 frontmatter 合规；codex-skills 17 + WorkBuddy adapter `--check` 通过；报告索引已重建；lean-v1 契约结构合法）。
+- 全仓复查：`grep` 无残留旧计数（"13 个投研业务"/"21 个"/"租约、重试、恢复"等已从活跃文档清除，历史 CHANGELOG 条目保留原样）。
+
 ## [v3.8.1] — 2026-08-07
 
 > 华能国际（600011.SH）全量分析 run 收口暴露总结报告质量短板后的修复+增强版：**渲染器空壳 HTML 修复**（`_parse_sections` 只认 `##` 而 Gate 强制 `#` 一级标题，导致 `<main>` 全空）、**渲染器支持内联 SVG 图表**（` ```svg ` fence）、**交付总结质量标准沉淀**（表格+图示+三大章节深化+数字溯源+渲染后验收，防再退回索引式速览）。
