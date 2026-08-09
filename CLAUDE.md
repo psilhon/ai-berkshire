@@ -72,7 +72,7 @@ python3 tools/ashare_data.py search 茅台
 python3 tools/ashare_data.py mainbz 600519       # 主营业务分部（独立第二源）
 python3 tools/ashare_data.py managers 600519     # 管理层履历（补 management-deep-dive 硬缺口）
 python3 tools/ashare_data.py ratios 600519       # 财务比率全景（quality-screen 独立比率集）
-# 全量清单见 docs/tushare-data-gaps.md 与 `python3 tools/ashare_data.py --help`
+# 全量清单见 docs/archive/tushare-data-gaps.md 与 `python3 tools/ashare_data.py --help`
 ```
 
 其它工具：`stock_screener.py`（动量+价值筛选，读 `data/watchlist.json`）、`momentum_backtest.py` / `momentum_backtest_v2.py`（动量+价值框架历史回测，NVDA/AMD/MU）、`morningstar_fair_value.py`（晨星公允价值抓取）、`xueqiu_scraper.py`（雪球用户时间线爬虫）、`akshare_data.py`（前复权历史价 / PE-PB 分位带，走腾讯证券绕开东财已封禁的 push2his 端点）、`hkex_data.py`（港交所披露易 A+H 双源年报交叉验证，curl 直连）、`star_history_chart.py`（README 自托管 star 曲线 SVG）。工具原则上零外部依赖（仅 Python stdlib）；**两处 pip 例外**：`xueqiu_scraper.py` 需 playwright（`pip install playwright && playwright install chromium`），`akshare_data.py` 需 akshare（`pip install akshare`）。另 Tushare 增强命令需环境变量 `TUSHARE_TOKEN`（实现仍是 stdlib，无 pip 依赖）。

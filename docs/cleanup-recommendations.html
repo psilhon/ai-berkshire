@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Berkshire 文档清理建议报告</title>
+<style>
+:root {
+  --bg: #fafafa;
+  --card-bg: #fff;
+  --border: #e0e0e0;
+  --text: #1a1a1a;
+  --text-secondary: #666;
+  --accent: #0066cc;
+  --red: #d32f2f;
+  --orange: #f57c00;
+  --green: #388e3c;
+  --yellow: #fbc02d;
+  --code-bg: #f5f5f5;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+h1 { font-size: 1.8em; margin-bottom: 4px; }
+h2 { font-size: 1.4em; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+h3 { font-size: 1.15em; margin: 20px 0 8px; }
+.subtitle { color: var(--text-secondary); font-size: 0.9em; margin-bottom: 24px; }
+.summary-box {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 24px;
+  border-radius: 12px;
+  margin-bottom: 32px;
+}
+.summary-box h2 { border: none; color: white; margin-top: 0; }
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.summary-card {
+  background: rgba(255,255,255,0.15);
+  padding: 16px;
+  border-radius: 8px;
+  text-align: center;
+}
+.summary-card .num { font-size: 2em; font-weight: 700; }
+.summary-card .label { font-size: 0.85em; opacity: 0.9; }
+
+.priority-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.priority-p0 { border-left: 4px solid var(--red); }
+.priority-p1 { border-left: 4px solid var(--orange); }
+.priority-p2 { border-left: 4px solid var(--yellow); }
+.priority-p3 { border-left: 4px solid var(--green); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 600;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.badge-p0 { background: #ffebee; color: var(--red); }
+.badge-p1 { background: #fff3e0; color: var(--orange); }
+.badge-p2 { background: #fffde7; color: #f9a825; }
+.badge-p3 { background: #e8f5e9; color: var(--green); }
+.badge-tracked { background: #e3f2fd; color: var(--accent); }
+.badge-untracked { background: #f3e5f5; color: #7b1fa2; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 0.9em;
+}
+th, td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+th { background: var(--code-bg); font-weight: 600; }
+tr:hover { background: #f9f9f9; }
+code {
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.88em;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+pre {
+  background: var(--code-bg);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-size: 0.85em;
+}
+.action-box {
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0;
+}
+.action-box h4 { color: var(--green); margin-bottom: 8px; }
+.warning-box {
+  background: #fff3e0;
+  border: 1px solid #ffcc80;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0;
+}
+.warning-box h4 { color: var(--orange); margin-bottom: 8px; }
+.danger-box {
+  background: #ffebee;
+  border: 1px solid #ef9a9a;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0;
+}
+.danger-box h4 { color: var(--red); margin-bottom: 8px; }
+.file-list {
+  list-style: none;
+  padding: 0;
+}
+.file-list li {
+  padding: 6px 12px;
+  margin: 4px 0;
+  background: var(--code-bg);
+  border-radius: 4px;
+  font-family: "SF Mono", monospace;
+  font-size: 0.88em;
+}
+.stat-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.stat-item {
+  text-align: center;
+}
+.stat-item .value { font-size: 1.8em; font-weight: 700; color: var(--accent); }
+.stat-item .desc { font-size: 0.8em; color: var(--text-secondary); }
+hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+.footer {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+
+<h1>AI Berkshire 文档清理建议报告</h1>
+<p class="subtitle">
+  扫描日期：2026-08-10 | 项目版本：v3.9.3 | 工作区：/Users/psilhon/WorkSpace/stock/berkshire
+</p>
+
+<div class="summary-box">
+  <h2>扫描概览</h2>
+  <p>对项目根目录、docs/、tools/、tmp/、deliverables/、scripts/ 等目录进行了全量扫描，以下为发现汇总：</p>
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="num">4</div>
+      <div class="label">根目录临时脚本<br>(未跟踪)</div>
+    </div>
+    <div class="summary-card">
+      <div class="num">30</div>
+      <div class="label">编译/备份文件<br>(.pyc/.bak)</div>
+    </div>
+    <div class="summary-card">
+      <div class="num">27</div>
+      <div class="label">历史设计文档<br>(docs/superpowers/)</div>
+    </div>
+    <div class="summary-card">
+      <div class="num">8.1M</div>
+      <div class="label">tmp/ 目录<br>(.gitignored)</div>
+    </div>
+    <div class="summary-card">
+      <div class="num">5</div>
+      <div class="label">已完成/过时文档<br>(docs/ 独立文件)</div>
+    </div>
+    <div class="summary-card">
+      <div class="num">2</div>
+      <div class="label">内容重叠文档<br>(SKILLS-GUIDE 等)</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== P0 ==================== -->
+
+<h2>P0 — 立即清理（安全无风险）</h2>
+
+<div class="priority-section priority-p0">
+  <h3>1. 根目录一次性修复脚本 <span class="badge badge-p0">P0</span> <span class="badge badge-untracked">未跟踪</span></h3>
+  <p>这些脚本是为特定分析 run 编写的一次性修复工具，已完成使命，且未被 git 跟踪，可直接删除。</p>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>文件</th>
+        <th>大小</th>
+        <th>日期</th>
+        <th>用途</th>
+        <th>状态</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>fix_manifest_audit.py</code></td>
+        <td>7.7K</td>
+        <td>07-25</td>
+        <td>300308.SZ audit 账本修复</td>
+        <td>已完成，未跟踪</td>
+      </tr>
+      <tr>
+        <td><code>fix_sungrow_audit.py</code></td>
+        <td>27K</td>
+        <td>07-25</td>
+        <td>阳光电源 300274.SZ audit 修复</td>
+        <td>已完成，未跟踪</td>
+      </tr>
+      <tr>
+        <td><code>fix_sungrow_audit_2.py</code></td>
+        <td>9.1K</td>
+        <td>07-25</td>
+        <td>同上，第二轮修复</td>
+        <td>已完成，未跟踪</td>
+      </tr>
+      <tr>
+        <td><code>fix_sungrow_audit_3.py</code></td>
+        <td>4.7K</td>
+        <td>07-25</td>
+        <td>同上，第三轮修复</td>
+        <td>已完成，未跟踪</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="action-box">
+    <h4>建议操作</h4>
+    <pre>rm fix_manifest_audit.py fix_sungrow_audit.py fix_sungrow_audit_2.py fix_sungrow_audit_3.py</pre>
+    <p>这 4 个文件均未被 git 跟踪，删除后无任何影响。如果需要保留记录，可先在 CHANGELOG.md 中注明"修复脚本已归档/删除"。</p>
+  </div>
+</div>
+
+<div class="priority-section priority-p0">
+  <h3>2. tools/ 下的编译缓存与备份文件 <span class="badge badge-p0">P0</span> <span class="badge badge-untracked">未跟踪</span></h3>
+  <p>Python 运行时自动生成的 <code>__pycache__</code> 目录和 <code>.pyc</code> 文件，以及手动备份的 <code>.bak</code> 文件。</p>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>类别</th>
+        <th>路径</th>
+        <th>数量</th>
+        <th>状态</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>.pyc 缓存</td>
+        <td><code>tools/__pycache__/</code></td>
+        <td>11 文件</td>
+        <td>未跟踪</td>
+      </tr>
+      <tr>
+        <td>.pyc 缓存</td>
+        <td><code>tools/ashare_plugin/__pycache__/</code></td>
+        <td>18 文件</td>
+        <td>未跟踪</td>
+      </tr>
+      <tr>
+        <td>.bak 备份</td>
+        <td><code>tools/full_analysis_gate.py.bak-20260722-202828</code></td>
+        <td>1 文件</td>
+        <td>未跟踪</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="action-box">
+    <h4>建议操作</h4>
+    <pre>find tools/ -type d -name "__pycache__" -exec rm -rf {} +
+rm tools/full_analysis_gate.py.bak-20260722-202828</pre>
+    <p><code>.gitignore</code> 已包含 <code>*.pyc</code> 和 <code>__pycache__/</code>，但未包含 <code>*.bak*</code>。建议在 <code>.gitignore</code> 中补充 <code>*.bak*</code> 规则。</p>
+  </div>
+</div>
+
+<!-- ==================== P1 ==================== -->
+
+<h2>P1 — 建议归档（历史价值 vs 目录整洁）</h2>
+
+<div class="priority-section priority-p1">
+  <h3>3. docs/superpowers/ 历史设计文档归档 <span class="badge badge-p1">P1</span> <span class="badge badge-tracked">已跟踪</span></h3>
+  <p>27 个文件，共约 10,015 行，包含 12 个设计规格（specs/）和 15 个实施计划（plans/），时间跨度 2026-07-16 至 2026-08-01。全部对应已发布版本的功能（v3.3.x → v3.3.10），属于已完成的历史记录。</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>类型</th>
+        <th>数量</th>
+        <th>行数</th>
+        <th>时间范围</th>
+        <th>对应版本</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>设计规格 (specs/)</td>
+        <td>12</td>
+        <td>~2,595</td>
+        <td>07-16 ~ 07-27</td>
+        <td>v3.3.2 ~ v3.3.5</td>
+      </tr>
+      <tr>
+        <td>实施计划 (plans/)</td>
+        <td>15</td>
+        <td>~7,420</td>
+        <td>07-16 ~ 08-01</td>
+        <td>v3.3.2 ~ v3.3.10</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p><strong>问题</strong>：这些文档在项目演进中已无实际参考价值（对应功能已交付并替代），但作为项目历史记录有保留价值。当前混在 <code>docs/</code> 中增加了文档树的认知负担。</p>
+
+  <div class="action-box">
+    <h4>建议操作：迁移到 docs/archive/</h4>
+    <pre>mkdir -p docs/archive/superpowers
+git mv docs/superpowers/specs docs/archive/superpowers/specs
+git mv docs/superpowers/plans docs/archive/superpowers/plans
+rmdir docs/superpowers</pre>
+    <p>或者如果认为不再需要，直接删除（git 历史中已有完整记录）。</p>
+  </div>
+
+  <div class="warning-box">
+    <h4>注意事项</h4>
+    <p>检查是否有其他文件引用 <code>docs/superpowers/</code> 路径。如果有，需要同步更新引用。</p>
+  </div>
+</div>
+
+<div class="priority-section priority-p1">
+  <h3>4. tmp/ 目录清理 <span class="badge badge-p1">P1</span> <span class="badge badge-untracked">未跟踪</span></h3>
+  <p>8.1M 临时数据，已被 <code>.gitignore</code> 排除，但占用本地磁盘且增加 <code>find</code>/<code>grep</code> 噪音。</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>路径</th>
+        <th>内容</th>
+        <th>文件数</th>
+        <th>建议</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>tmp/funnel/</code></td>
+        <td>行业漏斗筛选历史数据（hist_/eq_/cf_ 前缀）</td>
+        <td>30 个 .txt</td>
+        <td>删除（已完成的分析快照）</td>
+      </tr>
+      <tr>
+        <td><code>tmp/gen_summary_svgs.py</code></td>
+        <td>SVG 生成脚本</td>
+        <td>1 个 .py</td>
+        <td>如已不用则删除，否则移到 scripts/</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="action-box">
+    <h4>建议操作</h4>
+    <pre>rm -rf tmp/funnel/
+# gen_summary_svgs.py 如果仍被引用，移到 scripts/
+# mv tmp/gen_summary_svgs.py scripts/
+# 否则：
+# rm tmp/gen_summary_svgs.py</pre>
+  </div>
+</div>
+
+<!-- ==================== P2 ==================== -->
+
+<h2>P2 — 内容整理（文档质量与一致性）</h2>
+
+<div class="priority-section priority-p2">
+  <h3>5. 已完成/过时的独立文档 <span class="badge badge-p2">P2</span> <span class="badge badge-tracked">已跟踪</span></h3>
+  <p>以下文档在 <code>docs/</code> 根目录下，内容已完成或部分过时，建议归档或标注状态。</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>文件</th>
+        <th>行数</th>
+        <th>日期</th>
+        <th>状态</th>
+        <th>建议</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>docs/tushare-data-gaps.md</code></td>
+        <td>83</td>
+        <td>07-19</td>
+        <td>✅ Tier-1+2 已全部实现</td>
+        <td>归档到 docs/archive/</td>
+      </tr>
+      <tr>
+        <td><code>docs/ashare-data-tiered-upgrade-plan.md</code></td>
+        <td>398</td>
+        <td>07-31</td>
+        <td>✅ 项目收口</td>
+        <td>归档到 docs/archive/</td>
+      </tr>
+      <tr>
+        <td><code>docs/data-source-optimization.md</code></td>
+        <td>193</td>
+        <td>07-22</td>
+        <td>部分过时（数据源已演进）</td>
+        <td>归档或更新</td>
+      </tr>
+      <tr>
+        <td><code>docs/full-analysis-cost-budget.md</code></td>
+        <td>55</td>
+        <td>~07-25</td>
+        <td>设计文档，功能已实现</td>
+        <td>归档到 docs/archive/</td>
+      </tr>
+      <tr>
+        <td><code>docs/ROADMAP.md</code></td>
+        <td>39</td>
+        <td>~07-15</td>
+        <td>P0 全部完成，P1/P2 未更新</td>
+        <td>更新或重写</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="priority-section priority-p2">
+  <h3>6. 内容重叠的文档 <span class="badge badge-p2">P2</span> <span class="badge badge-tracked">已跟踪</span></h3>
+  <p>以下文档在 Skill 体系描述上存在内容重叠：</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>文件</th>
+        <th>行数</th>
+        <th>定位</th>
+        <th>重叠点</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SKILLS-GUIDE.md</code></td>
+        <td>91</td>
+        <td>Skill 使用快速指南</td>
+        <td rowspan="3">Skill 列表、分类、调用方式</td>
+      </tr>
+      <tr>
+        <td><code>docs/skill-system-analysis.md</code></td>
+        <td>130</td>
+        <td>Skill 体系深度分析</td>
+      </tr>
+      <tr>
+        <td><code>docs/architecture-and-skills-guide.html</code></td>
+        <td>~HTML</td>
+        <td>架构 + Skill 综合说明（v3.9.1 生成）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="action-box">
+    <h4>建议操作</h4>
+    <p>三份文档定位不同但内容重叠。建议：</p>
+    <ul style="margin-left: 20px; margin-top: 8px;">
+      <li><code>SKILLS-GUIDE.md</code> 保留为根目录速查入口，精简到"Skill 列表 + 一句话描述 + 调用命令"</li>
+      <li><code>docs/skill-system-analysis.md</code> 可合并进 HTML 版或归档（HTML 版是超集）</li>
+      <li><code>docs/architecture-and-skills-guide.html</code> 作为唯一综合文档保留</li>
+    </ul>
+  </div>
+</div>
+
+<div class="priority-section priority-p2">
+  <h3>7. docs/adr/ 空目录 <span class="badge badge-p2">P2</span> <span class="badge badge-tracked">已跟踪</span></h3>
+  <p><code>docs/adr/</code> 目录仅有 <code>README.md</code>（ADR 格式说明），没有任何实际 ADR 文件。项目已在 CHANGELOG 中发布了 v3.3 ~ v3.9 的多个架构变更，但没有沉淀任何 ADR。</p>
+
+  <div class="warning-box">
+    <h4>建议操作</h4>
+    <ul style="margin-left: 20px; margin-top: 8px;">
+      <li>如果打算用 ADR：从已有架构变更中提炼（如 lean-v1 pivot、双源冲突协议、wave 调度等）补写 ADR-0001+</li>
+      <li>如果暂不需要：在 README 中标注"待启用"，或移除该目录减少噪音</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ==================== P3 ==================== -->
+
+<h2>P3 — 可选优化（锦上添花）</h2>
+
+<div class="priority-section priority-p3">
+  <h3>8. docs/agents/ 模板文件评估 <span class="badge badge-p3">P3</span> <span class="badge badge-tracked">已跟踪</span></h3>
+  <p>3 个文件来自 Matt Pocock skills 模板（<code>domain.md</code>、<code>issue-tracker.md</code>、<code>triage-labels.md</code>）。</p>
+  <ul style="margin-left: 20px; margin-top: 8px;">
+    <li><code>issue-tracker.md</code> — 描述 GitHub issue 工作流，本仓库有 GitHub issues，仍相关</li>
+    <li><code>triage-labels.md</code> — 标签映射表，本仓库实际使用 labels，仍相关</li>
+    <li><code>domain.md</code> — 指向 <code>CONTEXT.md</code>，内容泛化，可定制或保留</li>
+  </ul>
+  <p><strong>建议</strong>：保留，但可考虑在 <code>domain.md</code> 中补充本仓库特有信息，减少通用模板痕迹。</p>
+</div>
+
+<div class="priority-section priority-p3">
+  <h3>9. CONTEXT.md 骨架状态 <span class="badge badge-p3">P3</span> <span class="badge badge-tracked">已跟踪</span></h3>
+  <p>45 行，自述"骨架版"。词汇表仅 6 条，与项目实际复杂度（17 个 Skill、13 项契约、4 阶段依赖）不匹配。</p>
+  <p><strong>建议</strong>：在下次 skill 迭代时顺手扩展词汇表，或标注"WIP — 随项目演进补充"。</p>
+</div>
+
+<div class="priority-section priority-p3">
+  <h3>10. .gitignore 补充 <span class="badge badge-p3">P3</span></h3>
+  <p>当前 <code>.gitignore</code> 已覆盖 <code>__pycache__/</code>、<code>*.pyc</code>、<code>/tmp/</code>、<code>/local/</code>、<code>/deliverables/</code>，但缺少以下规则：</p>
+  <table>
+    <thead>
+      <tr><th>模式</th><th>原因</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>*.bak*</code></td><td>已有 <code>.bak-20260722-202828</code> 文件漏网</td></tr>
+      <tr><td><code>/fix_*.py</code></td><td>一次性修复脚本不应入库</td></tr>
+    </tbody>
+  </table>
+  <div class="action-box">
+    <h4>建议操作</h4>
+    <p>在 <code>.gitignore</code> 的"系统与工具产物"区块追加：</p>
+    <pre># 一次性修复脚本与备份文件
+*.bak*
+/fix_*.py</pre>
+  </div>
+</div>
+
+<!-- ==================== 汇总 ==================== -->
+
+<hr>
+
+<h2>清理优先级汇总</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>优先级</th>
+      <th>项目</th>
+      <th>操作</th>
+      <th>风险</th>
+      <th>文件数</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-p0">P0</span></td>
+      <td>根目录 fix 脚本</td>
+      <td>删除</td>
+      <td>无（未跟踪）</td>
+      <td>4</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p0">P0</span></td>
+      <td>tools/ .pyc + .bak</td>
+      <td>删除</td>
+      <td>无（未跟踪）</td>
+      <td>30</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p1">P1</span></td>
+      <td>docs/superpowers/ 归档</td>
+      <td>git mv → docs/archive/</td>
+      <td>低（需更新引用）</td>
+      <td>27</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p1">P1</span></td>
+      <td>tmp/ 清理</td>
+      <td>删除</td>
+      <td>无（未跟踪）</td>
+      <td>31</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p2">P2</span></td>
+      <td>已完成独立文档归档</td>
+      <td>git mv → docs/archive/</td>
+      <td>低</td>
+      <td>5</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p2">P2</span></td>
+      <td>重叠文档合并</td>
+      <td>精简 SKILLS-GUIDE / 归档 analysis</td>
+      <td>中（需确认无引用断裂）</td>
+      <td>2</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p2">P2</span></td>
+      <td>docs/adr/ 空目录</td>
+      <td>补 ADR 或标注 WIP</td>
+      <td>无</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p3">P3</span></td>
+      <td>.gitignore 补规则</td>
+      <td>追加 *.bak* /fix_*.py</td>
+      <td>无</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p3">P3</span></td>
+      <td>docs/agents/ 评估</td>
+      <td>定制或保留</td>
+      <td>无</td>
+      <td>3</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-p3">P3</span></td>
+      <td>CONTEXT.md 扩展</td>
+      <td>补充词汇表</td>
+      <td>无</td>
+      <td>1</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>一键执行 P0（安全清理）</h3>
+<pre># 1. 删除根目录一次性修复脚本
+rm fix_manifest_audit.py fix_sungrow_audit.py fix_sungrow_audit_2.py fix_sungrow_audit_3.py
+
+# 2. 清理编译缓存与备份文件
+find tools/ -type d -name "__pycache__" -exec rm -rf {} +
+rm -f tools/*.bak*
+
+# 3. 清理 tmp/ 临时数据
+rm -rf tmp/funnel/
+
+# 4. 补充 .gitignore 规则（需手动编辑）
+# 在"系统与工具产物"区块追加：
+#   *.bak*
+#   /fix_*.py</pre>
+
+<div class="footer">
+  AI Berkshire 文档清理建议报告 | 扫描日期 2026-08-10 | 项目版本 v3.9.3<br>
+  仅供项目维护参考，执行前请确认无其他依赖
+</div>
+
+</body>
+</html>
