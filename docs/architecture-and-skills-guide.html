@@ -1,0 +1,1637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Berkshire — 架构体系与 Skill 完整使用说明</title>
+<style>
+:root {
+  --bg: #fafbfc;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --text: #1a202c;
+  --text-secondary: #4a5568;
+  --text-muted: #718096;
+  --primary: #2563eb;
+  --primary-light: #dbeafe;
+  --accent: #7c3aed;
+  --accent-light: #ede9fe;
+  --success: #059669;
+  --success-light: #d1fae5;
+  --warning: #d97706;
+  --warning-light: #fef3c7;
+  --danger: #dc2626;
+  --danger-light: #fee2e2;
+  --code-bg: #f1f5f9;
+  --code-text: #334155;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  font-size: 15px;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+
+/* Header */
+.hero {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #7c3aed 100%);
+  color: white;
+  padding: 60px 40px;
+  border-radius: 16px;
+  margin-bottom: 40px;
+  box-shadow: 0 4px 24px rgba(37, 99, 235, 0.15);
+}
+.hero h1 { font-size: 32px; font-weight: 700; margin-bottom: 12px; }
+.hero .subtitle { font-size: 18px; opacity: 0.9; margin-bottom: 20px; }
+.hero .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+.hero .meta-item {
+  background: rgba(255,255,255,0.15);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  backdrop-filter: blur(4px);
+}
+.hero .meta-item strong { font-weight: 600; }
+
+/* Navigation */
+.toc {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 40px;
+  position: sticky;
+  top: 20px;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.toc h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 12px; }
+.toc ul { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.toc a {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--primary);
+  text-decoration: none;
+  background: var(--primary-light);
+  transition: all 0.15s;
+}
+.toc a:hover { background: var(--primary); color: white; }
+
+/* Sections */
+section { margin-bottom: 48px; scroll-margin-top: 80px; }
+h2 {
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 3px solid var(--primary);
+  color: var(--text);
+}
+h3 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 28px;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 20px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+p { margin-bottom: 12px; color: var(--text-secondary); }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  transition: box-shadow 0.2s;
+}
+.card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.badge-core { background: var(--success-light); color: var(--success); }
+.badge-beta { background: var(--warning-light); color: var(--warning); }
+.badge-contract { background: var(--primary-light); color: var(--primary); }
+.badge-independent { background: var(--accent-light); color: var(--accent); }
+.badge-orchestration { background: #fce7f3; color: #be185d; }
+.badge-fanout { background: #fef3c7; color: #92400e; }
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+th {
+  background: var(--code-bg);
+  text-align: left;
+  padding: 10px 14px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 2px solid var(--border);
+  white-space: nowrap;
+}
+td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+tr:hover td { background: rgba(37, 99, 235, 0.02); }
+
+/* Code */
+code {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 16px 20px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+/* Architecture diagram */
+.arch-diagram {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  margin-bottom: 24px;
+  text-align: center;
+}
+.arch-flow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.arch-box {
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: center;
+  min-width: 160px;
+}
+.arch-box.source { background: var(--primary-light); color: var(--primary); border: 2px solid var(--primary); }
+.arch-box.generated { background: var(--accent-light); color: var(--accent); border: 2px solid var(--accent); }
+.arch-box.tools { background: var(--success-light); color: var(--success); border: 2px solid var(--success); }
+.arch-arrow { font-size: 24px; color: var(--text-muted); }
+
+/* Stage diagram */
+.stage-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin: 20px 0;
+}
+.stage {
+  background: var(--surface);
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+}
+.stage-1 { border-left-color: #2563eb; }
+.stage-2 { border-left-color: #7c3aed; }
+.stage-3 { border-left-color: #059669; }
+.stage-4 { border-left-color: #d97706; }
+.stage-title { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+.stage-content { font-size: 13px; color: var(--text-secondary); }
+.stage-skills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.stage-skill {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--code-bg);
+  color: var(--text-secondary);
+}
+
+/* Skill detail card */
+.skill-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  scroll-margin-top: 80px;
+}
+.skill-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.skill-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.skill-name { font-size: 20px; font-weight: 700; color: var(--text); }
+.skill-command { font-family: monospace; font-size: 13px; color: var(--primary); background: var(--primary-light); padding: 2px 8px; border-radius: 4px; }
+.skill-desc { color: var(--text-secondary); margin-bottom: 16px; font-size: 14px; }
+.skill-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.skill-meta-item { font-size: 13px; }
+.skill-meta-item .label { color: var(--text-muted); font-weight: 600; }
+.skill-meta-item .value { color: var(--text-secondary); }
+.skill-section { margin-top: 12px; }
+.skill-section h4 { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.skill-section ul { margin-left: 20px; margin-bottom: 8px; }
+.skill-section li { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+.skill-section p { font-size: 13px; }
+
+/* Callout */
+.callout {
+  background: var(--primary-light);
+  border-left: 4px solid var(--primary);
+  padding: 16px 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+.callout-warning {
+  background: var(--warning-light);
+  border-left-color: var(--warning);
+}
+.callout-success {
+  background: var(--success-light);
+  border-left-color: var(--success);
+}
+.callout p { margin-bottom: 0; font-size: 14px; }
+
+/* Dependency graph */
+.dep-graph {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+.dep-node {
+  display: inline-block;
+  padding: 6px 14px;
+  margin: 4px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--code-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.dep-arrow { color: var(--text-muted); margin: 0 4px; }
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 40px 0 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+.footer a { color: var(--primary); text-decoration: none; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .container { padding: 20px 12px 40px; }
+  .hero { padding: 40px 24px; }
+  .hero h1 { font-size: 24px; }
+  .hero .meta { flex-direction: column; gap: 8px; }
+  table { font-size: 12px; }
+  th, td { padding: 8px 10px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Hero -->
+<div class="hero">
+  <h1>AI Berkshire — 架构体系与 Skill 完整使用说明</h1>
+  <div class="subtitle">AI 时代的价值投资研究框架 | 四大师方法论系统化 | Claude Code + Codex 双系统兼容</div>
+  <div class="meta">
+    <div class="meta-item"><strong>版本：</strong>v3.9.2</div>
+    <div class="meta-item"><strong>发布日期：</strong>2026-08-09</div>
+    <div class="meta-item"><strong>Skill 总数：</strong>17（16 业务 + 1 编排）</div>
+    <div class="meta-item"><strong>契约单元：</strong>13 项</div>
+    <div class="meta-item"><strong>契约 schema：</strong>lean-v1</div>
+    <div class="meta-item"><strong>检查状态：</strong>check.sh REAL_EXIT=0</div>
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc">
+  <h3>目录</h3>
+  <ul>
+    <li><a href="#overview">项目概述</a></li>
+    <li><a href="#architecture">架构体系</a></li>
+    <li><a href="#dual-pipeline">双系统生成管线</a></li>
+    <li><a href="#orchestration">全量分析编排</a></li>
+    <li><a href="#contract">13 项契约注册表</a></li>
+    <li><a href="#skill-list">Skill 总览</a></li>
+    <li><a href="#data-tools">数据工具类</a></li>
+    <li><a href="#screen">快筛工具类</a></li>
+    <li><a href="#company">深度公司研究类</a></li>
+    <li><a href="#earnings">财报分析类</a></li>
+    <li><a href="#industry">行业与筛选类</a></li>
+    <li><a href="#risk">持仓与论文管理类</a></li>
+    <li><a href="#market">市场监测类</a></li>
+    <li><a href="#ipo">IPO 研究类</a></li>
+    <li><a href="#orchestration-skill">编排层</a></li>
+    <li><a href="#dev-guide">开发规范</a></li>
+    <li><a href="#quality">质量防护</a></li>
+  </ul>
+</div>
+
+<!-- ==================== 1. 项目概述 ==================== -->
+<section id="overview">
+  <h2>一、项目概述</h2>
+  <div class="card">
+    <p><strong>AI Berkshire</strong> 是一套同时兼容 Claude Code 与 Codex 的投资研究 Skill 合集，将巴菲特、芒格、段永平、李录四位价值投资大师的方法论系统化、结构化，通过 AI Agent 实现专业级投资研究。</p>
+    <p>核心理念：<strong>一个人 + Claude Code / Codex = 一个投研团队</strong>。</p>
+    <h4>关键数字</h4>
+    <table>
+      <tr><th>指标</th><th>数值</th><th>说明</th></tr>
+      <tr><td>当前版本</td><td>v3.9.2</td><td>2026-08-09 发布，招股书 skill 补入同业横向对比（H1–H4）</td></tr>
+      <tr><td>canonical Skill</td><td>17 个</td><td>16 业务 + 1 编排层</td></tr>
+      <tr><td>契约业务单元</td><td>13 项</td><td>组成单公司全量分析契约</td></tr>
+      <tr><td>契约外独立 Skill</td><td>3 个</td><td>市场情绪 / 宏观流动性 / 招股书分析</td></tr>
+      <tr><td>Codex 生成包</td><td>18 个</td><td>17 生成 + 1 Codex-only（investment-memo-craft）</td></tr>
+      <tr><td>WorkBuddy 适配器</td><td>1 个</td><td>full-company-analysis-workbuddy 生产适配器</td></tr>
+      <tr><td>单元测试</td><td>734 个</td><td>全绿（check.sh REAL_EXIT=0）</td></tr>
+      <tr><td>GitHub 仓库</td><td>xbtlin/ai-berkshire</td><td>公开仓库，MIT License</td></tr>
+    </table>
+    <h4>实盘业绩</h4>
+    <table>
+      <tr><th>指标</th><th>2024 全年</th><th>2025 全年</th></tr>
+      <tr><td><strong>本框架实盘</strong></td><td><strong>+69.29%</strong></td><td><strong>+66.38%</strong></td></tr>
+      <tr><td>恒生指数</td><td>+17.67%</td><td>+27.77%</td></tr>
+      <tr><td>标普500</td><td>+23.31%</td><td>+16.39%</td></tr>
+      <tr><td>沪深300</td><td>+14.68%</td><td>+17.66%</td></tr>
+    </table>
+    <p style="font-size:12px;color:var(--text-muted);margin-top:8px;">* 免责声明：历史收益不代表未来表现。本项目仅供学习研究，不构成投资建议。</p>
+  </div>
+</section>
+
+<!-- ==================== 2. 架构体系 ==================== -->
+<section id="architecture">
+  <h2>二、架构体系</h2>
+
+  <h3>2.1 三层设计哲学</h3>
+  <div class="arch-diagram">
+    <div class="arch-flow">
+      <div class="arch-box source">Skill 层<br><small>17 个入口</small></div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-box generated">Agent 层<br><small>多 Agent 并行调度</small></div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-box tools">工具层<br><small>精确计算 / 实时检索 / 报告审计</small></div>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin-top:16px;">
+      <strong>Skill 层</strong>：16 个业务入口覆盖数据、快筛、公司、财报、行业、风险、论文与市场级/IPO 研究，另有 1 个全量编排入口<br>
+      <strong>Agent 层</strong>：团队型 skill 由 Team Lead 并行调度多个大师视角 Agent，各自独立搜索、独立判断、互相挑战<br>
+      <strong>工具层</strong>：精确计算（Decimal 无浮点漂移）、实时检索、报告抽检——保证每份报告的数据严谨性可验证
+    </p>
+  </div>
+
+  <h3>2.2 四大师方法论融合</h3>
+  <div class="card">
+    <table>
+      <tr><th>大师</th><th>核心视角</th><th>关注维度</th></tr>
+      <tr><td><strong>段永平</strong></td><td>"对的生意"</td><td>商业模式本质、能力圈、本分</td></tr>
+      <tr><td><strong>巴菲特</strong></td><td>护城河与安全边际</td><td>财务质量、内在价值、管理层诚信</td></tr>
+      <tr><td><strong>芒格</strong></td><td>逆向思考</td><td>风险清单、偏误自查、多元思维模型</td></tr>
+      <tr><td><strong>李录</strong></td><td>文明趋势</td><td>长期确定性、范式转移、产业价值</td></tr>
+    </table>
+    <p>四位大师不是简单分工，而是设计来<strong>互相挑战</strong>：段永平说"好生意"，芒格会问"怎么会死"；巴菲特说"够便宜"，李录会问"10年后还在吗"。得到的不是四份报告的拼接，而是四种思维方式的碰撞。</p>
+  </div>
+
+  <h3>2.3 目录结构</h3>
+  <pre><code>ai-berkshire/
+├── skills/              ← Skill 权威源（17 个 .md）
+├── codex-skills/        ← 生成物，勿手改（18 个包）
+├── workbuddy-skills/    ← WorkBuddy 生产适配器（1 个）
+├── scripts/             ← sync-* 生成脚本 + install-* 安装脚本 + check.sh
+├── tools/               ← 金融计算/数据/审计工具（Python3）
+│   ├── financial_rigor.py          ← Decimal 精确计算
+│   ├── report_audit.py             ← 报告数据抽检
+│   ├── ashare_data.py              ← A股数据管线入口（32 子命令）
+│   ├── ashare_plugin/              ← A股数据实现包
+│   ├── full_analysis_contract.json ← 13 项业务契约注册表
+│   ├── full_analysis_gate.py       ← 确定性验收器
+│   └── full_analysis_html.py       ← 确定性 HTML 渲染器
+├── tests/               ← unittest 单测（734 个）
+├── data/                ← watchlist.json、基本面缓存、回测 CSV
+├── local/               ← 研究产出（本地、不公开）
+│   ├── reports/         ← 研究报告产出
+│   ├── Company/         ← 全量分析运行目录
+│   ├── IPO/             ← IPO 研究产出
+│   └── 实盘记录/        ← 实盘操作与镜子测试
+├── docs/                ← ROADMAP 与专题文档
+├── CLAUDE.md            ← Claude Code 项目指令
+├── AGENTS.md            ← Codex 行为规则
+└── SKILLS-GUIDE.md      ← Skills 使用指南</code></pre>
+</div>
+</section>
+
+<!-- ==================== 3. 双系统生成管线 ==================== -->
+<section id="dual-pipeline">
+  <h2>三、双系统 Skill 生成管线</h2>
+  <div class="card">
+    <p>本仓库的 Skill 体系为 <strong>Claude Code（canonical 源）→ Codex / WorkBuddy（生成产物）</strong> 多目标设计，核心原则是<strong>一份规范源、自动生成多端产物</strong>。</p>
+    <div class="arch-diagram">
+      <div class="arch-flow">
+        <div class="arch-box source">skills/*.md<br><small>17 个 canonical 源<br>人工维护</small></div>
+        <div class="arch-arrow">→<br><small>sync-codex-skills.py</small></div>
+        <div class="arch-box generated">codex-skills/*/SKILL.md<br><small>18 个生成包<br>+ 1 Codex-only</small></div>
+      </div>
+      <div class="arch-flow" style="margin-top:8px;">
+        <div class="arch-box source">skills/*.md</div>
+        <div class="arch-arrow">→<br><small>berkshire-skill-sync</small></div>
+        <div class="arch-box generated">workbuddy-skills/<br><small>WorkBuddy 生产适配器</small></div>
+      </div>
+      <div class="arch-flow" style="margin-top:8px;">
+        <div class="arch-box tools">tools/*.py + *.json<br><small>共享工具层<br>被各 skill 调用</small></div>
+      </div>
+    </div>
+    <h4>关键设计点</h4>
+    <ul style="margin-left:20px;margin-bottom:12px;">
+      <li><code>skills/*.md</code> 是<strong>唯一真源</strong>；<code>codex-skills/</code> 为生成物，<strong>严禁手工编辑生成物</strong></li>
+      <li><code>investment-memo-craft</code> 是唯一的 <strong>Codex-only 手工包</strong>，已显式标注</li>
+      <li>修改 <code>skills/</code> 后必须运行 <code>python3 scripts/sync-codex-skills.py</code> 同步生成物</li>
+      <li>校验生成物是否最新（不重写文件）：<code>python3 scripts/sync-codex-skills.py --check</code></li>
+      <li>用户副本同步：<code>~/.workbuddy/berkshire-skill-sync/sync.py</code>（EXCLUDE 编排 skill）</li>
+      <li>三副本须一致：<code>skills/*.md</code> → <code>codex-skills/</code> → <code>~/.workbuddy/skills/</code></li>
+    </ul>
+    <h4>发版流程铁律</h4>
+    <div class="callout callout-warning">
+      <p>改 <code>skills/*.md</code> 后必须：<code>sync-codex-skills.py</code> + <code>berkshire-skill-sync/sync.py</code> 双同步 + <code>bash scripts/check.sh</code> 读<strong>真实退出码</strong>再 commit/tag/push。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 4. 全量分析编排 ==================== -->
+<section id="orchestration">
+  <h2>四、全量公司分析编排（lean-v1）</h2>
+
+  <h3>4.1 三件套各司其职</h3>
+  <div class="card">
+    <table>
+      <tr><th>文件</th><th>角色</th><th>职责</th></tr>
+      <tr>
+        <td><code>tools/full_analysis_contract.json</code></td>
+        <td>契约注册表</td>
+        <td>13 项业务契约的<strong>唯一机器真源</strong>：schema <code>full-analysis-contract/lean-v1</code>，定义产物路径、适用性谓词、角色要求与运行授权</td>
+      </tr>
+      <tr>
+        <td><code>skills/full-company-analysis-workbuddy.md</code></td>
+        <td>编排层</td>
+        <td>WorkBuddy 总控编排（lean 模式），只负责调度、登记总结和触发质量闭环，<strong>不直接代写业务单元</strong></td>
+      </tr>
+      <tr>
+        <td><code>tools/full_analysis_gate.py</code></td>
+        <td>确定性验收器</td>
+        <td>生命周期管理：<code>start</code> → <code>next-work</code> → <code>self-check</code> → <code>submit-result</code> → <code>register-summary</code> → <code>render-html</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>4.2 两条底线</h3>
+  <div class="card">
+    <ol style="margin-left:20px;">
+      <li><strong>内容质量</strong>：每份研究报告基于真实数据、遵循方法论、声明数据截止日 / 来源 / 免责。</li>
+      <li><strong>失败显式声明</strong>：任何单元做不出来、数据缺失、推理不成立，必须显式 <code>mark-failed</code>，<strong>不静默跳过、不自动重试、不伪造占位</strong>。</li>
+    </ol>
+    <p>报告是<strong>唯一交付物</strong>；证据账本（result.json）只是可选辅助，空账本合法。lean 模式已移除租约看门狗 / 租约身份机 / 波次错峰白名单 / 证据账本 PLACEHOLDER / 双源强制 / 版本钉死 / 自动恢复等冗余机制。</p>
+  </div>
+
+  <h3>4.3 闭环流程</h3>
+  <div class="stage-container">
+    <div class="stage stage-1">
+      <div class="stage-title">① start — 创建运行</div>
+      <div class="stage-content">创建运行目录与 13 个 work unit（依赖由 <code>next-work</code> 按其 <code>depends_on</code> 拓扑自动返回就绪单元）。</div>
+    </div>
+    <div class="stage stage-1">
+      <div class="stage-title">② next-work — 拓扑派发</div>
+      <div class="stage-content">返回 <code>LEASED</code> 后派 <strong>WorkBuddy 原生 Agent</strong>（禁止主上下文直写正文），Agent 完整落地 <code>methodology_text</code> 并写入 attempt 目录 + <code>artifact.formal_path</code>。</div>
+    </div>
+    <div class="stage stage-2">
+      <div class="stage-title">③ self-check — 质量门</div>
+      <div class="stage-content">Agent 移交前必须跑 <code>self-check</code>（实质章节数 / 三锚 / 字节下限）；通过后 <code>submit-result</code>。Gate 在 <code>submit-result</code> 再做一次 substance 边界兜底（双层互不信任）。</div>
+    </div>
+    <div class="stage stage-2">
+      <div class="stage-title">④ mark-failed — 失败声明</div>
+      <div class="stage-content">失败单元：<code>mark-failed --reason ...</code>（可选 <code>--retry</code> 重排一次），不自动重试、不启动看门狗、不做孤儿恢复。</div>
+    </div>
+    <div class="stage stage-3">
+      <div class="stage-title">⑤ deep-summary → register-summary → render-html — 收口</div>
+      <div class="stage-content">全部业务单元终态后，派 deep-summary Agent 熔炼总结 → <code>register-summary</code> 冻结 → <code>render-html</code> 确定性渲染（零 LLM 零方差）。总结须如实标注缺失单元，遵循 <code>docs/delivery-summary-quality-standard.md</code>（25-40KB、≥6 表格、≥5 内联 SVG、三大章节深化、数字溯源抽查）。</div>
+    </div>
+    <div class="stage stage-4">
+      <div class="stage-title">⑥ L2-L4 可选评估层（不强制）</div>
+      <div class="stage-content"><code>audit</code>（结构验证）→ <code>review</code>（五维语义）→ <code>finalize</code>+<code>doctor</code>（digest 校验 + 退化指纹，advisory 非阻断）。L1 交付不依赖评估层。</div>
+    </div>
+  </div>
+
+  <h3>4.4 常用命令</h3>
+  <pre><code># 启动全量分析
+python3 scripts/full_analysis.py start \
+  --company 格力电器 --code 000651.SZ --as-of 2026-07-25
+
+# 获取下一个就绪单元
+python3 scripts/full_analysis.py next-work --run-root &lt;run_root&gt;
+
+# 质量自检（移交前必须跑）
+python3 scripts/full_analysis.py self-check \
+  --run-root &lt;run_root&gt; --skill-id &lt;skill_id&gt; --report &lt;attempt_dir&gt;/report.md
+
+# 提交结果
+python3 scripts/full_analysis.py submit-result --run-root &lt;run_root&gt; ...
+
+# 登记总结
+python3 scripts/full_analysis.py register-summary \
+  --run-root &lt;run_root&gt; --summary &lt;run_root&gt;/evidence/attempts/summary/summary.md
+
+# 渲染 HTML
+python3 scripts/full_analysis.py render-html --run-root &lt;run_root&gt;
+
+# 可选评估层
+python3 scripts/full_analysis.py audit --run-root &lt;run_root&gt;
+python3 scripts/full_analysis.py review prepare --run-root &lt;run_root&gt;
+python3 scripts/full_analysis.py review summarize --run-root &lt;run_root&gt;
+python3 tools/full_analysis_gate.py finalize --run-root &lt;run_root&gt;</code></pre>
+</section>
+
+<!-- ==================== 5. 13 项契约注册表 ==================== -->
+<section id="contract">
+  <h2>五、13 项契约注册表</h2>
+  <p>以下 13 个业务 Skill 组成单公司全量分析契约（<code>tools/full_analysis_contract.json</code>，schema <code>full-analysis-contract/lean-v1</code>），按 4 个阶段分组，依赖由 <code>next-work</code> 拓扑自动解析：</p>
+
+  <div class="stage-container">
+    <div class="stage stage-1">
+      <div class="stage-title">阶段 1：数据与快筛（01-data-screen）</div>
+      <div class="stage-content">基础数据采集与快速筛选</div>
+      <div class="stage-skills">
+        <span class="stage-skill">ashare-data</span>
+        <span class="stage-skill">financial-data ← ashare-data</span>
+        <span class="stage-skill">quality-screen ← ashare-data</span>
+        <span class="stage-skill">investment-checklist ← ashare-data</span>
+      </div>
+    </div>
+    <div class="stage stage-2">
+      <div class="stage-title">阶段 2：公司与财报（02-company-earnings）</div>
+      <div class="stage-content">深度公司研究与财报精读</div>
+      <div class="stage-skills">
+        <span class="stage-skill">investment-research ← ashare-data</span>
+        <span class="stage-skill">investment-team ← ashare-data, financial-data, quality-screen</span>
+        <span class="stage-skill">management-deep-dive ← ashare-data, financial-data, quality-screen</span>
+        <span class="stage-skill">earnings-review ← ashare-data, financial-data, quality-screen</span>
+      </div>
+    </div>
+    <div class="stage stage-3">
+      <div class="stage-title">阶段 3：行业与机会（03-industry-opportunity）</div>
+      <div class="stage-content">产业链分析与瓶颈扫描</div>
+      <div class="stage-skills">
+        <span class="stage-skill">industry-research ← ashare-data, investment-research</span>
+        <span class="stage-skill">industry-funnel ← industry-research, investment-research</span>
+        <span class="stage-skill">bottleneck-hunter ← industry-research, industry-funnel</span>
+        <span class="stage-skill">news-pulse ← ashare-data, earnings-review, industry-funnel</span>
+      </div>
+    </div>
+    <div class="stage stage-4">
+      <div class="stage-title">阶段 4：论文与组合（04-thesis-boundary）</div>
+      <div class="stage-content">投资论文建立与跟踪</div>
+      <div class="stage-skills">
+        <span class="stage-skill">thesis-tracker ← investment-team, management-deep-dive, earnings-review, industry-funnel, bottleneck-hunter, news-pulse</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>契约单元详情</h3>
+  <table>
+    <tr>
+      <th>#</th><th>Skill ID</th><th>阶段</th><th>类型</th><th>角色模式</th><th>min_bytes</th><th>依赖</th>
+    </tr>
+    <tr><td>1</td><td>ashare-data</td><td>数据与快筛</td><td>data</td><td>single_agent</td><td>3000</td><td>—</td></tr>
+    <tr><td>2</td><td>financial-data</td><td>数据与快筛</td><td>data</td><td>single_agent</td><td>3000</td><td>ashare-data</td></tr>
+    <tr><td>3</td><td>quality-screen</td><td>数据与快筛</td><td>analysis</td><td>single_agent</td><td>6000</td><td>ashare-data</td></tr>
+    <tr><td>4</td><td>investment-checklist</td><td>数据与快筛</td><td>analysis</td><td>single_agent</td><td>6000</td><td>ashare-data</td></tr>
+    <tr><td>5</td><td>investment-research</td><td>公司与财报</td><td>analysis</td><td>single_agent</td><td>12000</td><td>ashare-data</td></tr>
+    <tr><td>6</td><td>investment-team</td><td>公司与财报</td><td><span class="badge badge-fanout">fanout</span></td><td>independent_then_integrator</td><td>6000</td><td>ashare-data, financial-data, quality-screen</td></tr>
+    <tr><td>7</td><td>management-deep-dive</td><td>公司与财报</td><td>analysis</td><td>single_agent</td><td>8000</td><td>ashare-data, financial-data, quality-screen</td></tr>
+    <tr><td>8</td><td>earnings-review</td><td>公司与财报</td><td><span class="badge badge-fanout">fanout</span></td><td>independent_then_integrator</td><td>8000</td><td>ashare-data, financial-data, quality-screen</td></tr>
+    <tr><td>9</td><td>industry-research</td><td>行业与机会</td><td>analysis</td><td>single_agent</td><td>8000</td><td>ashare-data, investment-research</td></tr>
+    <tr><td>10</td><td>industry-funnel</td><td>行业与机会</td><td>analysis</td><td>single_agent</td><td>8000</td><td>industry-research, investment-research</td></tr>
+    <tr><td>11</td><td>bottleneck-hunter</td><td>行业与机会</td><td>analysis</td><td>single_agent</td><td>6000</td><td>industry-research, industry-funnel</td></tr>
+    <tr><td>12</td><td>news-pulse</td><td>行业与机会</td><td><span class="badge badge-fanout">fanout</span></td><td>independent_then_integrator</td><td>4000</td><td>ashare-data, earnings-review, industry-funnel</td></tr>
+    <tr><td>13</td><td>thesis-tracker</td><td>论文与组合</td><td>analysis</td><td>single_agent</td><td>6000</td><td>investment-team, management-deep-dive, earnings-review, industry-funnel, bottleneck-hunter, news-pulse</td></tr>
+  </table>
+
+  <div class="callout">
+    <p><strong>fanout 类型</strong>的 skill（investment-team / earnings-review / news-pulse）采用 <code>independent_then_integrator</code> 模式：先为每个 <code>required_role</code> 启动独立 Agent 并行研究，再由整合角色仲裁分歧、产出综合报告。</p>
+  </div>
+
+  <h3>授权边界</h3>
+  <table>
+    <tr><th>授权（granted）</th><th>拒绝（denied）</th></tr>
+    <tr>
+      <td>
+        <code>read_only_external_research</code><br>
+        <code>run_root_local_writes</code><br>
+        <code>research_conclusions</code>
+      </td>
+      <td>
+        <code>external_publish</code><br>
+        <code>external_messages</code><br>
+        <code>vcs_remote_writes</code><br>
+        <code>writes_outside_run_root</code><br>
+        <code>sensitive_private_data</code>
+      </td>
+    </tr>
+  </table>
+</section>
+
+<!-- ==================== 6. Skill 总览 ==================== -->
+<section id="skill-list">
+  <h2>六、Skill 总览（17 个 canonical）</h2>
+  <table>
+    <tr><th>#</th><th>Skill</th><th>类别</th><th>契约</th><th>成熟度</th><th>核心用途</th></tr>
+    <tr><td>1</td><td><code>ashare-data</code></td><td>数据与思维工具</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>A股数据管线统一入口</td></tr>
+    <tr><td>2</td><td><code>financial-data</code></td><td>数据与思维工具</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>财务数据获取与双源交叉验证</td></tr>
+    <tr><td>3</td><td><code>quality-screen</code></td><td>行业与筛选</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>7 条指标去劣筛选</td></tr>
+    <tr><td>4</td><td><code>investment-checklist</code></td><td>行业与筛选</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>巴菲特买入前六关 Checklist</td></tr>
+    <tr><td>5</td><td><code>investment-research</code></td><td>深度公司研究</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>四大师综合七模块深度研究</td></tr>
+    <tr><td>6</td><td><code>investment-team</code></td><td>深度公司研究</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>多 Agent 并行投研团队</td></tr>
+    <tr><td>7</td><td><code>management-deep-dive</code></td><td>深度公司研究</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>管理层纵深研究</td></tr>
+    <tr><td>8</td><td><code>earnings-review</code></td><td>财报分析</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>四大师并行财报精读</td></tr>
+    <tr><td>9</td><td><code>industry-research</code></td><td>行业与筛选</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>产业链全景扫描</td></tr>
+    <tr><td>10</td><td><code>industry-funnel</code></td><td>行业与筛选</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>行业漏斗筛选到 3 家</td></tr>
+    <tr><td>11</td><td><code>bottleneck-hunter</code></td><td>行业与筛选</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>供应链瓶颈猎手</td></tr>
+    <tr><td>12</td><td><code>news-pulse</code></td><td>持仓与论文管理</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>股价异动快速归因</td></tr>
+    <tr><td>13</td><td><code>thesis-tracker</code></td><td>持仓与论文管理</td><td><span class="badge badge-contract">入契约</span></td><td><span class="badge badge-core">stable</span></td><td>投资论文追踪</td></tr>
+    <tr><td>14</td><td><code>a-share-market-sentiment</code></td><td>数据与思维工具</td><td><span class="badge badge-independent">独立</span></td><td><span class="badge badge-beta">beta</span></td><td>A股市场情绪监测与仓位建议</td></tr>
+    <tr><td>15</td><td><code>macro-liquidity</code></td><td>数据与思维工具</td><td><span class="badge badge-independent">独立</span></td><td><span class="badge badge-beta">beta</span></td><td>宏观流动性双层监测</td></tr>
+    <tr><td>16</td><td><code>a-share-prospectus-analysis</code></td><td>深度公司研究</td><td><span class="badge badge-independent">独立</span></td><td><span class="badge badge-core">stable</span></td><td>A股招股书深度分析（三层框架）</td></tr>
+    <tr><td>17</td><td><code>full-company-analysis-workbuddy</code></td><td>编排层</td><td><span class="badge badge-orchestration">编排入口</span></td><td><span class="badge badge-beta">beta</span></td><td>13 项全量分析编排器（lean）</td></tr>
+  </table>
+</section>
+
+<!-- ==================== 7. 数据工具类 ==================== -->
+<section id="data-tools">
+  <h2>七、数据工具类 Skill 详细说明</h2>
+
+  <!-- ashare-data -->
+  <div class="skill-card" id="skill-ashare-data">
+    <div class="skill-header">
+      <span class="skill-name">ashare-data</span>
+      <span class="skill-command">/ashare-data 600519</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">A股数据管线统一入口：实时行情/近5年财务/估值/10年年报史/股本变动/公告/龙虎榜资金流解禁等市场信号。零依赖走腾讯行情+东方财富+巨潮（curl 直连），结果标注主源/备用源/数据时间/警告。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">六位代码 / 代码+类型 / 公司名 / .SH/.SZ/.BJ</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">数据与思维工具</span></div>
+      <div class="skill-meta-item"><span class="label">数据源：</span><span class="value">腾讯行情 + 东方财富 + 巨潮资讯</span></div>
+      <div class="skill-meta-item"><span class="label">依赖：</span><span class="value">零外部依赖（Python stdlib）</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>核心子命令（32 个）</h4>
+      <table>
+        <tr><th>分级</th><th>子命令</th><th>说明</th></tr>
+        <tr><td rowspan="3">L0 QUICK</td><td><code>quote</code></td><td>实时行情快照</td></tr>
+        <tr><td><code>search</code></td><td>公司名/拼音搜索</td></tr>
+        <tr><td><code>valuation</code></td><td>PE/PB/市值/52周区间</td></tr>
+        <tr><td rowspan="5">L1 CORE</td><td><code>financials</code></td><td>近5年核心财务数据</td></tr>
+        <tr><td><code>history</code></td><td>10年年报财务历史</td></tr>
+        <tr><td><code>equity-history</code></td><td>历史股本变动</td></tr>
+        <tr><td><code>announcements</code></td><td>巨潮公告</td></tr>
+        <tr><td><code>signals</code></td><td>龙虎榜/资金流/解禁</td></tr>
+        <tr><td rowspan="6">L2 ENHANCED</td><td><code>mainbz</code></td><td>主营业务分部（Tushare）</td></tr>
+        <tr><td><code>managers</code></td><td>管理层履历</td></tr>
+        <tr><td><code>ratios</code></td><td>财务比率全景</td></tr>
+        <tr><td><code>repurchase</code></td><td>回购记录</td></tr>
+        <tr><td><code>pledge</code></td><td>质押情况</td></tr>
+        <tr><td><code>holder-num</code></td><td>股东户数</td></tr>
+        <tr><td rowspan="4">L3 FULL</td><td><code>cls-telegraph</code></td><td>财联社快讯</td></tr>
+        <tr><td><code>report-list</code></td><td>研报列表</td></tr>
+        <tr><td><code>ths-hot</code></td><td>同花顺热度榜</td></tr>
+        <tr><td><code>ird-interact</code></td><td>互动易问答</td></tr>
+      </table>
+    </div>
+    <div class="skill-section">
+      <h4>调用示例</h4>
+      <pre><code>python3 tools/ashare_data.py quote 600519
+python3 tools/ashare_data.py financials 600519
+python3 tools/ashare_data.py search 茅台
+python3 tools/ashare_data.py history 600036 --years 10
+python3 tools/ashare_data.py signals 600036 --date 2026-08-01</code></pre>
+    </div>
+    <div class="skill-section">
+      <h4>适用场景</h4>
+      <ul>
+        <li>A股取数（行情/财务/公告/市场信号）</li>
+        <li>其他 skill 的底层数据源（ashare-data 是取数工具，financial-data 是双源交叉验证）</li>
+      </ul>
+      <p><strong>不适用于</strong>：完整投研、港股美股数据（需 financial-data 规范）</p>
+    </div>
+  </div>
+
+  <!-- financial-data -->
+  <div class="skill-card" id="skill-financial-data">
+    <div class="skill-header">
+      <span class="skill-name">financial-data</span>
+      <span class="skill-command">/financial-data 腾讯</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">财务数据获取与交叉验证规范：所有涉及企业财务数据研究的通用底层规范，规定美股/港股/A股数据源优先级、双来源交叉验证（误差&gt;1% 须标记）与 A 股数据插件用法，供其他研究 skill 引用。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名或代码</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">数据与思维工具</span></div>
+      <div class="skill-meta-item"><span class="label">角色：</span><span class="value">底层规范，供其他 skill 引用</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>核心工作流</h4>
+      <ol style="margin-left:20px;">
+        <li>从<strong>两个独立来源</strong>获取每个关键财务指标</li>
+        <li>误差计算：<code>|来源1 - 来源2| / 来源1 * 100%</code></li>
+        <li>误差 &le; 1%：一致，取来源1；1%-5%：标记差异；&gt;5%：不得直接使用</li>
+      </ol>
+    </div>
+    <div class="skill-section">
+      <h4>数据源优先级</h4>
+      <table>
+        <tr><th>市场</th><th>主源</th><th>副源</th></tr>
+        <tr><td>美股</td><td>macrotrends</td><td>stockanalysis</td></tr>
+        <tr><td>港股</td><td>aastocks</td><td>macrotrends</td></tr>
+        <tr><td>A股</td><td>东方财富</td><td>巨潮资讯</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 8. 快筛工具类 ==================== -->
+<section id="screen">
+  <h2>八、快筛工具类 Skill 详细说明</h2>
+
+  <!-- quality-screen -->
+  <div class="skill-card" id="skill-quality-screen">
+    <div class="skill-header">
+      <span class="skill-name">quality-screen</span>
+      <span class="skill-command">/quality-screen 恒生指数成分股</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">去劣筛选：用 7 条指标快速排除非一流公司。支持个股/行业/市场指数/主题四种输入，行业模式额外输出通过率与排名。中量级初筛。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">个股（逗号分隔）/ 行业 / 指数成分股 / 主题</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">行业与筛选</span></div>
+      <div class="skill-meta-item"><span class="label">设计原则：</span><span class="value">不错杀一流公司，但能排除确定的非一流公司</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>7 条硬指标</h4>
+      <table>
+        <tr><th>#</th><th>指标</th><th>阈值</th></tr>
+        <tr><td>1</td><td>10年平均ROE</td><td>&lt; 8% → 淘汰</td></tr>
+        <tr><td>2</td><td>5年累计自由现金流</td><td>为负 → 淘汰</td></tr>
+        <tr><td>3</td><td>利息覆盖倍数</td><td>&lt; 2 → 淘汰</td></tr>
+        <tr><td>4</td><td>长期毛利率</td><td>&lt; 15% → 淘汰</td></tr>
+        <tr><td>5</td><td>经营现金流/净利润</td><td>&lt; 0.7 → 淘汰</td></tr>
+        <tr><td>6</td><td>长期净利率</td><td>&lt; 5% → 淘汰</td></tr>
+        <tr><td>7</td><td>5年总股本膨胀</td><td>&gt; 20% → 淘汰</td></tr>
+      </table>
+    </div>
+    <div class="skill-section">
+      <h4>3 条豁免规则</h4>
+      <ul>
+        <li><strong>战略投入期豁免</strong>（ROE）：研发/扩张期 ROE 低可豁免</li>
+        <li><strong>主动低利润率豁免</strong>（净利率）：Costco 模式主动低利润率</li>
+        <li><strong>高周转薄利模式豁免</strong>（毛利率+净利率）：高周转零售模式</li>
+      </ul>
+      <p>金融股有特殊口径调整。</p>
+    </div>
+  </div>
+
+  <!-- investment-checklist -->
+  <div class="skill-card" id="skill-investment-checklist">
+    <div class="skill-header">
+      <span class="skill-name">investment-checklist</span>
+      <span class="skill-command">/investment-checklist 腾讯, 茅台, 英伟达</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">巴菲特价值投资买入前 Checklist：对一家或多家公司执行买入前清单核查。六关快速筛选，10分钟决定是否值得深入研究。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">单个或多个公司，逗号/顿号/空格分隔</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">行业与筛选</span></div>
+      <div class="skill-meta-item"><span class="label">信息评级：</span><span class="value">A/B/C 级信息丰富度</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>六关 Checklist</h4>
+      <div class="stage-container">
+        <div class="stage stage-1">
+          <div class="stage-title">第一关：能力圈</div>
+          <div class="stage-content">我能理解这门生意吗？</div>
+        </div>
+        <div class="stage stage-1">
+          <div class="stage-title">第二关：好生意</div>
+          <div class="stage-content">经济特征如何？是门好生意吗？</div>
+        </div>
+        <div class="stage stage-2">
+          <div class="stage-title">第三关：护城河</div>
+          <div class="stage-content">竞争优势深不深？</div>
+        </div>
+        <div class="stage stage-2">
+          <div class="stage-title">第四关：管理层</div>
+          <div class="stage-content">值得信任吗？</div>
+        </div>
+        <div class="stage stage-3">
+          <div class="stage-title">第五关：安全边际</div>
+          <div class="stage-content">价格便宜吗？</div>
+        </div>
+        <div class="stage stage-3">
+          <div class="stage-title">第六关：决策纪律</div>
+          <div class="stage-content">是理性还是 FOMO？→ 镜子测试</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout callout-success">
+      <p><strong>镜子测试</strong>：5句话说不完整 = 不买，没有例外。支持多公司对比——一次筛选多个标的。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 9. 深度公司研究类 ==================== -->
+<section id="company">
+  <h2>九、深度公司研究类 Skill 详细说明</h2>
+
+  <!-- investment-research -->
+  <div class="skill-card" id="skill-investment-research">
+    <div class="skill-header">
+      <span class="skill-name">investment-research</span>
+      <span class="skill-command">/investment-research 腾讯</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">投资研究：以巴菲特-芒格-段永平-李录四大师综合分析框架对单一公司做系统化研究，含 AI 研究偏见自觉前置步骤，按七模块顺序执行。单公司标准研究入口。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">深度公司研究</span></div>
+      <div class="skill-meta-item"><span class="label">min_bytes：</span><span class="value">12000（全量契约中最高）</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>七模块执行流程</h4>
+      <pre><code>前置：AI研究偏见自觉（A/B/C级信息丰富度评级 + 偏见自查清单）
+  ↓
+第0步：关键力量识别（Key Forces）— 锁定 1-3 个决定性变量
+  ↓
+第一步：数据收集（财务数据双源规范 + Tushare取数协调 + STOP检查点）
+  ↓
+第二步：生意本质（段永平）— 商业模式、经济特征
+  ↓
+第三步：护城河（巴菲特）— 竞争优势、网络效应、转换成本
+  ↓
+第四步：逆向思考（芒格）— 失败场景、风险清单
+  ↓
+第五步：管理层评估（段永平+巴菲特）— 诚信、执行、资本配置
+  ↓
+第六步：文明趋势（李录）— 长期确定性、范式转移
+  ↓
+第七步：估值与安全边际 — 三情景估值 + 反向DCF
+  ↓
+第七步半：差异观点（Variant View）— 市场共识/我们认为/他们错在</code></pre>
+    </div>
+    <div class="callout">
+      <p><strong>核心特色</strong>：AI研究偏见自觉机制（A/B/C级信息丰富度评级）、关键数据多源交叉验证（市值手算校验、至少2个独立来源）、四位大师的"追问"贯穿全文、三情景估值（乐观/中性/悲观）+ 反向DCF。</p>
+    </div>
+  </div>
+
+  <!-- investment-team -->
+  <div class="skill-card" id="skill-investment-team">
+    <div class="skill-header">
+      <span class="skill-name">investment-team</span>
+      <span class="skill-command">/investment-team 美团</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-fanout">fanout</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">投研团队：用 Team 工具创建真正的多 Agent 并行研究团队，四位投资方法并行分析同一公司。极重量级。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">深度公司研究</span></div>
+      <div class="skill-meta-item"><span class="label">角色模式：</span><span class="value">independent_then_integrator</span></div>
+      <div class="skill-meta-item"><span class="label">必需角色：</span><span class="value">duan, buffett, munger, li</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>执行流程</h4>
+      <ol style="margin-left:20px;">
+        <li>展示团队框架（team-lead + interpreter-duan/buffett/munger/li）</li>
+        <li>AI研究偏见评估（A/B/C 信息丰富度评级）</li>
+        <li><strong>WebSearch 权限预检</strong>（关键！避免 Agent 静默退化）</li>
+        <li>TeamCreate 创建团队</li>
+        <li>TaskCreate 创建 4 个并行任务：
+          <ul>
+            <li>段永平 — 商业模式分析</li>
+            <li>巴菲特 — 财务与估值分析</li>
+            <li>芒格 — 竞争格局分析</li>
+            <li>李录 — 管理与风险分析</li>
+          </ul>
+        </li>
+        <li>Team Lead 综合研判，仲裁分歧</li>
+      </ol>
+    </div>
+    <div class="callout callout-warning">
+      <p><strong>关键约束</strong>：启动前必须确认 WebSearch 已在权限白名单，否则子 Agent 会被静默拦截，导致研究质量退化。</p>
+    </div>
+    <div class="skill-section">
+      <h4>与 investment-research 的区别</h4>
+      <p><code>investment-research</code> 是单 Agent 串行执行七模块；<code>investment-team</code> 是 4 个 Agent 并行各自做完整研究，Team Lead 综合——等于 4 倍的搜索量、4 倍的信息源、4 个独立视角。适合高重要性公司。</p>
+    </div>
+  </div>
+
+  <!-- management-deep-dive -->
+  <div class="skill-card" id="skill-management-deep-dive">
+    <div class="skill-header">
+      <span class="skill-name">management-deep-dive</span>
+      <span class="skill-command">/management-deep-dive 王兴 美团</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">管理层纵深研究：以"买股票就是买人"为核心对公司管理层做深度研究。是 investment-research 第五步管理层评估的深化版。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名 或 人名+公司名</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">深度公司研究</span></div>
+      <div class="skill-meta-item"><span class="label">使用时机：</span><span class="value">管理层是核心投资逻辑 / 管理层评分不确定时</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>执行流程</h4>
+      <ol style="margin-left:20px;">
+        <li>识别关键管理层（CEO/CFO/创始人/实控人/其他高管）</li>
+        <li>并行收集数据（4 个 Agent）：
+          <ul>
+            <li>公开发言与预测</li>
+            <li>资本配置决策</li>
+            <li>治理结构与薪酬</li>
+            <li>侧面验证信息（员工/客户评价，需用户确认）</li>
+          </ul>
+        </li>
+        <li>CEO能力圈评估（战略眼光、执行能力）</li>
+        <li>资本配置历史分析</li>
+        <li>治理结构与薪酬合理性</li>
+        <li>综合管理层评级</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 10. 财报分析类 ==================== -->
+<section id="earnings">
+  <h2>十、财报分析类 Skill 详细说明</h2>
+
+  <!-- earnings-review -->
+  <div class="skill-card" id="skill-earnings-review">
+    <div class="skill-header">
+      <span class="skill-name">earnings-review</span>
+      <span class="skill-command">/earnings-review 腾讯 2025Q4</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-fanout">fanout</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">财报精读：四大师并行解读一手财报（段永平看生意本质、巴菲特审财务质量、芒格读竞争变化、李录猎风险信号），合成结构化精读报告。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名 + 季度（如"腾讯 2025Q4"、"美团 最新"）</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">财报分析</span></div>
+      <div class="skill-meta-item"><span class="label">角色模式：</span><span class="value">independent_then_integrator</span></div>
+      <div class="skill-meta-item"><span class="label">必需角色：</span><span class="value">duan, buffett, munger, li</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>两阶段流程</h4>
+      <div class="stage-container">
+        <div class="stage stage-2">
+          <div class="stage-title">阶段一：四大师并行精读</div>
+          <div class="stage-content">
+            <ul>
+              <li>获取一手资料（财报原文、业绩电话会纪要、管理层致股东信、上一期财报）</li>
+              <li>资料可得性评级（A/B/C）</li>
+              <li>启动 4 个并行 Agent：
+                <ul>
+                  <li><strong>生意本质解读者</strong>（段永平）— 业务结构变化、收入质量</li>
+                  <li><strong>财务质量审计师</strong>（巴菲特）— 盈利质量、现金流、资产负债表</li>
+                  <li><strong>竞争变化解读者</strong>（芒格）— 市场份额、竞争格局变化</li>
+                  <li><strong>风险信号猎手</strong>（李录）— 隐藏风险、长期不确定性</li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="stage stage-3">
+          <div class="stage-title">阶段二：Team Lead 综合</div>
+          <div class="stage-content">找共识与矛盾，产出结构化精读报告。每次启动前需用户确认。</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout">
+      <p><strong>核心原则</strong>：只读原始财报，不依赖二手研报，像巴菲特一样读年报。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 11. 行业与筛选类 ==================== -->
+<section id="industry">
+  <h2>十一、行业与筛选类 Skill 详细说明</h2>
+
+  <!-- industry-research -->
+  <div class="skill-card" id="skill-industry-research">
+    <div class="skill-header">
+      <span class="skill-name">industry-research</span>
+      <span class="skill-command">/industry-research 核电</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">行业投资研究：从投资主题出发做系统化产业链全景扫描，验证逻辑链、绘制产业链全景图、扫描全球上市公司，并对各环节头部执行四大师框架分析，输出行业级组合配置建议。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">行业名 / 投资主题</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">行业与筛选</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>5 项研究目标</h4>
+      <ol style="margin-left:20px;">
+        <li>验证投资逻辑链</li>
+        <li>绘制完整产业链全景图</li>
+        <li>扫描全球所有上市公司</li>
+        <li>对每个细分环节头部公司执行四大师框架分析</li>
+        <li>输出行业级投资组合配置建议</li>
+      </ol>
+    </div>
+    <div class="skill-section">
+      <h4>执行流程</h4>
+      <pre><code>第一步：投资逻辑链构建与验证
+  - 画出逻辑链、逐环节验证、寻找"已发生的验证事件"
+  ↓
+第二步：产业链全景图绘制
+  - 拆解为上游/中游/下游/辅助环节
+  - 标注生意特征（商业模式/毛利率/竞争格局/壁垒类型/周期性）
+  - 标记"卡脖子环节"
+  ↓
+第三步：全球上市公司扫描
+  ↓
+第四步：各环节头部四大师分析
+  ↓
+第五步：行业级组合配置建议（核心/卫星/期权/ETF）</code></pre>
+    </div>
+  </div>
+
+  <!-- industry-funnel -->
+  <div class="skill-card" id="skill-industry-funnel">
+    <div class="skill-header">
+      <span class="skill-name">industry-funnel</span>
+      <span class="skill-command">/industry-funnel AI算力</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">行业漏斗筛选：对一个行业/投资方向执行漏斗式价值投资筛选，从全市场（A股/港股/美股/未上市）逐层精选到 3 家终选标的，每层有明确留弃标准可复盘。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">行业或方向</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">行业与筛选</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>4 层漏斗结构</h4>
+      <div class="stage-container">
+        <div class="stage stage-1">
+          <div class="stage-title">第一层：全市场扫描（30-60 家）</div>
+          <div class="stage-content">活跃度+涨幅+市值前30的并集。全市场扫描前需用户确认。</div>
+        </div>
+        <div class="stage stage-2">
+          <div class="stage-title">第二层：粗筛 ≤ 10 家</div>
+          <div class="stage-content">5 条价值投资硬指标 + 护城河 ≥ 3 星</div>
+        </div>
+        <div class="stage stage-3">
+          <div class="stage-title">第三层：精细分析 ≤ 10 家</div>
+          <div class="stage-content">每家 300-500 字精细分析</div>
+        </div>
+        <div class="stage stage-4">
+          <div class="stage-title">第四层：四大师深度分析 3 家</div>
+          <div class="stage-content">每家 800-1200 字。终选按"组合互补性"选（高确定性 + 中等弹性 + 高弹性），不按打分前 3 排序。推荐组合（核心/卫星/期权）+ 操作信号。</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout">
+      <p><strong>与 industry-research 的区别</strong>：<code>industry-research</code> 偏重产业链结构与全景（按环节切片）；<code>industry-funnel</code> 偏重个股筛选漏斗（从全市场逐层精选到 3 家）。每层过滤掉的标的必须留下淘汰理由（不是黑箱）。</p>
+    </div>
+  </div>
+
+  <!-- bottleneck-hunter -->
+  <div class="skill-card" id="skill-bottleneck-hunter">
+    <div class="skill-header">
+      <span class="skill-name">bottleneck-hunter</span>
+      <span class="skill-command">/bottleneck-hunter AI算力</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">供应链瓶颈猎手：对超级趋势/赛道执行全球产业链瓶颈扫描，从物理供应链咽喉位置反向挖掘第二三层被低估的卡脖子环节与套利标的。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">一个超级趋势（如"AI算力""固态电池"）</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">行业与筛选</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>核心理念</h4>
+      <p>从物理供应链的咽喉位置出发，找那些被低估的卡脖子环节。第一层瓶颈（GPU/HBM/电力）已被充分定价，真正 alpha 在第二层、第三层——光模块、激光器、InP衬底、SOI晶圆等。</p>
+    </div>
+    <div class="skill-section">
+      <h4>分层拆解框架</h4>
+      <pre><code>Layer 0：终端（AI服务器/数据中心）
+  ↓
+Layer 1：核心组件（GPU/HBM/光模块/电力设备）
+  ↓
+Layer 2：子组件/材料（激光器/InP衬底/SOI晶圆）
+  ↓
+Layer 3：更底层瓶颈（特种气体/贵金属/稀土）</code></pre>
+    </div>
+    <div class="skill-section">
+      <h4>趋势筛选标准（4 条）</h4>
+      <ul>
+        <li><strong>持续性</strong>：不是短期炒作，有长期需求支撑</li>
+        <li><strong>物理性</strong>：有物理供应链瓶颈，不只是软件/概念</li>
+        <li><strong>规模性</strong>：市场规模足够大</li>
+        <li><strong>加速性</strong>：需求正在加速而非放缓</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 12. 持仓与论文管理类 ==================== -->
+<section id="risk">
+  <h2>十二、持仓与论文管理类 Skill 详细说明</h2>
+
+  <!-- news-pulse -->
+  <div class="skill-card" id="skill-news-pulse">
+    <div class="skill-header">
+      <span class="skill-name">news-pulse</span>
+      <span class="skill-command">/news-pulse 腾讯</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-fanout">fanout</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">公司新闻脉搏：股价异动时快速归因。用 4 个并行 Agent 侦察公司事件/监管政策/行业对手/市场情绪，产出"事件时间线 + 异动主因判断 + 是否触发论文重审"。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名 / 公司名+异动描述+时间窗口</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">持仓与论文管理</span></div>
+      <div class="skill-meta-item"><span class="label">角色模式：</span><span class="value">independent_then_integrator</span></div>
+      <div class="skill-meta-item"><span class="label">必需角色：</span><span class="value">company, regulatory, industry, sentiment, integrator</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>适用场景</h4>
+      <ul>
+        <li>持仓/关注股票单日 ±5% 或一周 ±10%</li>
+        <li>财报后股价异动想快速归因</li>
+        <li>不确定新闻是噪音还是真信号</li>
+      </ul>
+      <p><strong>不适用于</strong>：完整投研、财报深读、长期论文跟踪</p>
+    </div>
+    <div class="skill-section">
+      <h4>4 维并行侦察</h4>
+      <table>
+        <tr><th>Agent</th><th>侦察方向</th></tr>
+        <tr><td>company-event-scout</td><td>公司事件（财报、公告、管理层变动）</td></tr>
+        <tr><td>regulatory-watcher</td><td>监管政策变化</td></tr>
+        <tr><td>industry-scout</td><td>行业对手动态</td></tr>
+        <tr><td>sentiment-scout</td><td>市场情绪（卖方+大V+南向资金）</td></tr>
+      </table>
+    </div>
+    <div class="callout callout-success">
+      <p><strong>归因优先于罗列</strong>：不是把所有新闻列一遍，而是判断"哪个事件配得上这次股价异动"。强制性质判断：价值事件 / 情绪波动 / <strong>真因不明</strong> / 混合——其中"真因不明"是最有价值的输出（可能存在内幕抢跑）。目标是 10 分钟内回答三个核心问题。</p>
+    </div>
+  </div>
+
+  <!-- thesis-tracker -->
+  <div class="skill-card" id="skill-thesis-tracker">
+    <div class="skill-header">
+      <span class="skill-name">thesis-tracker</span>
+      <span class="skill-command">/thesis-tracker 拼多多</span>
+      <span class="badge badge-contract">入契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">投资论文追踪：买入后的纪律系统，建立并持续跟踪投资论文。买入前就写下卖出条件，每个季度检查论文是否完整。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">输入：</span><span class="value">公司名 / 公司名+建立论文 / 公司名+季度检查</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">持仓与论文管理</span></div>
+      <div class="skill-meta-item"><span class="label">依赖（最多）：</span><span class="value">6 个前置单元</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>两种模式</h4>
+      <div class="stage-container">
+        <div class="stage stage-3">
+          <div class="stage-title">模式 A：建立投资论文</div>
+          <div class="stage-content">
+            <ul>
+              <li>A0：数据收集（股价/估值/财报核心数据）</li>
+              <li>A1：核心论文（200字以内写清5个问题：生意本质/护城河/管理层/安全边际/下行风险）</li>
+              <li>A2：核心假设清单（3-7个可验证的具体假设）</li>
+              <li>A3：证伪条件与触发器</li>
+              <li>A4：论文健康度评级</li>
+            </ul>
+          </div>
+        </div>
+        <div class="stage stage-4">
+          <div class="stage-title">模式 B：季度检查</div>
+          <div class="stage-content">逐条检查假设是否仍然成立，标记变化，更新论文健康度。</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout callout-warning">
+      <p><strong>核心纪律</strong>：如果 5 句话写不完整，说明买入决策不够清晰。买入前就写下卖出条件。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 13. 市场监测类 ==================== -->
+<section id="market">
+  <h2>十三、市场监测类 Skill 详细说明（独立于契约）</h2>
+  <div class="callout">
+    <p>以下 2 个 Skill 为<strong>市场级能力</strong>，独立于单公司契约，各自按需独立运行。两者互补：<code>macro-liquidity</code> 回答"钱够不够"，<code>a-share-market-sentiment</code> 回答"人有多疯/多怕"。</p>
+  </div>
+
+  <!-- a-share-market-sentiment -->
+  <div class="skill-card" id="skill-a-share-market-sentiment">
+    <div class="skill-header">
+      <span class="skill-name">a-share-market-sentiment</span>
+      <span class="skill-command">/a-share-market-sentiment</span>
+      <span class="badge badge-independent">独立于契约</span>
+      <span class="badge badge-beta">beta</span>
+    </div>
+    <p class="skill-desc">A股市场情绪监测与仓位建议系统。跟踪 5 个核心指标，按"预警计数→分档减仓"逻辑输出情绪评级（恐慌/中性/贪婪/极度贪婪）与权益仓位建议。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">触发词：</span><span class="value">"现在A股情绪如何""是不是过热了""要不要减仓"等</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">数据与思维工具</span></div>
+      <div class="skill-meta-item"><span class="label">来源：</span><span class="value">框架取自外部 Day1Global-Skills us-market-sentiment（MIT）</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>5 个核心指标</h4>
+      <table>
+        <tr><th>编号</th><th>指标</th><th>衡量什么</th></tr>
+        <tr><td>S1</td><td>两融余额趋势</td><td>杠杆水位</td></tr>
+        <tr><td>S2</td><td>北向资金</td><td>外资动向</td></tr>
+        <tr><td>S3</td><td>指数估值分位</td><td>逆向锚</td></tr>
+        <tr><td>S4</td><td>换手率与成交热度</td><td>交易活跃度</td></tr>
+        <tr><td>S5</td><td>新开户与基金发行</td><td>散户入市意愿</td></tr>
+      </table>
+    </div>
+    <div class="skill-section">
+      <h4>双向出警计数制</h4>
+      <p>5 个指标独立判"出警/正常"，<strong>贪婪 +1 / 恐慌 -1 独立统计</strong>（防极端市况评级反转），统计出警数映射评级与建议。</p>
+      <table>
+        <tr><th>评级</th><th>贪婪出警</th><th>恐慌出警</th><th>仓位建议</th></tr>
+        <tr><td>恐慌</td><td>0</td><td>≥4</td><td>加仓</td></tr>
+        <tr><td>中性</td><td>0-1</td><td>0-1</td><td>维持</td></tr>
+        <tr><td>贪婪</td><td>≥3</td><td>0</td><td>减仓</td></tr>
+        <tr><td>极度贪婪</td><td>≥4</td><td>0</td><td>大幅减仓</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- macro-liquidity -->
+  <div class="skill-card" id="skill-macro-liquidity">
+    <div class="skill-header">
+      <span class="skill-name">macro-liquidity</span>
+      <span class="skill-command">/macro-liquidity</span>
+      <span class="badge badge-independent">独立于契约</span>
+      <span class="badge badge-beta">beta</span>
+    </div>
+    <p class="skill-desc">宏观流动性监测与风险预警（美元层 + A股层双层）。输出流动性评级（充裕/偏紧/紧张/危险/危机）与分档仓位建议。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">触发词：</span><span class="value">"当前流动性如何""美元是否收紧""Fed缩表影响"等</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">数据与思维工具</span></div>
+      <div class="skill-meta-item"><span class="label">关键约束：</span><span class="value">fail-close（整层全缺不评级）</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>8 个指标（双层加权）</h4>
+      <table>
+        <tr><th>层</th><th>编号</th><th>指标</th><th>权重</th></tr>
+        <tr><td rowspan="4">美元层（权重60）</td><td>D1</td><td>Fed 净流动性（总资产-TGA-ON RRP）</td><td>25</td></tr>
+        <tr><td>D2</td><td>SOFR（担保隔夜融资利率）</td><td>15</td></tr>
+        <tr><td>D3</td><td>MOVE 指数（国债波动率）</td><td>10</td></tr>
+        <tr><td>D4</td><td>日元套息（美日利差）</td><td>10</td></tr>
+        <tr><td rowspan="4">A股层（权重40）</td><td>A1</td><td>两融余额</td><td>15</td></tr>
+        <tr><td>A2</td><td>北向资金</td><td>10</td></tr>
+        <tr><td>A3</td><td>中债10年收益率</td><td>8</td></tr>
+        <tr><td>A4</td><td>Shibor</td><td>7</td></tr>
+      </table>
+    </div>
+    <div class="skill-section">
+      <h4>评级体系</h4>
+      <p>以出警计数为主、权重为辅：充裕 / 偏紧 / 紧张 / 危险 / 危机。每个指标必须取到真实最新值并声明数据日期与来源；失败按 fail-close 规则处理。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 14. IPO 研究类 ==================== -->
+<section id="ipo">
+  <h2>十四、IPO 研究类 Skill 详细说明（独立于契约）</h2>
+
+  <!-- a-share-prospectus-analysis -->
+  <div class="skill-card" id="skill-a-share-prospectus-analysis">
+    <div class="skill-header">
+      <span class="skill-name">a-share-prospectus-analysis</span>
+      <span class="skill-command">/a-share-prospectus-analysis 宇树科技 688836</span>
+      <span class="badge badge-independent">独立于契约</span>
+      <span class="badge badge-core">stable</span>
+    </div>
+    <p class="skill-desc">A股（科创板/创业板/主板）IPO 招股书（申报稿/上会稿/注册稿）深度分析技能。采用"三层框架"：概念层（六步思维模型）+ 操作层（九步按章节精读）+ 七缺口补强。内置宇树科技(688836)示例。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">触发词：</span><span class="value">招股书/IPO/打新/拟上市公司/688836等</span></div>
+      <div class="skill-meta-item"><span class="label">类别：</span><span class="value">深度公司研究</span></div>
+      <div class="skill-meta-item"><span class="label">产出目录：</span><span class="value">local/IPO/&lt;公司名&gt;-&lt;代码&gt;/</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>三层框架</h4>
+      <div class="stage-container">
+        <div class="stage stage-1">
+          <div class="stage-title">概念层：六步思维模型（每步含反向检验）</div>
+          <div class="stage-content">
+            <ol style="margin-left:20px;">
+              <li>亏损结构与造血引擎</li>
+              <li>商业飞轮与基础设施复用</li>
+              <li>竞争壁垒与关键瓶颈</li>
+              <li>预期定价与"信仰税"</li>
+              <li>治理结构与关键人风险</li>
+              <li>IPO时机与入场策略</li>
+            </ol>
+          </div>
+        </div>
+        <div class="stage stage-2">
+          <div class="stage-title">操作层：九步按章节精读</div>
+          <div class="stage-content">
+            <ul>
+              <li>四阶段阅读次序（速览→风险→财务→业务）</li>
+              <li>红警清单</li>
+              <li><strong>步骤 9：需求真实性检验</strong>（v3.9.0 新增）
+                <ul>
+                  <li>9a：收入结构三问（谁在买/买去干什么/会不会重复买）</li>
+                  <li>9b：同族盲区清单 7 项</li>
+                  <li>9c：数据落点（分应用领域收入表）与估值口径校准</li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="stage stage-3">
+          <div class="stage-title">七缺口补强（G1-G7）</div>
+          <div class="stage-content">
+            <table>
+              <tr><th>缺口</th><th>补强方向</th></tr>
+              <tr><td>G1</td><td>盈利质量</td></tr>
+              <tr><td>G2</td><td>护城河</td></tr>
+              <tr><td>G3</td><td>地缘</td></tr>
+              <tr><td>G4</td><td>关联交易</td></tr>
+              <tr><td>G5</td><td>估值可执行（SOTP + reverse-DCF + 估值跳升观测）</td></tr>
+              <tr><td>G6</td><td>风险版本差分（三版招股书 diff）</td></tr>
+              <tr><td>G7</td><td>生产模式/资产结构（v3.9.0 新增）</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="callout callout-warning">
+      <p><strong>两道护栏</strong>：① 成长股偏见护栏（每步必须配反向检验）；② <strong>需求真实性护栏</strong>（优先级最高，防止"全球出货第一"与市场真实需求错位——宇树科技首跑实证：76% 卖给科研教育的收入曾被误读为生产力业务成色）。</p>
+    </div>
+    <div class="skill-section">
+      <h4>产出约定</h4>
+      <ul>
+        <li>分析报告（md）+ HTML 版报告（自包含，双击即开）</li>
+        <li><code>evidence/</code>（一手 PDF 与提取文本 + MANIFEST.md 取证清单）</li>
+        <li>统一归档：<code>local/IPO/&lt;公司名&gt;-&lt;代码&gt;/</code></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 15. 编排层 ==================== -->
+<section id="orchestration-skill">
+  <h2>十五、编排层 Skill 详细说明</h2>
+
+  <!-- full-company-analysis-workbuddy -->
+  <div class="skill-card" id="skill-full-company-analysis-workbuddy">
+    <div class="skill-header">
+      <span class="skill-name">full-company-analysis-workbuddy</span>
+      <span class="skill-command">/full-company-analysis-workbuddy 格力电器 000651.SZ</span>
+      <span class="badge badge-orchestration">编排入口</span>
+      <span class="badge badge-beta">beta</span>
+    </div>
+    <p class="skill-desc">WorkBuddy 单公司全量分析编排器（lean 模式）。对一家公司执行 13 业务 skill 端到端研究，产出 13 份真实研究报告 + HTML 交付件。两条底线：内容质量 + 失败必须显式声明。报告是唯一交付物，不追求速度、允许失败。</p>
+    <div class="skill-meta">
+      <div class="skill-meta-item"><span class="label">platform：</span><span class="value">workbuddy</span></div>
+      <div class="skill-meta-item"><span class="label">registry-schema：</span><span class="value">full-analysis-contract/lean-v1</span></div>
+      <div class="skill-meta-item"><span class="label">result-schema：</span><span class="value">result-schema/v1</span></div>
+      <div class="skill-meta-item"><span class="label">触发词：</span><span class="value">全量分析&lt;公司名&gt; / 全量跑&lt;公司名&gt;</span></div>
+      <div class="skill-meta-item"><span class="label">产出位置：</span><span class="value">local/Company/&lt;code&gt;-&lt;公司&gt;/&lt;run_id&gt;/</span></div>
+    </div>
+    <div class="skill-section">
+      <h4>核心哲学（两条底线）</h4>
+      <ol style="margin-left:20px;">
+        <li><strong>内容质量</strong>：每份报告必须基于真实数据、遵循方法论、声明数据截止日/来源/免责</li>
+        <li><strong>失败显式声明</strong>：任何单元做不出来必须显式 <code>mark-failed</code>，不静默跳过、不自动重试、不伪造占位</li>
+      </ol>
+    </div>
+    <div class="skill-section">
+      <h4>lean 模式已移除的机制（勿再用）</h4>
+      <table>
+        <tr><th>已移除</th><th>说明</th></tr>
+        <tr><td>sweep 看门狗</td><td>不再有自动巡检</td></tr>
+        <tr><td>resume 孤儿恢复</td><td>不再有自动恢复</td></tr>
+        <tr><td>heartbeat 续租</td><td>不再有租约续期</td></tr>
+        <tr><td>波次错峰白名单</td><td>改为 next-work 拓扑派发</td></tr>
+        <tr><td>租约身份机</td><td>不再有 lease_nonce/agent_job_id 绑定校验</td></tr>
+        <tr><td>evidence_rules 账本核对</td><td>报告是唯一交付物</td></tr>
+        <tr><td>PLACEHOLDER 自动填充</td><td>绝不合成占位</td></tr>
+        <tr><td>双源强制</td><td>双源验证由 financial-data 规范保证</td></tr>
+        <tr><td>版本钉死</td><td>contract.registry_sha256 校验已去</td></tr>
+      </table>
+    </div>
+    <div class="skill-section">
+      <h4>调用示例</h4>
+      <pre><code># Claude Code
+/full-company-analysis-workbuddy 格力电器 000651.SZ
+
+# WorkBuddy
+全量分析 格力电器
+全量跑 格力电器
+
+# CLI
+python3 scripts/full_analysis.py start \
+  --company 格力电器 --code 000651.SZ --as-of 2026-08-09</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 16. 开发规范 ==================== -->
+<section id="dev-guide">
+  <h2>十六、Skill 开发规范</h2>
+  <div class="card">
+    <h3>新增 / 修改一个 skill 的标准流程</h3>
+    <ol style="margin-left:20px;margin-bottom:16px;">
+      <li>只在 <code>skills/&lt;name&gt;.md</code> 编写（kebab-case 命名，<code>&lt;name&gt;</code> 即调用入口）</li>
+      <li><strong>必须带 frontmatter</strong>（6 个必填字段由 CI 卡点强制校验）：
+        <pre><code>---
+name: &lt;name&gt;                       # 必填，kebab-case，须与文件名一致
+description: &lt;触发场景 + 输入 + 输出&gt;  # 必填
+owner: psilhon                      # 必填
+category: &lt;深度公司研究|财报分析|行业与筛选|持仓与论文管理|数据与思维工具|编排层&gt;  # 必填
+maturity: &lt;stable|beta|governed&gt;    # 必填
+review-cadence: &lt;per-release|on-change|quarterly|annual&gt;  # 必填
+# 以下仅编排层需要：
+# platform: workbuddy
+# registry-schema: full-analysis-contract/lean-v1
+---</code></pre>
+      </li>
+      <li>涉及多 Agent / 团队，在正文写明权限预检</li>
+      <li>调用 <code>python3 tools/financial_rigor.py</code> 做精确计算、<code>tools/report_audit.py</code> 做准出抽检</li>
+      <li>跑生成与校验（<strong>两条都必跑</strong>）：
+        <pre><code>python3 scripts/sync-codex-skills.py
+bash scripts/check.sh</code></pre>
+      </li>
+      <li>若新增业务 skill 纳入编排，同步更新 <code>tools/full_analysis_contract.json</code>；若为契约外独立 skill，在 <code>SKILLS-GUIDE.md</code> 登记并标注「独立于契约」</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>frontmatter category 合法枚举</h3>
+    <table>
+      <tr><th>合法值</th><th>说明</th><th>当前 Skill 数</th></tr>
+      <tr><td>深度公司研究</td><td>investment-research / investment-team / management-deep-dive / a-share-prospectus-analysis</td><td>4</td></tr>
+      <tr><td>财报分析</td><td>earnings-review</td><td>1</td></tr>
+      <tr><td>行业与筛选</td><td>quality-screen / investment-checklist / industry-research / industry-funnel / bottleneck-hunter</td><td>5</td></tr>
+      <tr><td>持仓与论文管理</td><td>thesis-tracker / news-pulse</td><td>2</td></tr>
+      <tr><td>数据与思维工具</td><td>ashare-data / financial-data / a-share-market-sentiment / macro-liquidity</td><td>4</td></tr>
+      <tr><td>编排层</td><td>full-company-analysis-workbuddy</td><td>1</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ==================== 17. 质量防护 ==================== -->
+<section id="quality">
+  <h2>十七、质量防护体系</h2>
+  <div class="card">
+    <h3>金融严谨性工具（financial_rigor.py）</h3>
+    <table>
+      <tr><th>功能</th><th>命令</th><th>解决的问题</th></tr>
+      <tr><td>市值验算</td><td><code>verify-market-cap</code></td><td>股价×总股本 精确计算，检测单位错误</td></tr>
+      <tr><td>估值验算</td><td><code>verify-valuation</code></td><td>PE/PB/ROE/FCF Yield 精确十进制计算</td></tr>
+      <tr><td>多源交叉验证</td><td><code>cross-validate</code></td><td>N个来源的同一数据自动比对，超容差告警</td></tr>
+      <tr><td>三情景估值</td><td><code>three-scenario</code></td><td>乐观/中性/悲观精确计算目标价</td></tr>
+      <tr><td>Benford定律检测</td><td><code>benford</code></td><td>检测财务数据首位数字分布异常</td></tr>
+      <tr><td>精确计算器</td><td><code>calc</code></td><td>任意财务表达式精确计算，替代LLM心算</td></tr>
+    </table>
+    <p><strong>设计原则</strong>：所有计算使用 Python <code>decimal.Decimal</code>（精确十进制），非 <code>float</code>（浮点近似）。<code>0.1 + 0.2 = 0.3</code> 在金融场景中不允许失败。</p>
+  </div>
+
+  <div class="card">
+    <h3>全量分析质量闭环</h3>
+    <table>
+      <tr><th>层</th><th>机制</th><th>说明</th></tr>
+      <tr><td>L0（前置）</td><td>self-check</td><td>每个 skill 产出后、进 submit-result 前必跑。复用 Gate 的 _substance_errors + artifact.min_bytes 做确定性校验</td></tr>
+      <tr><td>L0（兜底）</td><td>Gate substance 边界</td><td>submit-result 时 Gate 再跑一次 _substance_errors（双层互不信任）</td></tr>
+      <tr><td>L1（主线）</td><td>deep-summary → register-summary → render-html</td><td>总结熔炼 → 冻结 → 确定性渲染（零 LLM 零方差）</td></tr>
+      <tr><td>L2（可选）</td><td>audit</td><td>substance 底线 + 字节/章节核对</td></tr>
+      <tr><td>L3（可选）</td><td>review</td><td>五维语义评审</td></tr>
+      <tr><td>L4（可选）</td><td>finalize + doctor</td><td>digest 校验 + 退化指纹（advisory 非阻断）</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>substance 地板（Gate 保留）</h3>
+    <p>报告须含：</p>
+    <ul style="margin-left:20px;">
+      <li>数据截止日（YYYY-MM-DD）</li>
+      <li>来源声明</li>
+      <li>仅供学习研究免责</li>
+      <li>≥ <code>min_substantive_sections</code> 个实质章节（每章 ≥ 150 字）</li>
+      <li>≥ <code>min_bytes</code> 字节</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>统一检查命令</h3>
+    <pre><code># 统一本地检查（单测 + 生成物同步校验 + 报告索引校验 + 全量分析注册表校验 + frontmatter 校验）
+# CI（.github/workflows/check.yml）跑的就是同一个脚本，本地过 = CI 过
+bash scripts/check.sh
+
+# 当前状态：REAL_EXIT=0（734 单测 OK + 17/17 frontmatter 合规 + codex 同步 + 注册表校验）</code></pre>
+  </div>
+
+  <div class="card">
+    <h3>投研分析核心原则（最高优先级）</h3>
+    <ul style="margin-left:20px;">
+      <li><strong>客观、客观、客观</strong>——所有投研分析必须基于事实和数据，严禁主观臆断</li>
+      <li>严格区分"事实"与"观点"：事实用数据支撑，观点必须明确标注</li>
+      <li><strong>不预设立场</strong>：先摆数据、再推逻辑、最后得结论</li>
+      <li>禁止"我认为/我觉得/显然"等主观表述，改用"数据显示/证据表明/根据XX来源"</li>
+      <li><strong>呈现正反两面</strong>：每个核心判断都必须附带反面论据</li>
+      <li>对不确定的事情诚实说"不确定"或"数据不足"</li>
+      <li>研究开始前先跑 <code>date</code> 确认今天日期，标注数据截止日</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ==================== 选择建议 ==================== -->
+<section id="selection-guide">
+  <h2>十八、Skill 选择建议</h2>
+  <div class="card">
+    <table>
+      <tr><th>场景</th><th>推荐 Skill</th><th>说明</th></tr>
+      <tr><td>不确定公司是否值得深挖</td><td>quality-screen → investment-checklist</td><td>先排除再细查</td></tr>
+      <tr><td>单公司常规深研</td><td>investment-research</td><td>四大师七模块框架</td></tr>
+      <tr><td>关键决策需独立视角交锋</td><td>investment-team</td><td>4 Agent 并行</td></tr>
+      <tr><td>财报发布后</td><td>earnings-review</td><td>四大师并行精读一手财报</td></tr>
+      <tr><td>管理层是核心分歧</td><td>management-deep-dive</td><td>纵深评估</td></tr>
+      <tr><td>从行业找公司</td><td>industry-research → industry-funnel</td><td>先看结构再收敛</td></tr>
+      <tr><td>物理供给约束明显</td><td>bottleneck-hunter</td><td>供应链瓶颈扫描</td></tr>
+      <tr><td>股价突然异动</td><td>news-pulse</td><td>10 分钟快速归因</td></tr>
+      <tr><td>买入后持续跟踪</td><td>thesis-tracker</td><td>论文追踪纪律系统</td></tr>
+      <tr><td>"市场现在贪婪还是恐慌"</td><td>a-share-market-sentiment</td><td>5 指标情绪评级</td></tr>
+      <tr><td>"全球或本土流动性水位"</td><td>macro-liquidity</td><td>双层 8 指标监测</td></tr>
+      <tr><td>打新 / IPO 研究</td><td>a-share-prospectus-analysis</td><td>三层框架精读招股书</td></tr>
+      <tr><td>完整单公司闭环</td><td>full-company-analysis-workbuddy</td><td>13 单元全量编排</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- Footer -->
+<div class="footer">
+  <p>AI Berkshire v3.9.2 | 2026-08-09 | <a href="https://github.com/xbtlin/ai-berkshire">GitHub</a> | MIT License</p>
+  <p>本项目仅供学习和研究目的，不构成任何投资建议。投资有风险，决策需谨慎。</p>
+  <p>"The best investment you can make is in yourself." — Warren Buffett</p>
+</div>
+
+</div>
+</body>
+</html>

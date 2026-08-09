@@ -190,7 +190,7 @@ python3 scripts/full_analysis.py start \
 | [`/investment-research`](skills/investment-research.md) | 四大师综合深度分析 | 对一家上市公司进行全方位投资研究 |
 | [`/investment-team`](skills/investment-team.md) | 多Agent并行投研团队 | 4个Agent并行研究，最快速、最全面 |
 | [`/management-deep-dive`](skills/management-deep-dive.md) | 管理层纵深研究 | "买股票就是买人"——当管理层是核心变量时深挖 |
-| [`/a-share-prospectus-analysis`](skills/a-share-prospectus-analysis.md) | A股招股书深度分析 | 打新/IPO 研究：概念层六步 + 操作层九步精读（含步骤9 需求真实性检验/买单主体分解）+ 七缺口补强 |
+| [`/a-share-prospectus-analysis`](skills/a-share-prospectus-analysis.md) | A股招股书深度分析 | 打新/IPO 研究：概念层六步 + 操作层九步精读（含步骤9 需求真实性检验/买单主体分解）+ 七缺口补强 + 同业横向对比 H1–H4 |
 
 ### 📊 财报分析类
 
