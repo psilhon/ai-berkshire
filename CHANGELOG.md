@@ -5,6 +5,39 @@
 
 ---
 
+## [v3.9.3] — 2026-08-09
+
+> **市场级 skill 取数纪律强化**：本日 `/macro-liquidity view` 实战触发 Tushare 与权威新闻源口径冲突（融资余额相差 ~50%）——这是取到数据≠数据可信的真实事故。本版把所有取数型 skill 的失败处理升级为 A/B/C 三类，新增「双源冲突协议」硬规则；同步收紧 a-share-market-sentiment 的口径表述。
+
+### ✨ 新增 (Added)
+
+- **`skills/macro-liquidity.md` 双源数据冲突协议**（P0 必修，真实事故触发现场）：
+  - 「两条底线」新增 #3 双源一致：差额 >20% 触发 ⚠️ 默认采信新闻源、双值并列展示、不准静默通过
+  - 「失败处理」节从单层 4 段重写为 A/B/C 三类：**A 接口空数据 / B 环境未配 / C 双源数据冲突**（含 6 步硬规则 + 4 条反例 + 根因分析）
+  - A1 margin / A2 hsgt-flow / A4 Shibor 三节「取数」段各加 ⚠️ 实战提示（2026-08-07 融资余额差 48% 的具体案例入注释）
+  - STEP-3「逐指标取数」加「双源核验」动作；STEP-4「双源冲突 → 评级附 ⚠️ 不确定性」
+- **`skills/macro-liquidity.md` STEP-2 交付前双检查点**（P2 可选，正式落地）：
+  - 5a 报告深度四选项（仅看板 / 含建议 / 标准 / Markdown+HTML 双版）
+  - 5b 联动强制三选一（`thesis-tracker` / `news-pulse` / 跳过且显式声明）——禁止默认跳过
+  - 反例红线 +1 条；STEP-6 联动节同步按 5b 选项执行
+
+### 🔧 修复 (Fixed)
+
+- **`skills/a-share-market-sentiment.md` 4 处口径收紧**（来自同日上午的执行缺口验证报告）：
+  - S1 margin 接口按交易所多行返回（SSE/SZSE/BSE），须手工求和；周末可能仅回补部分交易所，禁止单交易所当全市场
+  - S3 估值分位定义采用双窗口对账（5 年 vs 8 年），两口径同档方为稳健
+  - S3 源节补 5 年窗第三方交叉印证示例（沪深300 PE(TTM) 5 年窗 93.9% vs 工具 8 年窗 87%）
+  - S4 放量基数补 WebSearch 年度/半年日均成交（2025 全年 1.73 万亿、2026 H1 2.74 万亿）做对比基线
+
+### 🔍 验证 (Verification)
+
+- `python3 scripts/sync-codex-skills.py` → Generated 17 Codex skills and WorkBuddy adapter
+- `python3 ~/.workbuddy/berkshire-skill-sync/sync.py` → 已生成 17 个适配副本（EXCLUDE 编排 skill）
+- 三副本字面 diff 仅剩 frontmatter/适配器注脚结构差异
+- `bash scripts/check.sh` → **真实退出码 0**（17 frontmatter 合规 + INDEX + 同步 + lean-v1 注册表全过）
+
+---
+
 ## [v3.9.2] — 2026-08-09
 
 > **招股书分析 skill 补上"同业横向对比"能力**：此前 skill 只有第三方报告份额判断（阶段三）与估值倍数对比（步骤 7），无法回答"个股特征是个性还是行业共性"。本版把步骤 7 重构为 H1–H4 四子步骤，并用宇树 vs 智元/优必选/乐聚的真实数据做示例回填。
