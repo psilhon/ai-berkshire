@@ -92,7 +92,7 @@ local/reports/         — 研究报告产出（按公司名建文件夹）
 local/筛选公司/         — 全市场筛选结果与召回池
 local/实盘记录/         — 实盘操作与镜子测试
 local/research/        — 研究素材底稿
-docs/            — ROADMAP 与专题文档
+docs/            — 专题文档（archive/ 存历史归档）
 ```
 
 ## 报告目录与命名规范
