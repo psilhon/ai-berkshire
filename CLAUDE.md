@@ -18,9 +18,11 @@ GitHub: xbtlin/ai-berkshire。本仓库既是个人投研工作区（local/repor
 ```
 skills/*.md（Claude Code slash command 源文件，权威）
    │ python3 scripts/sync-codex-skills.py
-   └──► codex-skills/*/SKILL.md（生成的 Codex skill 包，Codex 侧规范目标）
+   ├──► codex-skills/*/SKILL.md（生成的 Codex skill 包，Codex 侧规范目标；adapter note 转换版）
+   └──► workbuddy-skills/full-company-analysis-workbuddy/SKILL.md（WorkBuddy 生产适配器；canonical 原样镜像，字节一致）
 ```
 
+- **三目录关系**：`skills/` 是唯一手写权威源；`codex-skills/` 是带 Codex adapter note 的**转换版**（17 生成 + 1 Codex-only 手写包 `investment-memo-craft`）；`workbuddy-skills/` 是 `skills/full-company-analysis-workbuddy.md` 的**原样镜像**（刻意与 canonical 字节一致，`tests/test_workbuddy_adapter.py` 硬断言）。两者消费方不同（Codex 线程 vs WorkBuddy 生产），不合并。
 - **改了 `skills/` 下任何文件后必须跑** `python3 scripts/sync-codex-skills.py`；该命令同时同步 Codex 生成物与 WorkBuddy 全量分析适配器
 - 校验生成物是否最新（不重写文件）：`python3 scripts/sync-codex-skills.py --check`
 - **不要手改生成的 `codex-skills/*/SKILL.md`**；仅 Codex-only 手写包例外（需明确标注，且不得存在同名 `skills/*.md`）

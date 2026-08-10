@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>assets / data / deliverables 内容评估报告</title>
+<style>
+:root {
+  --bg: #fafafa; --card: #fff; --border: #e0e0e0; --text: #1a1a1a;
+  --muted: #666; --accent: #0066cc; --red: #d32f2f; --orange: #f57c00;
+  --green: #388e3c; --yellow: #fbc02d; --code-bg: #f5f5f5;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.7;
+  max-width: 980px; margin: 0 auto; padding: 24px;
+}
+h1 { font-size: 1.8em; margin-bottom: 4px; }
+h2 { font-size: 1.35em; margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+.subtitle { color: var(--muted); font-size: 0.9em; margin-bottom: 20px; }
+.overview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+.ov-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+.ov-card .name { font-size: 1.1em; font-weight: 700; margin-bottom: 6px; }
+.ov-card .size { font-size: 1.6em; font-weight: 700; color: var(--accent); }
+.ov-card .meta { font-size: 0.8em; color: var(--muted); margin-top: 4px; }
+.verdict { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.78em; font-weight: 600; }
+.v-active { background: #e8f5e9; color: var(--green); }
+.v-warn { background: #fff3e0; color: var(--orange); }
+.v-dead { background: #ffebee; color: var(--red); }
+table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.9em; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--code-bg); font-weight: 600; }
+tr:hover { background: #f9f9f9; }
+code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; font-size: 0.88em; }
+.callout { border-radius: 8px; padding: 14px 18px; margin: 12px 0; }
+.callout-green { background: #e8f5e9; border: 1px solid #a5d6a7; }
+.callout-orange { background: #fff3e0; border: 1px solid #ffcc80; }
+.callout-red { background: #ffebee; border: 1px solid #ef9a9a; }
+.callout h4 { margin-bottom: 6px; }
+ul { margin-left: 22px; }
+.footer { text-align: center; color: var(--muted); font-size: 0.85em; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<h1>assets / data / deliverables 内容评估报告</h1>
+<p class="subtitle">扫描日期：2026-08-10 | 项目版本 v3.9.3 | 工作区 /Users/psilhon/WorkSpace/stock/berkshire</p>
+
+<div class="overview">
+  <div class="ov-card">
+    <div class="name">assets/</div>
+    <div class="size">4.8M</div>
+    <div class="meta">18 文件 · 全部 git 跟踪</div>
+  </div>
+  <div class="ov-card">
+    <div class="name">data/</div>
+    <div class="size">148K</div>
+    <div class="meta">5 文件 · 全部 git 跟踪</div>
+  </div>
+  <div class="ov-card">
+    <div class="name">deliverables/</div>
+    <div class="size">48K</div>
+    <div class="meta">3 文件 · .gitignore 排除（本地私有）</div>
+  </div>
+</div>
+
+<h2>一、assets/ 评估（4.8M · 18 文件）</h2>
+
+<table>
+  <thead>
+    <tr><th>文件</th><th>大小</th><th>引用方</th><th>状态</th><th>建议</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>2024-returns.jpg</code><br><code>2025-returns.jpg</code></td>
+      <td>265K / 233K</td>
+      <td>README.md 实盘业绩展示</td>
+      <td><span class="verdict v-active">活跃</span></td>
+      <td>保留</td>
+    </tr>
+    <tr>
+      <td><code>wechat-qr.png</code></td>
+      <td>53K</td>
+      <td>README.md 公众号二维码</td>
+      <td><span class="verdict v-active">活跃</span></td>
+      <td>保留</td>
+    </tr>
+    <tr>
+      <td><code>architecture.svg</code><br><code>team-core.svg</code></td>
+      <td>10K / 3.4K</td>
+      <td>README.md 架构图 / 团队图</td>
+      <td><span class="verdict v-active">活跃</span></td>
+      <td>保留</td>
+    </tr>
+    <tr>
+      <td><code>star-history.svg</code><br><code>star-history-dark.svg</code></td>
+      <td>70.7K × 2</td>
+      <td>README.md star 历史曲线（亮/暗双模式）</td>
+      <td><span class="verdict v-active">活跃</span></td>
+      <td>保留</td>
+    </tr>
+    <tr>
+      <td><code>architecture-en.svg</code><br><code>team-core-en.svg</code></td>
+      <td>10K / 3.4K</td>
+      <td><strong>全仓库无任何引用</strong></td>
+      <td><span class="verdict v-dead">死资产</span></td>
+      <td>删除（英文备用版从未启用）</td>
+    </tr>
+    <tr>
+      <td><code>kelly/</code>（3 png）</td>
+      <td>348K</td>
+      <td>仅 <code>local/reports_bak/</code> 本地公众号文章（凯利公式）</td>
+      <td><span class="verdict v-warn">边界</span></td>
+      <td>保留（本地文章素材，移动会断链）</td>
+    </tr>
+    <tr>
+      <td><code>opd/</code>（6 png）</td>
+      <td>3.7M</td>
+      <td>仅 <code>local/reports_bak/</code> 本地公众号文章（OPD 蒸馏）</td>
+      <td><span class="verdict v-warn">边界</span></td>
+      <td>保留（同上，本地私有引用）</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-red">
+  <h4>发现 1：2 个死资产（英文版 SVG）</h4>
+  <p><code>assets/architecture-en.svg</code> 与 <code>assets/team-core-en.svg</code> 全仓库无任何引用（README 只用中文版）。git 历史可恢复，建议删除。</p>
+</div>
+
+<div class="callout callout-orange">
+  <h4>发现 2：kelly/ + opd/ 仅服务于本地私有文章</h4>
+  <p>9 张图（合计 ~4.0M）只被 <code>local/reports_bak/</code>（.gitignore 排除、不入库）中的公众号文章引用，公开仓库无消费方。删除会破坏本地文章渲染；移动会断链。属"公开仓库跟踪了私有资产"的边界情况，保留是成本最低方案。</p>
+</div>
+
+<h2>二、data/ 评估（148K · 5 文件）</h2>
+
+<table>
+  <thead>
+    <tr><th>文件</th><th>大小</th><th>引用方</th><th>状态</th><th>建议</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>watchlist.json</code></td>
+      <td>432B</td>
+      <td><code>tools/stock_screener.py</code> 读取</td>
+      <td><span class="verdict v-active">活跃</span></td>
+      <td>保留（<code>a_share</code> 组为空，可清理键）</td>
+    </tr>
+    <tr>
+      <td><code>fundamentals.json</code></td>
+      <td>2.1K</td>
+      <td><code>tools/stock_screener.py</code> 读写</td>
+      <td><span class="verdict v-active">活跃</span></td>
+      <td>保留（NVDA/AMD/MU 财报快照）</td>
+    </tr>
+    <tr>
+      <td><code>morningstar_fair_value_20260519.csv</code></td>
+      <td>75.7K</td>
+      <td><code>tools/morningstar_fair_value.py</code> 输出目录</td>
+      <td><span class="verdict v-warn">可再生成</span></td>
+      <td>保留（工具按日期命名输出，旧快照为历史存档）</td>
+    </tr>
+    <tr>
+      <td><code>correlation_3stocks_2021-2026.csv</code><br><code>cross_asset_10y_2016-2026.csv</code></td>
+      <td>9.8K / 51K</td>
+      <td>仅 <code>local/reports_bak/</code> 本地历史研究报告（腾讯/美团/PDD 轮动分析）</td>
+      <td><span class="verdict v-warn">本地引用</span></td>
+      <td>保留（体量小、本地研究数据源；删除会断本地文章链接）</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-green">
+  <h4>结论</h4>
+  <p>data/ 无死资产。5 个文件均被工具或本地研究引用。唯一可微调项：<code>watchlist.json</code> 中 <code>a_share</code> 数组为空（A 股选股已迁移至 ashare-data 管线），可删除该空键避免误导。</p>
+</div>
+
+<h2>三、deliverables/ 评估（48K · 3 文件）</h2>
+
+<table>
+  <thead>
+    <tr><th>文件</th><th>日期</th><th>内容</th><th>状态</th><th>建议</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>a-share/pb-roe-screen-2026-07-28.md</code></td>
+      <td>07-28</td>
+      <td>A 股低 PB 分位 + 高 ROE 筛选报告（264 只标的池）</td>
+      <td><span class="verdict v-active">合规</span></td>
+      <td>保留（本地私有交付物）</td>
+    </tr>
+    <tr>
+      <td><code>a-share/crown-vs-golden-compare-2026-07-30.md</code></td>
+      <td>07-30</td>
+      <td>皇冠明珠 vs 黄金交叉 18 只对比与排名</td>
+      <td><span class="verdict v-active">合规</span></td>
+      <td>保留</td>
+    </tr>
+    <tr>
+      <td><code>investment-masters/pb-roe-basket-operation-advice-2026-07-30.md</code></td>
+      <td>07-30</td>
+      <td>低 PB + 高 ROE 标的池操作建议（BUY 精选 9 只，65% 仓位）</td>
+      <td><span class="verdict v-active">合规</span></td>
+      <td>保留</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-green">
+  <h4>结论</h4>
+  <p>deliverables/ 完全符合设计意图：.gitignore 明确排除（<code>/deliverables/</code>），存放含具体标的结论的选股/操作建议交付物，永不公开。3 份文件内容完整、日期清晰，无需任何处理。</p>
+</div>
+
+<h2>四、汇总与建议</h2>
+
+<table>
+  <thead>
+    <tr><th>优先级</th><th>项目</th><th>操作</th><th>风险</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="verdict v-dead">可删</span></td>
+      <td>assets/architecture-en.svg + team-core-en.svg</td>
+      <td>git rm（历史可恢复）</td>
+      <td>无（零引用）</td>
+    </tr>
+    <tr>
+      <td><span class="verdict v-warn">微调</span></td>
+      <td>data/watchlist.json 空 a_share 键</td>
+      <td>删除空数组（可选）</td>
+      <td>无（stock_screener 兼容空组）</td>
+    </tr>
+    <tr>
+      <td><span class="verdict v-active">保留</span></td>
+      <td>assets/ 其余 16 文件</td>
+      <td>不动</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><span class="verdict v-active">保留</span></td>
+      <td>data/ 其余 4 文件</td>
+      <td>不动</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><span class="verdict v-active">保留</span></td>
+      <td>deliverables/ 全部</td>
+      <td>不动（本地私有设计）</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="footer">
+  AI Berkshire 三目录评估报告 | 2026-08-10 | 仅供项目维护参考
+</div>
+
+</body>
+</html>

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>skills / codex-skills / workbuddy-skills 三目录关系分析与合并优化方案</title>
+<style>
+:root {
+  --bg: #fafafa; --card: #fff; --border: #e0e0e0; --text: #1a1a1a;
+  --muted: #666; --accent: #0066cc; --red: #d32f2f; --orange: #f57c00;
+  --green: #388e3c; --yellow: #fbc02d; --code-bg: #f5f5f5;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.7;
+  max-width: 1000px; margin: 0 auto; padding: 24px;
+}
+h1 { font-size: 1.8em; margin-bottom: 4px; }
+h2 { font-size: 1.35em; margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+h3 { font-size: 1.1em; margin: 18px 0 8px; }
+.subtitle { color: var(--muted); font-size: 0.9em; margin-bottom: 20px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.9em; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--code-bg); font-weight: 600; }
+tr:hover { background: #f9f9f9; }
+code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; font-size: 0.88em; }
+pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 12px 0; font-size: 0.85em; }
+.callout { border-radius: 8px; padding: 14px 18px; margin: 12px 0; }
+.callout-green { background: #e8f5e9; border: 1px solid #a5d6a7; }
+.callout-orange { background: #fff3e0; border: 1px solid #ffcc80; }
+.callout-red { background: #ffebee; border: 1px solid #ef9a9a; }
+.callout h4 { margin-bottom: 6px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.78em; font-weight: 600; }
+.b-src { background: #e3f2fd; color: #1565c0; }
+.b-gen { background: #f3e5f5; color: #7b1fa2; }
+.b-hand { background: #fff3e0; color: #e65100; }
+.b-del { background: #ffebee; color: var(--red); }
+.b-keep { background: #e8f5e9; color: var(--green); }
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.flow-box {
+  border: 2px solid var(--border); border-radius: 8px; padding: 10px 14px;
+  text-align: center; font-size: 0.85em; min-width: 130px;
+}
+.flow-box.src { border-color: #1565c0; background: #e3f2fd; }
+.flow-box.gen { border-color: #7b1fa2; background: #f3e5f5; }
+.flow-box.hand { border-color: #e65100; background: #fff3e0; }
+.flow-arrow { font-size: 1.4em; color: var(--muted); }
+.flow-note { font-size: 0.75em; color: var(--muted); margin-top: 4px; }
+ul { margin-left: 22px; }
+li { margin: 4px 0; }
+.footer { text-align: center; color: var(--muted); font-size: 0.85em; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<h1>skills / codex-skills / workbuddy-skills 三目录分析与合并优化方案</h1>
+<p class="subtitle">扫描日期：2026-08-10 | 项目版本 v3.9.3 | 工作区 /Users/psilhon/WorkSpace/stock/berkshire</p>
+
+<h2>一、三目录全景</h2>
+
+<table>
+  <thead>
+    <tr><th>目录</th><th>内容</th><th>数量</th><th>角色</th><th>生成方</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>skills/</code></td>
+      <td>16 业务 .md + 1 编排 .md + <code>.darwin-results.tsv</code> + <code>ashare-data.test-prompts.json</code></td>
+      <td>17 md + 2 辅助</td>
+      <td><span class="badge b-src">唯一权威源</span></td>
+      <td>手写（Claude Code slash command 源）</td>
+    </tr>
+    <tr>
+      <td><code>codex-skills/</code></td>
+      <td>17 个生成包（SKILL.md）+ 1 个手写包（SKILL.md + agents/openai.yaml）</td>
+      <td>18 目录 / 19 文件</td>
+      <td><span class="badge b-gen">Codex 目标</span> + <span class="badge b-hand">1 手写</span></td>
+      <td><code>scripts/sync-codex-skills.py</code>（17 个生成，<code>investment-memo-craft</code> 手写）</td>
+    </tr>
+    <tr>
+      <td><code>workbuddy-skills/</code></td>
+      <td>仅 <code>full-company-analysis-workbuddy/SKILL.md</code></td>
+      <td>1 目录 / 1 文件</td>
+      <td><span class="badge b-gen">WorkBuddy 适配器</span></td>
+      <td>同一脚本原样复制（与 canonical 字节一致）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>二、生成关系图</h2>
+
+<div class="flow">
+  <div class="flow-box src">
+    <strong>skills/*.md</strong><br><span class="flow-note">17 个权威源 · 手写</span>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box gen">
+    <strong>sync-codex-skills.py</strong><br><span class="flow-note">150 行 · 确定性生成</span>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box gen">
+    <strong>codex-skills/*/SKILL.md</strong><br><span class="flow-note">17 生成 + 1 手写<br>metadata + adapter note 注入</span>
+  </div>
+</div>
+<div class="flow">
+  <div class="flow-box src">
+    <strong>skills/full-company-analysis-workbuddy.md</strong><br><span class="flow-note">编排源</span>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box gen">
+    <strong>同一脚本原样复制</strong><br><span class="flow-note">无 adapter note（字节一致）</span>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box gen">
+    <strong>workbuddy-skills/full-company-analysis-workbuddy/SKILL.md</strong><br><span class="flow-note">WorkBuddy 生产适配器</span>
+  </div>
+</div>
+
+<h2>三、关键发现</h2>
+
+<h3>发现 1：workbuddy-skills 是 canonical 的原样镜像（非独立适配层）</h3>
+<div class="callout callout-orange">
+  <h4>证据</h4>
+  <ul>
+    <li><code>diff skills/full-company-analysis-workbuddy.md workbuddy-skills/full-company-analysis-workbuddy/SKILL.md</code> → <strong>IDENTICAL</strong>（10481 字节完全一致）</li>
+    <li>而 <code>codex-skills/full-company-analysis-workbuddy/SKILL.md</code> 为 11699 字节（多了 Codex adapter note）——codex 版是转换版，workbuddy 版是纯镜像</li>
+    <li><code>tests/test_workbuddy_adapter.py</code> 第 45-54 行硬断言：<code>test_adapter_is_exact_copy_of_canonical_workflow</code> 要求字节级相等</li>
+  </ul>
+  <p><strong>结论</strong>：workbuddy-skills 目录的存在意义 = 为 WorkBuddy 提供一个「按 canonical 原样同步的生产适配器」，与 codex 的「adapter note 转换版」刻意区分。</p>
+</div>
+
+<h3>发现 2：codex-skills 全部 17 个生成包均有对应源，无孤儿</h3>
+<ul>
+  <li>17 个 <code>codex-skills/*/</code> 目录 ↔ <code>skills/*.md</code> 一一对应（已逐一核验）</li>
+  <li>仅 <code>investment-memo-craft</code> 无 <code>skills/</code> 同名源 —— 符合 AGENTS.md 约定（Codex-only 手写包，明确标注，不得创建同名源）</li>
+  <li><code>investment-memo-craft/agents/openai.yaml</code> 是唯一的附属资产（v3.4.14 曾因漏复制该资产触发 P1 修复）</li>
+</ul>
+
+<h3>发现 3：skills/ 混入 2 个非 skill 辅助文件</h3>
+<table>
+  <thead>
+    <tr><th>文件</th><th>性质</th><th>引用方</th><th>建议</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>skills/.darwin-results.tsv</code></td>
+      <td>Darwin 评分档案</td>
+      <td>守卫测试 LEGACY_ALLOWLIST 登记（史实档案）</td>
+      <td><span class="badge b-keep">保留</span>（守卫豁免）</td>
+    </tr>
+    <tr>
+      <td><code>skills/ashare-data.test-prompts.json</code></td>
+      <td>Darwin 评估一次性产物</td>
+      <td><strong>全仓库零引用</strong>（scripts/tools/tests 均无）</td>
+      <td><span class="badge b-del">可清理</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>四、合并优化方案</h2>
+
+<h3>方案 A（推荐）：保持「单源双镜像」架构，只做微清理</h3>
+<div class="callout callout-green">
+  <h4>理由</h4>
+  <p>三目录架构是刻意的「单源多目标」设计：<code>skills/</code> 手写 → <code>codex-skills/</code> 转换版（adapter note）+ <code>workbuddy-skills/</code> 原样版。两者消费方不同（Codex 线程 vs WorkBuddy 生产），且各有守卫测试钉死（test_workbuddy_adapter / check.sh 同步校验）。<strong>不建议物理合并</strong>——合并 codex/workbuddy 会让 WorkBuddy 侧被迫吞下 Codex adapter note，或让 Codex 侧丢失平台适配说明。</p>
+  <p><strong>执行项：</strong></p>
+  <ul>
+    <li>✅ <strong>清理 <code>skills/ashare-data.test-prompts.json</code></strong>（零引用一次性产物，可删或移入 <code>local/darwin-evaluation/</code> 同类目录）</li>
+    <li>✅ 文档补一句三目录关系说明（本报告即载体，可选同步进 CLAUDE.md）</li>
+    <li>✅ 零脚本改动、零测试改动，check.sh 不受影响</li>
+  </ul>
+</div>
+
+<h3>方案 B（可选优化）：sync 脚本去重 workbuddy 复制路径</h3>
+<div class="callout callout-orange">
+  <h4>说明</h4>
+  <p><code>sync-codex-skills.py</code> 中 workbuddy 复制是独立分支（122-129 行），与 codex 生成共用循环但目标路径不同。可微调：把 workbuddy 复制并入统一「生成目标」循环，减少分支代码。但收益极小（脚本仅 150 行、逻辑已清晰），<strong>不推荐为重构而重构</strong>。</p>
+</div>
+
+<h3>方案 C（不推荐）：合并三目录为单一 skills/</h3>
+<div class="callout callout-red">
+  <h4>风险</h4>
+  <ul>
+    <li>破坏 <code>tests/test_workbuddy_adapter.py</code> 路径硬依赖（ADAPTER 常量指向 workbuddy-skills/）</li>
+    <li>破坏 <code>tests/test_full_analysis_docs.py</code> ACTIVE_DOCS 列表（含 workbuddy-skills 路径）</li>
+    <li>破坏 <code>tests/test_deploy_user_skills.py</code> / <code>test_install_scripts.py</code>（按 codex-skills 目录部署）</li>
+    <li>README/CLAUDE.md 多处链接失效</li>
+  </ul>
+  <p><strong>结论</strong>：三目录是被测试与文档「钉死」的既定契约，合并将引发连锁改动且无实质收益。</p>
+</div>
+
+<h2>五、执行建议汇总</h2>
+
+<table>
+  <thead>
+    <tr><th>优先级</th><th>操作</th><th>对象</th><th>影响</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge b-del">P1</span></td>
+      <td>删除（或移入 local/）</td>
+      <td><code>skills/ashare-data.test-prompts.json</code></td>
+      <td>零引用，无影响</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-keep">P2</span></td>
+      <td>文档补充三目录关系说明</td>
+      <td>CLAUDE.md / SKILLS-GUIDE.md</td>
+      <td>仅文档</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-keep">保留</span></td>
+      <td>架构不动</td>
+      <td>skills/ codex-skills/ workbuddy-skills/ 三目录结构</td>
+      <td>测试契约钉死，合并得不偿失</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="footer">
+  AI Berkshire 三目录关系分析与合并优化方案 | 2026-08-10 | 仅供项目维护参考
+</div>
+
+</body>
+</html>
