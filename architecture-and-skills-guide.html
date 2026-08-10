@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Berkshire 架构与 Skill 使用说明 · v3.10.0</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#0f172a; color:#e2e8f0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .card { background:#1e293b; border:1px solid #334155; border-radius:12px; }
+  .mono { font-family:ui-monospace,Menlo,monospace; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:9999px; font-size:11px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th { text-align:left; padding:8px 10px; color:#94a3b8; font-weight:600; border-bottom:1px solid #334155; white-space:nowrap; }
+  td { padding:8px 10px; border-bottom:1px solid #293548; vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  code { background:#0f172a; border:1px solid #334155; border-radius:4px; padding:1px 5px; font-size:12px; }
+  .layer { stroke-dasharray:5 4; }
+</style>
+</head>
+<body>
+<main class="max-w-5xl mx-auto px-5 py-10 space-y-8">
+
+<!-- ══ 头部 ══ -->
+<header class="space-y-3">
+  <div class="flex items-center gap-3 flex-wrap">
+    <h1 class="text-2xl font-bold">AI Berkshire · 架构与 Skill 使用说明</h1>
+    <span class="tag bg-emerald-500/20 text-emerald-300 mono">v3.10.0</span>
+    <span class="text-slate-400 text-sm mono">2026-08-10</span>
+  </div>
+  <p class="text-slate-300 text-sm leading-relaxed">
+    兼容 Claude Code 与 Codex 的<strong>价值投资研究 Skill 合集</strong>：把巴菲特 / 芒格 / 段永平 / 李录四大师方法论沉淀为 17 个可复用研究 Skill + 金融严谨校验工具。
+    本文档替代 <code>docs/architecture-and-skills-guide.html</code>（v3.9.1 版，保留为历史档案）。完整 Skill 规范以 <code>SKILLS-GUIDE.md</code> 为唯一真源。
+  </p>
+</header>
+
+<!-- ══ 1. 架构总览 ══ -->
+<section class="card p-5 space-y-4">
+  <h2 class="text-lg font-bold">1 · 架构总览：单源双镜像 + lean-v1 编排管线</h2>
+  <svg viewBox="0 0 900 300" class="w-full">
+    <!-- 源真值层 -->
+    <rect x="20" y="20" width="250" height="260" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+    <text x="145" y="44" text-anchor="middle" fill="#10b981" font-size="13" font-weight="bold">skills/*.md（唯一手写源真值）</text>
+    <text x="145" y="70" text-anchor="middle" fill="#cbd5e1" font-size="11">17 个 skill：编排 1 + 业务 13</text>
+    <text x="145" y="88" text-anchor="middle" fill="#cbd5e1" font-size="11">+ 市场 2 + 数据规范 1</text>
+    <rect x="45" y="110" width="200" height="26" rx="5" fill="#0f172a" stroke="#334155"/>
+    <text x="145" y="127" text-anchor="middle" fill="#94a3b8" font-size="10">契约真源 tools/full_analysis_contract.json</text>
+    <rect x="45" y="145" width="200" height="26" rx="5" fill="#0f172a" stroke="#334155"/>
+    <text x="145" y="162" text-anchor="middle" fill="#94a3b8" font-size="10">full-analysis-contract/lean-v1 · 13 单元</text>
+    <rect x="45" y="180" width="200" height="26" rx="5" fill="#0f172a" stroke="#334155"/>
+    <text x="145" y="197" text-anchor="middle" fill="#94a3b8" font-size="10">守卫：tests/test_invariants.py 等</text>
+    <rect x="45" y="215" width="200" height="26" rx="5" fill="#0f172a" stroke="#334155"/>
+    <text x="145" y="232" text-anchor="middle" fill="#94a3b8" font-size="10">统一检查 bash scripts/check.sh</text>
+    <!-- 箭头 -->
+    <line x1="270" y1="100" x2="380" y2="80" stroke="#64748b" stroke-width="1.5" class="layer"/>
+    <line x1="270" y1="150" x2="380" y2="170" stroke="#64748b" stroke-width="1.5" class="layer"/>
+    <text x="325" y="60" fill="#94a3b8" font-size="9">sync-codex-skills.py</text>
+    <text x="325" y="200" fill="#94a3b8" font-size="9">berkshire-skill-sync/sync.py</text>
+    <!-- 镜像 A -->
+    <rect x="385" y="45" width="240" height="90" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="505" y="70" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="bold">codex-skills/*/SKILL.md</text>
+    <text x="505" y="92" text-anchor="middle" fill="#cbd5e1" font-size="10">转换副本（adapter note）</text>
+    <text x="505" y="110" text-anchor="middle" fill="#cbd5e1" font-size="10">17 包 · 测试钉死字节一致性</text>
+    <!-- 镜像 B -->
+    <rect x="385" y="150" width="240" height="90" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="505" y="175" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="bold">workbuddy-skills/…/SKILL.md</text>
+    <text x="505" y="197" text-anchor="middle" fill="#cbd5e1" font-size="10">canonical 原样字节镜像</text>
+    <text x="505" y="215" text-anchor="middle" fill="#cbd5e1" font-size="10">仅编排 skill（EXCLUDE 规则）</text>
+    <!-- 执行层 -->
+    <line x1="625" y1="150" x2="700" y2="150" stroke="#64748b" stroke-width="1.5"/>
+    <rect x="705" y="60" width="180" height="180" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+    <text x="795" y="86" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">lean-v1 执行管线</text>
+    <text x="795" y="112" text-anchor="middle" fill="#cbd5e1" font-size="10">next-work 拓扑派发</text>
+    <text x="795" y="132" text-anchor="middle" fill="#cbd5e1" font-size="10">→ Agent 执行 skill</text>
+    <text x="795" y="152" text-anchor="middle" fill="#cbd5e1" font-size="10">→ self-check 质量自查</text>
+    <text x="795" y="172" text-anchor="middle" fill="#cbd5e1" font-size="10">→ submit-result / mark-failed</text>
+    <text x="795" y="196" text-anchor="middle" fill="#cbd5e1" font-size="10">→ deep-summary 熔炼</text>
+    <text x="795" y="216" text-anchor="middle" fill="#cbd5e1" font-size="10">→ render-html 交付</text>
+  </svg>
+  <div class="grid md:grid-cols-3 gap-3 text-sm">
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="font-semibold text-emerald-400 mb-1">单源双镜像</div>
+      <div class="text-slate-300 text-xs leading-relaxed">只改 <code>skills/*.md</code>，两个同步脚本生成副本；改后必须双同步 + check.sh。三副本一致性由守卫测试钉死，不可物理合并。</div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="font-semibold text-amber-400 mb-1">lean 最小纪律</div>
+      <div class="text-slate-300 text-xs leading-relaxed">无 watchdog/租约/波次错峰。失败必须显式 <code>mark-failed --reason</code>；报告是唯一交付物，空证据账本合法，绝不合成 PLACEHOLDER。</div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="font-semibold text-sky-400 mb-1">两条底线</div>
+      <div class="text-slate-300 text-xs leading-relaxed">① 内容质量（结论影响实盘，完整性/正确性/内部一致不可协商）；② 失败必须显式声明，不静默跳过。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 2. 全量分析管线 ══ -->
+<section class="card p-5 space-y-4">
+  <h2 class="text-lg font-bold">2 · 全量分析管线：13 单元依赖图（full-analysis-contract/lean-v1）</h2>
+  <svg viewBox="0 0 900 250" class="w-full">
+    <!-- 波次分层 -->
+    <text x="15" y="30" fill="#64748b" font-size="10">W0 数据层</text>
+    <rect x="90" y="15" width="120" height="30" rx="6" fill="#065f46" stroke="#10b981"/>
+    <text x="150" y="34" text-anchor="middle" fill="#d1fae5" font-size="10">ashare-data</text>
+    <text x="15" y="80" fill="#64748b" font-size="10">W1 基础分析</text>
+    <rect x="90" y="60" width="120" height="26" rx="6" fill="#1e3a5f" stroke="#38bdf8"/>
+    <text x="150" y="77" text-anchor="middle" fill="#bae6fd" font-size="9">financial-data</text>
+    <rect x="220" y="60" width="120" height="26" rx="6" fill="#1e3a5f" stroke="#38bdf8"/>
+    <text x="280" y="77" text-anchor="middle" fill="#bae6fd" font-size="9">quality-screen</text>
+    <rect x="350" y="60" width="130" height="26" rx="6" fill="#1e3a5f" stroke="#38bdf8"/>
+    <text x="415" y="77" text-anchor="middle" fill="#bae6fd" font-size="9">investment-checklist</text>
+    <rect x="490" y="60" width="130" height="26" rx="6" fill="#1e3a5f" stroke="#38bdf8"/>
+    <text x="555" y="77" text-anchor="middle" fill="#bae6fd" font-size="9">investment-research</text>
+    <text x="15" y="130" fill="#64748b" font-size="10">W2 深化</text>
+    <rect x="90" y="112" width="120" height="26" rx="6" fill="#4c1d95" stroke="#a78bfa"/>
+    <text x="150" y="129" text-anchor="middle" fill="#ddd6fe" font-size="9">investment-team</text>
+    <rect x="220" y="112" width="140" height="26" rx="6" fill="#4c1d95" stroke="#a78bfa"/>
+    <text x="290" y="129" text-anchor="middle" fill="#ddd6fe" font-size="9">management-deep-dive</text>
+    <rect x="370" y="112" width="120" height="26" rx="6" fill="#4c1d95" stroke="#a78bfa"/>
+    <text x="430" y="129" text-anchor="middle" fill="#ddd6fe" font-size="9">earnings-review</text>
+    <rect x="500" y="112" width="130" height="26" rx="6" fill="#4c1d95" stroke="#a78bfa"/>
+    <text x="565" y="129" text-anchor="middle" fill="#ddd6fe" font-size="9">industry-research</text>
+    <text x="15" y="180" fill="#64748b" font-size="10">W3 综合</text>
+    <rect x="90" y="162" width="120" height="26" rx="6" fill="#78350f" stroke="#f59e0b"/>
+    <text x="150" y="179" text-anchor="middle" fill="#fde68a" font-size="9">industry-funnel</text>
+    <rect x="220" y="162" width="130" height="26" rx="6" fill="#78350f" stroke="#f59e0b"/>
+    <text x="285" y="179" text-anchor="middle" fill="#fde68a" font-size="9">bottleneck-hunter</text>
+    <rect x="360" y="162" width="120" height="26" rx="6" fill="#78350f" stroke="#f59e0b"/>
+    <text x="420" y="179" text-anchor="middle" fill="#fde68a" font-size="9">news-pulse</text>
+    <text x="15" y="230" fill="#64748b" font-size="10">W4 收口</text>
+    <rect x="90" y="212" width="140" height="26" rx="6" fill="#7f1d1d" stroke="#f87171"/>
+    <text x="160" y="229" text-anchor="middle" fill="#fecaca" font-size="9">thesis-tracker（全上游汇聚）</text>
+    <!-- 说明 -->
+    <text x="560" y="180" fill="#94a3b8" font-size="10">依赖由契约 depends_on 声明，</text>
+    <text x="560" y="196" fill="#94a3b8" font-size="10">next-work 自动拓扑派发就绪单元。</text>
+    <text x="560" y="218" fill="#94a3b8" font-size="10">契约解析唯一缝（v3.10.0）：</text>
+    <text x="560" y="234" fill="#10b981" font-size="10" class="mono">tools/full_analysis_contract.py</text>
+  </svg>
+  <div class="text-xs text-slate-400 leading-relaxed">
+    执行入口：<code>python3 scripts/full_analysis.py start --code 600519.SH</code>（或对话触发「全量分析 贵州茅台」）。
+    每单元产出报告 + 可选证据账本；L1 主线 = 13 份报告 → deep-summary 熔炼 → register-summary 冻结 → render-html 确定性交付。
+    L2-L4（audit/review/finalize+doctor）为可选评估层，只校验准出、不改内容。
+  </div>
+</section>
+
+<!-- ══ 3. Skill 速查 ══ -->
+<section class="card p-5 space-y-4">
+  <h2 class="text-lg font-bold">3 · 17 个 Skill 速查表</h2>
+
+  <h3 class="text-sm font-semibold text-emerald-400">数据与规范（2）</h3>
+  <table>
+    <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
+    <tr><td class="mono text-emerald-300">ashare-data</td><td>A股数据管线统一入口：行情/财务/估值/年报史/公告/龙虎榜/互动易/研报等 90+ 子命令，零依赖 curl 直连（腾讯+东财+巨潮）</td><td><code>600519</code>、<code>贵州茅台 公告</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">轻量·高频</span></td></tr>
+    <tr><td class="mono text-emerald-300">financial-data</td><td>财务数据获取与交叉验证规范（美股/港股/A股源优先级、双源误差&gt;1% 须标记），供其他 skill 引用</td><td>被引用为主</td><td><span class="tag bg-slate-500/20 text-slate-300">规范层</span></td></tr>
+  </table>
+
+  <h3 class="text-sm font-semibold text-sky-400">公司研究（6）</h3>
+  <table>
+    <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
+    <tr><td class="mono text-sky-300">quality-screen</td><td>去劣筛选：7 条指标快速排除非一流公司（个股/行业/指数/主题四输入）</td><td><code>腾讯,茅台</code>、<code>沪深300</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">中量</span></td></tr>
+    <tr><td class="mono text-sky-300">investment-checklist</td><td>巴菲特买入前 Checklist 逐家核查</td><td><code>腾讯,茅台,英伟达</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">中量</span></td></tr>
+    <tr><td class="mono text-sky-300">investment-research</td><td>四大师综合框架单公司标准研究（七模块 + AI 偏见自觉前置）</td><td><code>腾讯</code></td><td><span class="tag bg-amber-500/20 text-amber-300">重量</span></td></tr>
+    <tr><td class="mono text-sky-300">investment-team</td><td>多 Agent 并行投研团队（四位投资方法并行），启动前强制 WebSearch 权限预检</td><td><code>腾讯</code></td><td><span class="tag bg-red-500/20 text-red-300">极重量</span></td></tr>
+    <tr><td class="mono text-sky-300">earnings-review</td><td>财报精读：四大师并行解读一手财报，合成结构化精读报告</td><td><code>腾讯 2025Q4</code></td><td><span class="tag bg-amber-500/20 text-amber-300">重量</span></td></tr>
+    <tr><td class="mono text-sky-300">management-deep-dive</td><td>管理层纵深研究：「买股票就是买人」</td><td><code>王兴 美团</code></td><td><span class="tag bg-amber-500/20 text-amber-300">重量</span></td></tr>
+  </table>
+
+  <h3 class="text-sm font-semibold text-violet-400">行业与供应链（3）</h3>
+  <table>
+    <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
+    <tr><td class="mono text-violet-300">industry-research</td><td>产业链全景扫描 + 逻辑链验证 + 各环节头部四大师分析 → 行业组合建议</td><td><code>AI算力</code></td><td><span class="tag bg-red-500/20 text-red-300">极重量</span></td></tr>
+    <tr><td class="mono text-violet-300">industry-funnel</td><td>行业漏斗筛选：全市场逐层精选 3 家终选标的，留弃标准可复盘</td><td><code>人形机器人</code></td><td><span class="tag bg-red-500/20 text-red-300">极重量</span></td></tr>
+    <tr><td class="mono text-violet-300">bottleneck-hunter</td><td>供应链瓶颈猎手：从物理咽喉反向挖第二三层卡脖子环节与套利标的</td><td><code>固态电池</code></td><td><span class="tag bg-amber-500/20 text-amber-300">重量</span></td></tr>
+  </table>
+
+  <h3 class="text-sm font-semibold text-amber-400">市场与宏观（2）</h3>
+  <table>
+    <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
+    <tr><td class="mono text-amber-300">a-share-market-sentiment</td><td>A股情绪监测：5 指标 → 恐慌/中性/贪婪/极度贪婪评级 + 分档仓位建议（预警计数→分档减仓）</td><td><code>现在A股情绪如何</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">中量</span></td></tr>
+    <tr><td class="mono text-amber-300">macro-liquidity</td><td>宏观流动性双层监测（美元层 4 指标 + A股层 4 指标）→ 充裕～危机五级评级；含双源冲突协议（差额&gt;20% 强制双值展示）</td><td><code>当前流动性如何</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">中量</span></td></tr>
+  </table>
+
+  <h3 class="text-sm font-semibold text-rose-400">事件、纪律与 IPO（3）</h3>
+  <table>
+    <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
+    <tr><td class="mono text-rose-300">news-pulse</td><td>股价异动快速归因：4 并行 Agent 侦察 → 事件时间线 + 主因判断 + 是否触发论文重审</td><td><code>腾讯 大跌归因</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">中量</span></td></tr>
+    <tr><td class="mono text-rose-300">thesis-tracker</td><td>投资论文追踪：买入后纪律系统，建立并持续跟踪论文（季度检查）</td><td><code>腾讯 季度检查</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">中量</span></td></tr>
+    <tr><td class="mono text-rose-300">a-share-prospectus-analysis</td><td>A股 IPO 招股书三层框架：概念层六步 + 操作层九步（含需求真实性检验/买单主体分解/同业横向对比 H1–H4）+ 七缺口补强</td><td><code>分析宇树招股书</code></td><td><span class="tag bg-red-500/20 text-red-300">极重量</span></td></tr>
+  </table>
+
+  <h3 class="text-sm font-semibold text-emerald-400">编排（1）</h3>
+  <table>
+    <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
+    <tr><td class="mono text-emerald-300">full-company-analysis-workbuddy</td><td>单公司全量分析编排器：13 业务 skill 端到端 → 13 份报告 + HTML 交付件。两条底线 = 内容质量 + 失败显式声明</td><td><code>全量分析 贵州茅台</code></td><td><span class="tag bg-red-500/20 text-red-300">极重量</span></td></tr>
+  </table>
+
+  <div class="text-xs text-slate-400 leading-relaxed border-t border-slate-700 pt-3">
+    <strong class="text-slate-300">选择路径</strong>：快速排除 → quality-screen ｜ 标准研究 → investment-research ｜ 最全面 → investment-team ｜ 端到端 → full-company-analysis-workbuddy ｜ IPO/打新 → a-share-prospectus-analysis。
+    各 skill 完整规范、执行检查清单见 <code>SKILLS-GUIDE.md</code>（唯一真源）；对话中用 <code>/&lt;skill名&gt; 参数</code> 触发。
+    IPO 研究产出统一归档 <code>local/IPO/&lt;公司名&gt;-&lt;代码&gt;/</code>（md + HTML + evidence/）。
+  </div>
+</section>
+
+<!-- ══ 4. 数据源分层 ══ -->
+<section class="card p-5 space-y-3">
+  <h2 class="text-lg font-bold">4 · 数据源分层与冲突裁决</h2>
+  <table>
+    <tr><th>层级</th><th>数据源</th><th>性质</th><th>使用规则</th></tr>
+    <tr><td><span class="tag bg-amber-500/20 text-amber-300">Tier 0</span></td><td>Tushare Pro（付费，需 TUSHARE_TOKEN）</td><td>独立结构化、可审计可冻结，47 命令</td><td><strong>最高优先级</strong>：冲突时以 Tushare 为准</td></tr>
+    <tr><td><span class="tag bg-sky-500/20 text-sky-300">Tier 1</span></td><td>腾讯行情 + 东方财富 + 巨潮（免费零 token）</td><td>基础层，curl 直连</td><td>实时行情/核心财务/公告/打板三件套；价格双源验证（腾讯+新浪）</td></tr>
+    <tr><td><span class="tag bg-slate-500/20 text-slate-300">Tier 2</span></td><td>WebSearch / WebFetch</td><td>非结构化、不可冻结</td><td>仅 Tier 0/1 无法覆盖时使用（行业定性/管理层/竞对）</td></tr>
+    <tr><td><span class="tag bg-emerald-500/20 text-emerald-300">Tier 3</span></td><td>financial_rigor.py / report_audit.py</td><td>确定性计算与审计</td><td>Decimal 精确验算、三情景建模、报告质量门</td></tr>
+  </table>
+  <div class="text-xs text-slate-400">
+    <strong class="text-slate-300">冲突解决（v3.9.3 双源冲突协议）</strong>：价格类 CONFLICT 自动以 Tushare 覆盖；财务类（期间/单位/口径不一致）不自动覆盖、标注双源差异；取数型 skill 差额 &gt;20% 触发 ⚠️ 默认采信权威源、双值并列展示、禁止静默通过。零依赖层无日K/OHLC：<code>kline</code>（需 token）或 <code>tools/akshare_data.py price</code>（零 token，腾讯前复权）。
+  </div>
+</section>
+
+<!-- ══ 5. 质量防护与关键命令 ══ -->
+<section class="card p-5 space-y-3">
+  <h2 class="text-lg font-bold">5 · 质量防护与关键命令</h2>
+  <table>
+    <tr><th>机制</th><th>载体</th><th>作用</th></tr>
+    <tr><td>substance 地板</td><td>gate <code>_substance_errors</code> + <code>min_bytes</code></td><td>报告须含数据截止日 + 来源声明 + 免责 + ≥N 实质章节（每章≥150字）；self-check 与 submit 双层校验</td></tr>
+    <tr><td>契约唯一解析缝</td><td><code>tools/full_analysis_contract.py</code>（v3.10.0）</td><td>load_contract(strict/lenient) / find_skill；gate/runtime/mk_result_bundle 均委托，错误消息逐字一致</td></tr>
+    <tr><td>统一本地检查</td><td><code>bash scripts/check.sh</code></td><td>单测 + 生成物同步 + 报告索引 + 注册表校验；<strong>改 gate/runtime/契约/守卫后必跑并读真实退出码</strong></td></tr>
+    <tr><td>精确算术</td><td><code>python3 tools/financial_rigor.py</code></td><td>Decimal 无浮点漂移；市值/估值/情景分析必用</td></tr>
+    <tr><td>报告审计</td><td><code>python3 tools/report_audit.py</code></td><td>发布前抽检：准出 / 证据不足 / 打回三态</td></tr>
+    <tr><td>守卫测试</td><td><code>tests/test_invariants.py</code> 等</td><td>三副本字节一致、史实档案 LEGACY_ALLOWLIST 豁免、文档断言（ACTIVE_DOCS）</td></tr>
+  </table>
+  <div class="text-xs text-slate-400">
+    <strong class="text-slate-300">发版铁律</strong>：改 <code>skills/*.md</code> → sync-codex-skills.py + berkshire-skill-sync/sync.py 双同步 → check.sh 真实退出码 0 → CHANGELOG → commit → annotated tag → push。
+  </div>
+</section>
+
+<!-- ══ 6. v3.10.0 变更 ══ -->
+<section class="card p-5 space-y-3">
+  <h2 class="text-lg font-bold">6 · v3.10.0 本版架构深化要点</h2>
+  <div class="grid md:grid-cols-2 gap-3 text-xs leading-relaxed">
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="text-emerald-400 font-semibold mb-1">① 契约解析缝收敛</div>
+      <div class="text-slate-300">新增 <span class="mono">full_analysis_contract.py</span> 深模块：gate/runtime/mk_result_bundle 三处解析副本收敛为唯一缝，退出码与消息逐字不变。</div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="text-emerald-400 font-semibold mb-1">② Gate 退役校验层拆除</div>
+      <div class="text-slate-300">删零触发的 <span class="mono">_precheck_evidence_rules</span>（lean 契约已禁 evidence_rules）；PLACEHOLDER 防线与回执签名链经验证为活代码，修正性保留。</div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="text-emerald-400 font-semibold mb-1">③⑤ 死代码清零</div>
+      <div class="text-slate-300">删 4 个零引用一次性脚本 + momentum_backtest v1（Yahoo API 已封禁），v2 升为唯一回测实现。</div>
+    </div>
+    <div class="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+      <div class="text-emerald-400 font-semibold mb-1">④⑥ 裁决归档</div>
+      <div class="text-slate-300">首份真实 ADR-0001：ashare_data 私有函数测试是合法 internal seams、两 pe-band 不构成重复；validate_v2 冻结为档案校验专用（46 份 v2 run manifest）。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 7. 约定 ══ -->
+<section class="card p-5 space-y-2">
+  <h2 class="text-lg font-bold">7 · 核心约定速记</h2>
+  <ul class="text-sm text-slate-300 space-y-1.5 list-disc list-inside">
+    <li><strong>数据截止日</strong>：研究前先 <code>date</code> 确认今日作为基线，报告头标注截止日 + 仅供学习研究免责。</li>
+    <li><strong>低置信标注</strong>：低置信结论、不完整数据、信源缺口必须显式标注，不静默。</li>
+    <li><strong>隐私边界</strong>：<code>local/</code> 与 <code>deliverables/</code> 仅本地不入库（公开仓库）。</li>
+    <li><strong>报告语言</strong>：简体中文；数字溯源可复核；禁止凑数式注水（深度优先于字数）。</li>
+    <li><strong>写后自查</strong>：每次用业务 skill 产出后，对照该 skill 末尾执行检查清单逐项勾选；标「强制/必须」的步骤禁止降级省略。</li>
+  </ul>
+</section>
+
+<footer class="text-center text-xs text-slate-500 pt-2 pb-6">
+  AI Berkshire v3.10.0 · 2026-08-10 · 完整版规范见 SKILLS-GUIDE.md / CHANGELOG.md · 本文档为精简版架构与使用说明
+</footer>
+
+</main>
+</body>
+</html>
