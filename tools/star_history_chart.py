@@ -347,6 +347,7 @@ def render(points, total, theme, font_b64, logo_b64, avatar_b64, avatar_mime):
 def main():
     tools_dir = Path(__file__).resolve().parent
     out_dir = tools_dir.parent / "assets"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     points, total, avatar_url = fetch_points()
     avatar = gh_get(avatar_url + "&s=64", raw=True)

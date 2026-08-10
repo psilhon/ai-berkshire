@@ -22,11 +22,7 @@
 
 ### 2024 全年收益：+69.29%
 
-<img src="assets/2024-returns.jpg" width="300" />
-
 ### 2025 全年收益：+66.38%
-
-<img src="assets/2025-returns.jpg" width="300" />
 
 ### 与主要指数对比
 
@@ -49,8 +45,6 @@
 ### 精选研究首发于公众号
 
 仓库里是完整的框架和全量报告，公众号里是**精选**——真正值得深研的公司，加上报告之外我自己的判断与取舍：
-
-<img src="assets/wechat-qr.png" width="160" alt="微信公众号：复利炼丹炉" />
 
 **复利炼丹炉** —— 用 AI 炼投研这颗丹。
 
@@ -146,10 +140,6 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 一个人直接问AI，上下文窗口是一个。4个Agent并行，等于4倍的搜索量、4倍的信息源、4个独立视角。
 
-<p align="center">
-  <img src="assets/team-core.svg" alt="Team Lead 并行调度四大师 Agent" width="720" />
-</p>
-
 ### 一句话总结
 
 > **普通人问AI得到的是"看起来对的分析"，用 AI Berkshire 得到的是"可以拿来做决策的投研报告"。**
@@ -157,11 +147,6 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 ---
 
 ## 整体架构
-
-<p align="center">
-  <img src="assets/architecture.svg" alt="AI Berkshire 整体架构" width="760" />
-</p>
-
 
 **三层设计哲学**：
 - **Skill 层**：16 个业务入口覆盖数据、快筛、公司、财报、行业、风险、论文与市场级/IPO 研究，另有 1 个受治理的全量编排入口（契约 13 单元）
@@ -697,10 +682,3 @@ MIT License
 ## Star History
 
 如果这个项目对你有帮助，请给一个 Star 支持！精选公司研究与个人判断首发于微信公众号「**复利炼丹炉**」（二维码见[文首](#精选研究首发于公众号)）。
-
-<a href="https://github.com/xbtlin/ai-berkshire/stargazers">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/star-history-dark.svg">
-    <img alt="Star History Chart" src="assets/star-history.svg">
-  </picture>
-</a>
