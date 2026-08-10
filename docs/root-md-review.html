@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>根目录 md 文档精简合并方案</title>
+<style>
+:root {
+  --bg: #fafafa; --card: #fff; --border: #e0e0e0; --text: #1a1a1a;
+  --muted: #666; --accent: #0066cc; --red: #d32f2f; --orange: #f57c00;
+  --green: #388e3c; --yellow: #fbc02d; --code-bg: #f5f5f5;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.7;
+  max-width: 1000px; margin: 0 auto; padding: 24px;
+}
+h1 { font-size: 1.8em; margin-bottom: 4px; }
+h2 { font-size: 1.35em; margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+h3 { font-size: 1.1em; margin: 18px 0 8px; }
+.subtitle { color: var(--muted); font-size: 0.9em; margin-bottom: 20px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.9em; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--code-bg); font-weight: 600; }
+tr:hover { background: #f9f9f9; }
+code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; font-size: 0.88em; }
+pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 12px 0; font-size: 0.85em; }
+.callout { border-radius: 8px; padding: 14px 18px; margin: 12px 0; }
+.callout-green { background: #e8f5e9; border: 1px solid #a5d6a7; }
+.callout-orange { background: #fff3e0; border: 1px solid #ffcc80; }
+.callout-red { background: #ffebee; border: 1px solid #ef9a9a; }
+.callout-blue { background: #e3f2fd; border: 1px solid #90caf9; }
+.callout h4 { margin-bottom: 6px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.78em; font-weight: 600; white-space: nowrap; }
+.b-keep { background: #e8f5e9; color: var(--green); }
+.b-merge { background: #fff3e0; color: var(--orange); }
+.b-slim { background: #e3f2fd; color: #1565c0; }
+.b-lock { background: #f3e5f5; color: #7b1fa2; }
+.b-del { background: #ffebee; color: var(--red); }
+ul { margin-left: 22px; }
+li { margin: 4px 0; }
+.ov-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 16px 0; }
+.ov-cell { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+.ov-cell .f { font-weight: 700; font-size: 0.95em; }
+.ov-cell .s { font-size: 0.75em; color: var(--muted); }
+.footer { text-align: center; color: var(--muted); font-size: 0.85em; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<h1>根目录 md 文档精简合并方案</h1>
+<p class="subtitle">扫描日期：2026-08-10 | 项目版本 v3.9.3 | 根目录 10 个 md 文件，共 2,023 行</p>
+
+<div class="ov-grid">
+  <div class="ov-cell"><div class="f">README.md</div><div class="s">684 行 · 31.9K</div></div>
+  <div class="ov-cell"><div class="f">CHANGELOG.md</div><div class="s">718 行 · 76.4K</div></div>
+  <div class="ov-cell"><div class="f">CLAUDE.md</div><div class="s">176 行 · 12.8K</div></div>
+  <div class="ov-cell"><div class="f">AGENTS.md</div><div class="s">74 行 · 3.5K</div></div>
+  <div class="ov-cell"><div class="f">SKILLS-GUIDE.md</div><div class="s">91 行 · 8.3K</div></div>
+  <div class="ov-cell"><div class="f">CONTEXT.md</div><div class="s">45 行 · 2.7K</div></div>
+  <div class="ov-cell"><div class="f">ai_CLAUDE.md</div><div class="s">75 行 · 5.4K</div></div>
+  <div class="ov-cell"><div class="f">CONTRIBUTING.md</div><div class="s">94 行 · 8.4K</div></div>
+  <div class="ov-cell"><div class="f">CODE_OF_CONDUCT.md</div><div class="s">55 行 · 2.2K</div></div>
+  <div class="ov-cell"><div class="f">SECURITY.md</div><div class="s">11 行 · 0.5K</div></div>
+</div>
+
+<h2>一、逐文件定位与依赖评估</h2>
+
+<table>
+  <thead>
+    <tr><th>文件</th><th>定位</th><th>硬依赖</th><th>判定</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>README.md</code></td>
+      <td>项目门面：Track Record / 为什么不能直接问 AI / 架构 / Skills 一览 / 快速开始 / 各 Skill 详细介绍 / 实战报告 / 设计理念 / 未来方向</td>
+      <td><code>tests/test_full_analysis_docs.py</code> 读取断言（ACTIVE_DOCS）+ 死链扫描</td>
+      <td><span class="badge b-slim">瘦身</span></td>
+    </tr>
+    <tr>
+      <td><code>CHANGELOG.md</code></td>
+      <td>发版记录（人工维护变更摘要）</td>
+      <td>守卫 LEGACY_ALLOWLIST 豁免（史实）</td>
+      <td><span class="badge b-lock">锁定</span></td>
+    </tr>
+    <tr>
+      <td><code>CLAUDE.md</code></td>
+      <td>Claude Code 项目指令：架构 / 常用命令 / 目录结构 / 报告命名</td>
+      <td><code>test_full_analysis_docs.py</code> ACTIVE_DOCS + <code>CONTEXT.md</code> 引用</td>
+      <td><span class="badge b-keep">保留</span></td>
+    </tr>
+    <tr>
+      <td><code>AGENTS.md</code></td>
+      <td>Codex 行为规则：项目布局 / 兼容性 / 研究质量 / 隐私边界</td>
+      <td>Codex 侧规范；与 CLAUDE.md 刻意双文件</td>
+      <td><span class="badge b-keep">保留</span></td>
+    </tr>
+    <tr>
+      <td><code>SKILLS-GUIDE.md</code></td>
+      <td>Skill 使用指南（17 canonical + 3 契约外，含选择建议路由表）</td>
+      <td><code>test_full_analysis_docs.py</code> ACTIVE_DOCS 硬依赖</td>
+      <td><span class="badge b-lock">锁定</span></td>
+    </tr>
+    <tr>
+      <td><code>CONTEXT.md</code></td>
+      <td>领域词汇表（ubiquitous language）入口，6 条术语</td>
+      <td><code>docs/agents/domain.md</code> 引用</td>
+      <td><span class="badge b-merge">合并候选</span></td>
+    </tr>
+    <tr>
+      <td><code>ai_CLAUDE.md</code></td>
+      <td>AI 记忆文件：用户画像 / 项目演进历史 / 偏好与教训</td>
+      <td>CLAUDE.md 提及（无测试依赖）</td>
+      <td><span class="badge b-keep">保留</span></td>
+    </tr>
+    <tr>
+      <td><code>CONTRIBUTING.md</code></td>
+      <td>贡献指南（中英双语）：欢迎/不接受 / PR 要求 / Issue 模板</td>
+      <td>local/reports_bak/community/README 引用</td>
+      <td><span class="badge b-keep">保留</span></td>
+    </tr>
+    <tr>
+      <td><code>CODE_OF_CONDUCT.md</code></td>
+      <td>行为准则（标准模板）</td>
+      <td>GitHub 自动识别</td>
+      <td><span class="badge b-keep">保留</span></td>
+    </tr>
+    <tr>
+      <td><code>SECURITY.md</code></td>
+      <td>安全报告政策（标准模板）</td>
+      <td>CONTRIBUTING.md 引用；GitHub 自动识别</td>
+      <td><span class="badge b-keep">保留</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>二、发现的重叠与冗余</h2>
+
+<h3>重叠 1：README「各 Skill 详细介绍」↔ SKILLS-GUIDE.md（最值得合并）</h3>
+<div class="callout callout-orange">
+  <h4>证据</h4>
+  <ul>
+    <li>README 369-595 行（约 226 行）逐 skill 详细介绍：<code>/investment-research</code>、<code>/investment-team</code>、<code>/investment-checklist</code>、<code>/industry-research</code>、<code>/industry-funnel</code>、<code>/news-pulse</code>——但只覆盖 6/17</li>
+    <li>SKILLS-GUIDE.md 已是完整使用指南（17 canonical + 3 契约外全登记 + 选择建议路由表），README 的详细介绍是其真子集</li>
+    <li>README 头部「Skills 一览」速查表（169-224 行）与 SKILLS-GUIDE 功能分类表也重叠</li>
+  </ul>
+  <p><strong>方案</strong>：README「各 Skill 详细介绍」整节（369-595）压缩为一句 + 链接指向 SKILLS-GUIDE.md；「Skills 一览」速查表保留（快速导航有价值）。README 从 684 行降至 ~460 行，消除 ~200 行重复。</p>
+</div>
+
+<h3>重叠 2：CONTEXT.md（6 条术语的骨架）</h3>
+<div class="callout callout-orange">
+  <h4>分析</h4>
+  <p>CONTEXT.md 仅 45 行、词汇表 6 条术语，自述"骨架版"。它是 <code>docs/agents/domain.md</code>（Matt Pocock skills 模板）引用的领域入口，但项目实际已沉淀大量领域术语（13 契约、lean-v1、双源镜像、self-check 等）未收录。</p>
+  <p><strong>方案（二选一）</strong>：</p>
+  <ul>
+    <li><strong>A. 扩充</strong>：按当前项目状态补全词汇表（建议，保留独立入口）</li>
+    <li><strong>B. 合并</strong>：把 6 条术语并入 CLAUDE.md 新增「领域词汇」节，删除 CONTEXT.md，同步更新 <code>docs/agents/domain.md</code> 引用（改动 2 处）</li>
+  </ul>
+</div>
+
+<h3>重叠 3：CLAUDE.md ↔ AGENTS.md（刻意双文件，不合并）</h3>
+<div class="callout callout-blue">
+  <h4>说明</h4>
+  <p>两者内容有交集（双系统管线、研究质量规则、目录结构），但项目明确约定「CLAUDE.md 管 Claude Code，AGENTS.md 管 Codex，改流程时两边同步」——这是 <strong>刻意设计</strong>（各客户端读取各自文件），合并会破坏 Codex 侧约定。保留。</p>
+</div>
+
+<h3>非重叠（保留理由）</h3>
+<ul>
+  <li><strong>CHANGELOG.md</strong>：发版记录，守卫豁免史实档案，禁止动</li>
+  <li><strong>CODE_OF_CONDUCT / SECURITY / CONTRIBUTING</strong>：GitHub 社区标准件，自动识别/被引用，保留</li>
+  <li><strong>ai_CLAUDE.md</strong>：记忆文件定位独立（用户画像/历史/教训），与 CLAUDE.md 指令互补</li>
+</ul>
+
+<h2>三、精简合并方案</h2>
+
+<h3>方案 A（推荐）：README 瘦身 + CONTEXT 扩充</h3>
+<table>
+  <thead>
+    <tr><th>操作</th><th>对象</th><th>内容</th><th>影响</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge b-slim">瘦身</span></td>
+      <td>README.md</td>
+      <td>删除「各 Skill 详细介绍」整节（369-595，~226 行），替换为：<code>各 Skill 的完整使用说明见 <a>SKILLS-GUIDE.md</a>（17 canonical + 3 契约外全登记）。</code></td>
+      <td>README 684→~460 行；需确认无死链引入；test 检查 ACTIVE_DOCS 不含 REMOVED_SKILLS 与「20 项」字样，删除后更干净</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-merge">扩充</span></td>
+      <td>CONTEXT.md</td>
+      <td>补录 lean 时代术语：契约 13 单元 / lean-v1 / 单源双镜像 / self-check / substance 地板 / mark-failed / register-summary 等</td>
+      <td>仅文档，无引用断裂</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>方案 B（可选激进）：CONTEXT.md 合并进 CLAUDE.md</h3>
+<table>
+  <thead>
+    <tr><th>操作</th><th>对象</th><th>内容</th><th>风险</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge b-merge">合并</span></td>
+      <td>CONTEXT.md → CLAUDE.md</td>
+      <td>6 条术语并入 CLAUDE.md 新「领域词汇」节；删除 CONTEXT.md；<code>docs/agents/domain.md</code> 引用改指 CLAUDE.md</td>
+      <td>改动 2 文件 + 1 引用；docs/agents/domain.md 是 Matt Pocock 模板，改后与上游模板分歧</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>方案 C（不推荐）：合并 CLAUDE.md + AGENTS.md</h3>
+<div class="callout callout-red">
+  <h4>风险</h4>
+  <p>破坏「Claude 管 CLAUDE.md / Codex 管 AGENTS.md」的客户端契约；Codex 侧 skills 生成物 adapter note 明确引用 AGENTS.md；合并后任何一侧客户端读不到自己的规则。不改。</p>
+</div>
+
+<h2>四、执行建议汇总</h2>
+
+<table>
+  <thead>
+    <tr><th>优先级</th><th>操作</th><th>文件</th><th>收益</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge b-slim">P1</span></td>
+      <td>删除「各 Skill 详细介绍」节，改指 SKILLS-GUIDE.md</td>
+      <td>README.md</td>
+      <td>-226 行重复，README 减负 1/3</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-merge">P2</span></td>
+      <td>扩充 CONTEXT.md 词汇表（或并入 CLAUDE.md）</td>
+      <td>CONTEXT.md / CLAUDE.md</td>
+      <td>领域术语与实际项目对齐</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-lock">锁定</span></td>
+      <td>不动：CHANGELOG / SKILLS-GUIDE / CLAUDE / AGENTS / 标准三件套</td>
+      <td>—</td>
+      <td>测试契约与 GitHub 规范零风险</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-green">
+  <h4>一句话结论</h4>
+  <p>根目录 10 个 md 中 <strong>8 个定位清晰、各有依赖</strong>（含测试钉死的 3 个），无需合并；唯一实质性冗余是 <strong>README「各 Skill 详细介绍」与 SKILLS-GUIDE.md 重复</strong>（可删 ~226 行），另有 CONTEXT.md 骨架可扩充。整体文档体系健康，不做大手术。</p>
+</div>
+
+<div class="footer">
+  AI Berkshire 根目录 md 精简合并方案 | 2026-08-10 | 仅供项目维护参考
+</div>
+
+</body>
+</html>

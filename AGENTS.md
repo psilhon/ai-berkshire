@@ -32,8 +32,9 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
   intentionally adopting the workflow for Claude Code too.
 - Keep tool paths compatible with the documented checkout path:
   `~/ai-berkshire/tools/...`
-- Keep `CLAUDE.md` for Claude Code behavior and this `AGENTS.md` for Codex
-  behavior.
+- This `AGENTS.md` governs Codex behavior; shared project conventions
+  (report naming, research quality, privacy boundaries) live in
+  `SKILLS-GUIDE.md`.
 
 ## Research Quality Rules
 

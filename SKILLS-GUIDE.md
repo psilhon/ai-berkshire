@@ -15,6 +15,61 @@
 - 数据不足时明确记录限制，不用猜测补齐。
 - 修改 Skill 后运行 `python3 scripts/sync-codex-skills.py`，完成前运行 `bash scripts/check.sh`。
 
+## 投研分析核心原则（最高优先级）
+
+- **客观、客观、客观**——所有投研分析必须基于事实和数据，严禁主观臆断
+- 严格区分"事实"与"观点"：事实用数据支撑，观点必须明确标注为"观点"或"推测"
+- **不预设立场**：先摆数据、再推逻辑、最后得结论，结论必须从数据中自然推出
+- 禁止"我认为/我觉得/显然"等主观表述，改用"数据显示/证据表明/根据XX来源"
+- **呈现正反两面**：每个核心判断都必须附带反面论据（"但另一方面..."），让读者自己权衡
+- 对不确定的事情诚实说"不确定"或"数据不足"，不用推测填充确定性
+- **研究开始前先跑 `date` 确认今天日期**，以此为"最新数据"基线并在报告头标注数据截止日，绝不用训练数据里的日期
+- 所有 skill 执行时都必须遵守以上原则
+
+## 报告语言与风格
+
+- 所有报告使用**中文**；风格直接、犀利、不说废话
+- 数据必须标注来源，关键数据至少 2 个来源交叉验证；估计值必须注明"估计"
+- 评分使用★符号（★1-5），不含半星
+- 穿插巴菲特/芒格/段永平/李录的语录点评
+- 本项目用于学习研究，不构成投资建议
+
+## 数据校验（报告发布前）
+
+- 市值必须手算校验：股价 × 总股本，与报告市值对比
+- 货币单位明确标注（港币/人民币/美元/韩元），防止混淆
+- PE/ROE 等指标用 `tools/financial_rigor.py` 精确计算
+- 发布级报告先过 `tools/report_audit.py` 抽检
+
+## 报告目录与命名规范
+
+公司相关报告放 `local/reports/{公司名}/` 文件夹内；行业/漏斗/主题/组合/多公司报告放 `local/reports/` 根目录（下表"根目录"均指此处；旧 `reports/` 根目录已在 v1.0 全量迁移至 `local/reports/`）。
+
+| Skill | 文件命名格式 | 位置 |
+|------|---------|------|
+| /investment-team | 目录含 README + 01-04 四视角（段永平商业模式/巴菲特财务估值/芒格行业竞争/李录风险管理层）+ `最终报告.md` | `local/reports/{公司名}/` |
+| /investment-research | `{公司名}-research-{YYYYMMDD}.md` | 公司文件夹 |
+| /investment-checklist | `{公司名}-checklist-{YYYYMMDD}.md` | 公司文件夹 |
+| /earnings-review | `{公司名}-earnings-{期间}.md`（如 `腾讯-earnings-2025Q4.md`） | 公司文件夹 |
+| /management-deep-dive | `{公司名}-management-{YYYYMMDD}.md` | 公司文件夹 |
+| /thesis-tracker | `{公司名}-thesis.md`（长期维护） | 公司文件夹 |
+| /news-pulse | `{公司名}-news-{YYYYMMDD}.md` | 公司文件夹 |
+| /industry-research | `{行业名}-industry-{YYYYMMDD}.md` | 根目录 |
+| /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
+| /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `local/reports/bottleneck-map/` |
+| /a-share-market-sentiment | `A股市场情绪-{YYYYMMDD}.md`（情绪评级 + 仓位分档） | 根目录 |
+| /macro-liquidity | `宏观流动性-{YYYYMMDD}.md`（美元层 + A股层双水位） | 根目录 |
+| /a-share-prospectus-analysis | `{公司名}-招股书-{YYYYMMDD}.md`（独立归档于 `local/IPO/{公司名}-{代码}/`） | `local/IPO/{公司名}-{代码}/` |
+|  /full-company-analysis-workbuddy | `<run_id>/` 运行目录（路径由 Gate 生成） | `local/Company/<code>-<公司>/` |
+
+## 公开仓库与隐私边界
+
+本仓库公开。以下内容只存本地、永不入库（.gitignore 已排除）：
+
+- `local/` — 所有不打算公开的文件放这里（含 local/reports/ local/筛选公司/ local/实盘记录/ local/research/）
+
+写报告/整理文件时不要把上述私密内容挪进会被 track 的路径。音视频大文件（.m4a/.mp3/.mp4 等）默认不入库，确需提交用 `git add -f` 显式加入。
+
 ## 业务 Skill
 
 | 类别 | Skill | 适用场景 | 主要特点 |

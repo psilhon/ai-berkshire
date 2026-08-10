@@ -8,7 +8,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 ACTIVE_DOCS = (
     REPO / "README.md",
-    REPO / "CLAUDE.md",
     REPO / "SKILLS-GUIDE.md",
     REPO / "skills/full-company-analysis-workbuddy.md",
     REPO / "workbuddy-skills/full-company-analysis-workbuddy/SKILL.md",
@@ -49,10 +48,9 @@ class FullAnalysisDocumentationTests(unittest.TestCase):
             self.assertTrue((REPO / rel).is_file(), f"README 死链: {rel}")
 
     def test_active_docs_use_canonical_company_run_path(self):
-        for path in (REPO / "README.md", REPO / "CLAUDE.md"):
-            text = path.read_text(encoding="utf-8")
-            self.assertNotIn("local/company/", text, path.name)
-            self.assertIn("local/Company/", text, path.name)
+        text = (REPO / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("local/company/", text)
+        self.assertIn("local/Company/", text)
 
     def test_full_analysis_workflow_registers_summary_before_audit(self):
         # 只钉住命令名与它们的先后顺序，不钉具体命令行片段——lean 文档已把
