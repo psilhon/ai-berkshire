@@ -5,6 +5,32 @@
 
 ---
 
+## [v3.10.0] — 2026-08-10
+
+> **架构深化**（/improve-codebase-architecture 评审落地）：lean-v1 pivot 后「语义已 lean、接口面未 lean」的遗留债务系统性收口。契约解析收敛为唯一深模块缝；Gate 退役校验层拆除；一次性脚本墓地清零；momentum 分叉收口；validate_v2 显式冻结；④候选经调查推翻并归档首份真实 ADR。6 个候选全部闭环，每步 check.sh 真实退出码 0。
+
+### ✨ 新增 (Added)
+
+- **`tools/full_analysis_contract.py` Contract 深模块**：契约唯一解析缝（`CONTRACT_PATH` / `ContractError` / `load_contract(strict|lenient)` / `find_skill` / `get_skill_or_none`）。零依赖、不 import 执行代码（与 check-contract 独立性立场一致）；错误通道留给调用方 adapter，退出码与消息逐字不变。
+- **`tests/test_full_analysis_contract_module.py`**：10 个用例全部穿过公开接口。
+- **`docs/adr/0001-ashare-data-internal-seams.md`**：首份真实 ADR。记录④候选被 trust-but-verify 推翻的裁决（私有函数测试是合法 internal seams；两个 pe-band 不同源不同指标），防未来评审重复误判。
+
+### 🔧 变更 (Changed)
+
+- **契约解析收敛**：`gate.load_registry/find_skill` → 薄包装；`runtime._load_registry` → lenient 委托 + next-work 改 `get_skill_or_none`；`mk_result_bundle` 删 find_skill 副本与 REGISTRY 路径常量。诚实排除：check-contract（独立性承重墙）、doctor/audit（`__file__` 派生无漂移）。
+- **Gate 退役校验层拆除**：删 `_precheck_evidence_rules`（lean 契约禁止 skill 级 evidence_rules，永远零触发）+ `build_evidence_ledger` 内 4 个 lean 死变量。**修正性保留**：`_precheck_placeholder_evidence`（拦手写水印，9 处测试驱动，活防线）与回执签名链（白名单短路休眠但测试完整驱动）不删。
+- **runtime `EVIDENCE_DIRECTIVE` lean 口径修正**：不再引导执行 Agent 依赖已移除的 evidence_rules 键，改为「数组可为空、绝不合成 PLACEHOLDER」；测试断言同步并反向防复活。
+- **momentum_backtest 分叉收口**：删 v1（依赖已封禁 Yahoo API），v2 升为唯一实现（去版本后缀）。
+- **validate_v2 显式冻结**：标注【已冻结·档案校验专用】——local/ 下 46 份 v2 时代 run manifest 的唯一校验器，禁止挂载新功能。
+- **skills/ashare-data.md 陷阱 #3 修正**：由「无复权价格序列」更新为现状（cmd_kline 已补 OHLC 缺口但需 token；零 token 路径可用 akshare_data）。
+
+### 🗑️ 移除 (Removed)
+
+- 4 个零引用 lean-pivot 遗留脚本：`tools/_dispatch_helper.py` / `_submit_helper.py` / `_tfwd_gen_specs.py`、`scripts/_transform_contract_lean.py`（deletion test 通过，复杂度消失而非转移）。
+- `tools/momentum_backtest.py` 旧 v1（Yahoo Chart API 已封禁，不可运行）。
+
+---
+
 ## [v3.9.3] — 2026-08-09
 
 > **市场级 skill 取数纪律强化**：本日 `/macro-liquidity view` 实战触发 Tushare 与权威新闻源口径冲突（融资余额相差 ~50%）——这是取到数据≠数据可信的真实事故。本版把所有取数型 skill 的失败处理升级为 A/B/C 三类，新增「双源冲突协议」硬规则；同步收紧 a-share-market-sentiment 的口径表述。
