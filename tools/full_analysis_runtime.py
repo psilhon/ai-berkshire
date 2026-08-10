@@ -19,7 +19,12 @@ except ImportError:  # pragma: no cover - Windows compatibility
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
-DEFAULT_REGISTRY = TOOLS_DIR / "full_analysis_contract.json"
+from full_analysis_contract import (  # noqa: E402
+    CONTRACT_PATH,
+    get_skill_or_none,
+    load_contract,
+)
+DEFAULT_REGISTRY = CONTRACT_PATH
 STATE_REL = Path("evidence/runtime-state.json")
 EVENTS_REL = Path("evidence/events.jsonl")
 USAGE_REL = Path("evidence/usage.jsonl")
@@ -324,10 +329,8 @@ def _active_units(state: dict) -> list[dict]:
 
 
 def _load_registry() -> dict:
-    try:
-        return json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"skills": []}
+    """容错档：委托 Contract 深模块（strict=False），读取失败降级为空表。"""
+    return load_contract(strict=False)
 
 
 # v3.3.10 依赖波次调度：contract depends_on → 拓扑分层 → 波次并行派发。
@@ -472,11 +475,7 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
     unit = candidates[0]
     # 注入 skill 方法论，避免执行 Agent 退化为单遍写大纲（根因修复）。
     registry = _load_registry()
-    skill = next(
-        (s for s in registry.get("skills", [])
-         if s.get("skill_id") == unit["skill_id"]),
-        None,
-    )
+    skill = get_skill_or_none(registry, unit["skill_id"])
     attempt = unit["attempts"] + 1
     attempt_id = f"attempt-{unit['work_unit_id']}-{attempt}"
     unit.update({"status": "LEASED", "attempts": attempt})

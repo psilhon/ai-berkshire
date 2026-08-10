@@ -31,7 +31,9 @@ import full_analysis_runtime as runtime_mod
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
-DEFAULT_REGISTRY = TOOLS_DIR / "full_analysis_contract.json"
+from full_analysis_contract import CONTRACT_PATH, ContractError  # noqa: E402
+import full_analysis_contract as contract_mod  # noqa: E402
+DEFAULT_REGISTRY = CONTRACT_PATH
 RESULT_SCHEMA_PATH = TOOLS_DIR / "full_analysis_result_schema.json"
 MANIFEST_REL = Path("evidence/00-analysis-manifest.json")
 RUNTIME_STATE_REL = Path("evidence/runtime-state.json")
@@ -260,13 +262,11 @@ def load_json(path: Path, label: str) -> dict:
 
 
 def load_registry(path: Path) -> dict:
-    registry = load_json(path, "注册表")
-    sv = registry.get("schema_version")
-    if sv not in ("full-analysis-contract/v2", "full-analysis-contract/lean-v1"):
-        raise GateError(f"不支持的注册表 schema_version: {sv}", 2)
-    if len(registry.get("skills", [])) != 13:
-        raise GateError("注册表必须恰好包含 13 个 skill", 2)
-    return registry
+    """薄包装：委托 Contract 深模块（full_analysis_contract.py），错误翻译为 GateError。"""
+    try:
+        return contract_mod.load_contract(path, strict=True)
+    except ContractError as exc:
+        raise GateError(str(exc), exc.code) from exc
 
 
 def manifest_path(run_root: Path) -> Path:
@@ -307,10 +307,11 @@ def safe_relative(run_root: Path, value: str) -> Path:
 
 
 def find_skill(registry: dict, skill_id: str) -> dict:
-    for item in registry["skills"]:
-        if item.get("skill_id") == skill_id:
-            return item
-    raise GateError(f"未知 skill_id: {skill_id}", 2)
+    """薄包装：委托 Contract 深模块，ContractError 翻译为 GateError（消息逐字一致）。"""
+    try:
+        return contract_mod.find_skill(registry, skill_id)
+    except ContractError as exc:
+        raise GateError(str(exc), exc.code) from exc
 
 
 def _schema_type_matches(value, expected: str) -> bool:

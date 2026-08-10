@@ -84,13 +84,17 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-REGISTRY = REPO / "tools" / "full_analysis_contract.json"
 TZ = timezone(timedelta(hours=8))
 
 # 负向验收（NOT_APPLICABLE）判定口径**直接复用 Gate 常量**，不做本地副本：
 # 谓词字段映射/始终适用谓词/NA 报告章节/NA 字节下限一旦两边分叉，生成器就会
 # 产出「自认合规、Gate 拒收」的 bundle——退出码又将失去意义。单一真源优于守卫测试。
 sys.path.insert(0, str(REPO / "tools"))
+from full_analysis_contract import (  # noqa: E402
+    ContractError,
+    find_skill,
+    load_contract,
+)
 from full_analysis_gate import (  # noqa: E402
     ALWAYS_APPLICABLE_PREDICATES,
     NA_MIN_BYTES,
@@ -135,13 +139,6 @@ def load_json(p: Path) -> dict:
 def fail(msg: str) -> None:
     print(f"❌ {msg}", file=sys.stderr)
     sys.exit(2)
-
-
-def find_skill(registry: dict, skill_id: str) -> dict:
-    for s in registry["skills"]:
-        if s["skill_id"] == skill_id:
-            return s
-    fail(f"contract 中找不到 skill_id={skill_id}")
 
 
 def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
@@ -334,8 +331,11 @@ def main() -> int:
     args = ap.parse_args()
 
     run_root = Path(args.run_root).resolve()
-    registry = load_json(REGISTRY)
-    skill = find_skill(registry, args.skill_id)
+    try:
+        registry = load_contract()
+        skill = find_skill(registry, args.skill_id)
+    except ContractError as exc:
+        fail(str(exc))
     state = load_json(run_root / "evidence" / "runtime-state.json")
     run_id = state.get("run_id")
 
