@@ -161,7 +161,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 
 1. **TOTAL_SHARE 是静态值**：东财财务主表的总股本字段是"当前股本"覆盖所有历史行，**禁止当历史股本用**；历史稀释/回购一律走 `equity-history`。
 2. **valuation 的市值验算是自洽检查**（市值÷价格反推股本，偏差恒近0），不是独立核验；真核验走 `python3 tools/financial_rigor.py verify-market-cap` + `equity-history` 的最新总股本。
-3. **无复权价格序列**：管线不提供日K/OHLC 历史价格；历史价格分析的复权口径规则见 `skills/financial-data.md`「股价与复权」。
+3. **零依赖层无日K/OHLC 价格序列**：`kline` 命令（Tushare daily+adj_factor，前复权）已补此缺口但需 `TUSHARE_TOKEN`（Tier 0）；零 token 前复权 OHLC 可用 `tools/akshare_data.py price`（腾讯源，需 pip 装 akshare）。历史价格分析的复权口径规则见 `skills/financial-data.md`「股价与复权」。
 4. **history 不输出自由现金流**：东财主表无可靠资本开支字段，FCF 须走现金流量表原文或第二来源。
 5. **financials 年报缺失自动降级**：查不到年报时会去掉年报过滤重查，结果可能混入季报——同比前先核对报告期。
 6. **52周高低来自东财**，限流取不到时显示 `-`（不算失败），不要把 `-` 转述成 0 或"无波动"。
