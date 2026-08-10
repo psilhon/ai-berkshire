@@ -86,9 +86,8 @@ EVIDENCE_DIRECTIVE = """
 - judgments: 关键判断数组，每条含 judgment_id / rule_id / conclusion / falsification
 - command_receipts: 工具调用回执数组，每条含 receipt_id / operation / status
 - capability_records: 能力可用性声明数组，每条含 capability / available
-上述字段必须存在；数组是否非空以 evidence_rules 为准。
-派发包中的 evidence_rules 列出了本 skill 的具体最低要求（min_facts / min_sources 等），
-必须逐条满足。calculation_requests 只提交 operation 和 args，
+上述字段必须存在；lean-v1 下数组可为空（报告才是唯一交付物，空账本合法，
+绝不合成 PLACEHOLDER 占位）。calculation_requests 只提交 operation 和 args，
 重放结果由 Audit Job 调用 financial_rigor.py 生成，Agent 不得自证计算结果。
 """
 

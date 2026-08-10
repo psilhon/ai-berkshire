@@ -143,7 +143,10 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('"accepted": false', methodology)
         self.assertNotIn(
             '"formal": false,\n      "accepted": true', methodology)
-        self.assertIn("是否非空以 evidence_rules 为准", methodology)
+        # lean-v1：证据指令注入的是"数组可为空、绝不合成 PLACEHOLDER"口径，
+        # 不再引导 Agent 依赖契约已移除的 evidence_rules 键。
+        self.assertIn("lean-v1 下数组可为空", methodology)
+        self.assertNotIn("evidence_rules 为准", methodology)
 
     def _set_unit_done(self, skill_id):
         """直接把某单元置为 DONE（模拟上游完成），隔离测试依赖门禁逻辑。"""

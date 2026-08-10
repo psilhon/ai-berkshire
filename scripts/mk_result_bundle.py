@@ -149,15 +149,12 @@ def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
                           extra_judgments: list | None = None,
                           extra_receipts: list | None = None,
                           extra_capabilities: list | None = None):
-    """按 contract 组装证据账本：真实输入优先，缺失部分补**带水印的结构地板**。
+    """按 lean-v1 契约组装证据账本：只承载 Agent 真实提供的部分，缺失留空。
 
-    命名说明（v3.4.13）：旧名 build_minimum_evidence 具误导性——一旦任一类真实
-    输入存在，产出就不再是"minimum"，而是"真实优先 + 地板补齐"。故更名。
-
-    自证红线（v3.4.13 P0）：生成器**不得为未发生的事签发成功证明**。
-    地板条目一律带 PLACEHOLDER 水印，且回执状态为 UNAVAILABLE（绝不伪造 PASS），
-    capability 一律 available=false（未验证即不可用）。Gate 的占位预检会硬拒收，
-    使"未做真实调研的 bundle 能被接受为 DONE"这条路径在机器层面不可达。
+    lean 语义（v3.7 起）：报告才是唯一交付物，契约已移除 evidence_rules，Gate
+    不再强制账本形状，故空账本合法。**绝不合成 PLACEHOLDER 占位**；失败单元由
+    调用方在 status/error 中声明。手写 PLACEHOLDER 水印仍会被 Gate 的
+    `_precheck_placeholder_evidence` 硬拒收（防自证）。
 
     role_runs 例外且无需水印：Gate 不信任 bundle 里的 role_runs，而是从磁盘
     role-<role>.md 备忘录独立校验后派生（verified_by_gate=True，见 gate 1000-1030），
@@ -167,18 +164,7 @@ def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
     extra_judgments = extra_judgments or []
     extra_receipts = extra_receipts or []
     extra_capabilities = extra_capabilities or []
-    rules = skill.get("evidence_rules") or []
-    sid = skill["skill_id"]
 
-    def n(kind):
-        return next((r.get("n", 0) for r in rules if r.get("kind") == kind), 0)
-
-    def vals(kind):
-        return next((r.get("values", []) for r in rules if r.get("kind") == kind), [])
-
-    # ---- lean 模式（v3.7）：证据账本只承载 Agent 真实提供的部分；未提供则留空，
-    # **绝不合成 PLACEHOLDER 占位**。报告才是唯一交付物，契约已移除 evidence_rules，
-    # Gate 不再强制账本形状，故空账本合法。失败单元由调用方在 status/error 中声明。----
     sources = [dict(s) for s in extra_sources] if extra_sources else []
     facts = [dict(f) for f in extra_facts] if extra_facts else []
     calcs = [dict(c) for c in extra_calcs] if extra_calcs else []

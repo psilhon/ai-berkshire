@@ -449,7 +449,7 @@ def admit_bundle(bundle: dict, run_root: Path, registry: dict, *,
     返回拦截消息列表（空=可接受）。此前三处校验分叉——生成器只查标题/字节、
     validate_result_bundle 不查角色memo/实质、ingest 才查——导致「rc0 ⟺ Gate 接受」
     长期为假。本函数聚合全部确定性拦截：
-      schema/status/artifact_id/evidence_rules/calc 参数/回执绑定/占位水印/NA 证明/run_id
+      schema/status/artifact_id/calc 参数/回执绑定/占位水印/NA 证明/run_id
       （check_artifacts=True 时追加）artifact 文件存在-字节-sha/角色memo/实质校验/报告字节下限。
     validate_result_bundle(check_artifacts=False) 与 cmd_ingest/生成器(check_artifacts=True)
     都走这里，保证「生成器 rc0 ⟺ Gate 真正接受」成为机器事实。
@@ -522,10 +522,6 @@ def admit_bundle(bundle: dict, run_root: Path, registry: dict, *,
         elif bundle.get("not_applicable") is not None:
             errs.append("非 NOT_APPLICABLE 状态不得携带 not_applicable")
     if status in {"PASS", "PASS_WITH_LIMITATIONS"}:
-        try:
-            _precheck_evidence_rules(bundle, skill)
-        except GateError as exc:
-            errs.append(str(exc))
         errs += _precheck_calculation_params(bundle) or []
         errs += _precheck_command_receipts(bundle, skill, run_root) or []
         errs += _precheck_placeholder_evidence(bundle) or []
@@ -543,60 +539,6 @@ def validate_result_bundle(bundle: dict, run_root: Path, registry: dict) -> None
     if errs:
         raise GateError(
             f"{bundle.get('skill_id')} 准入拦截 {len(errs)} 处：\n" + "\n".join(errs))
-def _precheck_evidence_rules(bundle: dict, skill: dict) -> None:
-    """提交时前置校验 evidence_rules 的最低账本要求，返回 None（失败抛 GateError）。
-
-    与 audit 的逐条证据校验互补：此处只拦截「账本已提交但字段/rule_id/capability 名
-    未对齐契约」这类确定性错误（如 quality_metric_1 写成中文名、tushare_configured
-    写成 tushare），让 Agent 在提交当下即修复，而不是整轮跑完才在 audit 暴露。
-    账本完全为空（Agent 未提交任何该类型记录）时跳过——不足性由 audit 权威判定，
-    避免与 audit 的 insufficient_* 判重。
-    """
-    rules = {r.get("kind"): r for r in (skill.get("evidence_rules") or [])}
-    facts = bundle.get("fact_updates") or []
-    judgments = bundle.get("judgments") or []
-    capabilities = bundle.get("capability_records") or []
-
-    req_fields = rules.get("required_fact_fields")
-    if req_fields and facts:
-        present = {f.get("field") for f in facts}
-        missing = [f for f in req_fields.get("values", []) if f not in present]
-        if missing:
-            raise GateError(
-                f"{bundle['skill_id']} fact_updates 缺必需字段 {missing}；"
-                f"field 必须与契约逐字一致（如 {req_fields['values']}），禁止用中文名/自定义名")
-
-    req_judgments = rules.get("required_judgment_rule_ids")
-    if req_judgments and judgments:
-        present = {j.get("rule_id") for j in judgments}
-        missing = [r for r in req_judgments.get("values", []) if r not in present]
-        if missing:
-            raise GateError(
-                f"{bundle['skill_id']} judgments 缺必需 rule_id {missing}；"
-                f"rule_id 必须与契约逐字一致（如 {req_judgments['values']}）")
-
-    cond = rules.get("conditional_command_operations")
-    if cond and capabilities:
-        cap = cond.get("capability")
-        attests = {c.get("capability") for c in capabilities}
-        if cap and cap not in attests:
-            raise GateError(
-                f"{bundle['skill_id']} 缺 capability 声明 {cap!r}（capability_records 须含"
-                f" {{'capability': {cap!r}, 'available': true}}）")
-
-    min_fals = rules.get("min_judgments_with_falsification")
-    if min_fals and judgments:
-        actual = sum(
-            1 for j in judgments
-            if isinstance(j.get("falsification"), list)
-            and any(str(x).strip() for x in j["falsification"])
-        )
-        if actual < min_fals.get("n", 0):
-            raise GateError(
-                f"{bundle['skill_id']} 含 falsification 的 judgments {actual} < "
-                f"要求 {min_fals['n']}")
-
-
 def _precheck_calculation_params(bundle: dict) -> list:
     """确定性 dry-run 每条可重放 calculation，仅拦参数错（financial_rigor rc=2）。
 
@@ -1093,7 +1035,7 @@ def _merge_provenance(
     run_root: Path | None = None,
 ) -> None:
     # 证据归因：用 bundle 自带的 skill_id 给每条 fact/calc 打标记（向后兼容，不改 result schema）。
-    # 让 Audit 能按 skill 计算应有证据、强制执行 contract 的 evidence_rules。
+    # 让 Audit 能按 skill 归属证据（lean-v1 契约已无 evidence_rules，此处只做归属打标）。
     owner_skill = bundle.get("skill_id")
     manifest.setdefault("judgments", [])
     manifest.setdefault("command_receipts", [])
