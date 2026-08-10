@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""独立校验全量公司分析 Contract v2。
+"""独立校验全量公司分析 Contract（lean-v1 当前；v2 分支已冻结为档案校验）。
 
 此脚本故意不 import Gate/Runtime，避免注册表和执行代码同时出错。
 """
@@ -180,6 +180,15 @@ def _validate_evidence(errors: list[str], label: str, rules: object,
 
 
 def validate_v2(registry_path: Path, repo_root: Path) -> list[str]:
+    """【已冻结 · 档案校验专用】校验历史 v2 契约 registry（2026-08-10 起禁止挂载新功能）。
+
+    现状仓库契约为唯一 lean-v1，本分支不再服务当前契约；保留理由：
+    local/ 下存在 46 份 v2 时代 run 的 manifest（contract.schema_version =
+    full-analysis-contract/v2），如需从 git 历史取回 v2 registry 复核这些
+    档案的合规性，本函数是唯一校验器。
+    冻结纪律：不得为其新增校验项；若 lean-v1 之后引入新 schema，
+    应新建独立 validate_<version>，不复用本函数的 v2 常量。
+    """
     errors: list[str] = []
     try:
         registry = json.loads(registry_path.read_text(encoding="utf-8"))
