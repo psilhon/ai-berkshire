@@ -5,6 +5,24 @@
 
 ---
 
+## [v3.10.5] — 2026-08-13
+
+> **Darwin Phase 2 棘轮式优化（从最低分起）**：用 darwin-skill 9 维 rubric 对全量 18 技能基线评估后，对用户选定的 4 个低分技能逐轮优化——每轮改完经**独立子 agent** 复评，严格 > 旧分才保留（否则 git revert），全程 `check.sh` 真实退出码 0。
+
+### 🔧 优化 (Optimized)
+
+- **`skills/industry-routing.md`** 60.9 → **79.9**（+19.0）：路由矩阵 20→25 行业（补 电池/新能源材料·化工·农业食品·建材·军工）+ 修能源悬空次附录「化工工业」→「化工」+ 修 typo `divident`→`dividend` + 新增 §6 边界与兜底 + §7 反例与红线。
+- **`skills/industry-research.md`** 76.8 → **82.4**（+5.6）：补三安全章——3×🔴 STOP 检查点（启动扫描 Agent / 输出组合建议 / 落盘发布前）+ `## 反例与红线` 8 条 + `## 失败处理` 8 条（逻辑链证伪回退 / 卡脖子识别不出 / 未上市玩家遗漏等）。
+- **`skills/investment-research.md`** 80.0 → **87.3**（+7.3）：消仓库外悬空引用（`base-rates.md` 硬「查」→ provenance + 本地第 50 分位 fallback；`valuation-methods.md` → 内联 §8.x 阈值为权威）+ 统一四套编号（顶部「编号约定」+ 7.0 内嵌套中文第一步/二/三 → 7.0.1/2/3）。
+- **`skills/management-deep-dive.md`** 80.5 → **81.3**（+0.8）：补承诺兑现/侧面验证工具支撑——§3.1.1 工具辅助核查（回购→`repurchase`、分红→`dividend`、增持→`insider-trades`、战略落地→`announcements`）+ §第六步接回 `ird-interact` + 依赖清单补 `ashare_data.py`。
+
+### 🔍 验证 (Verification)
+
+- 双同步 exit 0（生成 18 个 codex skill）；`bash scripts/check.sh` 真实退出码 0（744 tests OK、18 skill frontmatter 合规、注册表校验通过）
+- 4 轮均经独立子 agent 9 维复评，总分严格 > 基线，棘轮全部 KEEP（dim8 实测表现因全项目 Phase-1 基线皆 dry_run，按结构可测性评分，未实跑测试 prompt）
+
+---
+
 ## [v3.10.4] — 2026-08-13
 
 > **反哺式升级·贰（吸收 equity-research-skill）**：落地 20 行业 KPI 路由子模块 + berkshire 原生 `equity_dcf.py` 估值引擎。对方 `dcf.py` 因沙箱禁 raw.githubusercontent 直连无法逐字 vendor，改为基于其公开文档公式的忠实复刻（docstring 注明 MIT 移植、零外部依赖），标定阈值与 valuation-methods §9 逐字一致。
