@@ -61,6 +61,8 @@ review-cadence: per-release
 
 ### 第一步：数据收集
 
+> **行业附录路由（按需加载）**：单公司研究选定主/次行业附录与必备 KPI 前，先读 `skills/industry-routing.md`（20 行业路由矩阵 + A股数据命令映射）；报告头部声明 `行业附录: <slug>[, <slug>]`。
+
 > **数据源规范**：参见 `skills/financial-data.md`。所有财务数据必须来自两个独立来源，误差>1%须标记。
 > - 美股：macrotrends（主）+ stockanalysis（副）
 > - 港股：aastocks（主）+ macrotrends ADR（副）
@@ -193,7 +195,7 @@ python3 tools/financial_rigor.py verify-valuation \
 
 > 来源移植：本块方法论取自外部项目 `rollingSirius/equity-research-skill` 的 `references/expectations-investing.md` + `base-rates.md`（MIT），经本项目纪律改写。它解决的核心问题：第七步半只有"市场共识/我认为/他们错在"模板，缺可计算的"市场预期 vs 我的预期"量化对撞——结论容易流于叙事。本块把预期差做成可证伪表格。
 
-**第一步 · 解码市场预期（不预测，只解码）**：用反向 DCF 解出现价隐含的稳态 FCF、所需营收与隐含 CAGR；用 PVGO 分解 `现价 = 零增长价值(E/r) + 增长期权价值(PVGO)`，算出**现价中为"尚未发生的增长"付费的百分比**。反向 DCF 可借 `financial_rigor.py` 三情景反推，或显式手算"现价隐含永续增速"；结论须把隐含预期翻译成可感知参照系（"隐含未来 5 年 X% CAGR，对照 base rate 历史第 N 分位"）。
+**第一步 · 解码市场预期（不预测，只解码）**：用反向 DCF 解出现价隐含的稳态 FCF、所需营收与隐含 CAGR；用 PVGO 分解 `现价 = 零增长价值(E/r) + 增长期权价值(PVGO)`，算出**现价中为"尚未发生的增长"付费的百分比**。反向 DCF / PVGO **一律用 `python3 tools/equity_dcf.py --config <assumptions.json>`（reverse 块 / pvgo 块）计算，禁止心算**；假设以 JSON 落盘即留档。结论须把隐含预期翻译成可感知参照系（"隐含未来 5 年 X% CAGR，对照 base rate 历史第 N 分位"）。
 
 **第二步 · 建立自己的预期（外部视角纪律化）**：每个关键驱动（营收/利润率/ROIIC）先查 `base-rates.md` 历史分布定位分位；假设落在第 80 分位以上 → **必须写结构性理由 + 可验证领先指标**，否则下调。
 
@@ -282,6 +284,8 @@ python3 tools/financial_rigor.py three-scenario \
 **否决项（一票降级）**：治理红旗 ≥2 项严重级，或财报可信度 C（见 `earnings-review` A.6）→ 动作最高"观望"；可信度 D 或审计非标 → 规避；护城河"无"且标签高估 → 直接规避。
 
 **一致性要求**：第一章/Gap 表的"净预期差方向"、第七步半的"最大分歧"、本标签必须可复算地一致——标签"低估"但 Gap 表显示我的预期低于市场隐含 → 矛盾，必须回头查哪边错。标定标签写入下方综合决策表的"估值标签"行。
+
+> **标定可复算（接入 self-check）**：估值区间 [L, H] 与现价 P 给定后，标签由 `python3 tools/equity_dcf.py` 的 `calibrate(P, L, H)` 复算（±15% 缓冲阈值，与 `valuation-methods.md` §9 一致）；报告文本标签须与脚本输出一致，不一致须回查。三情景概率加权公允价值亦由 `equity_dcf.py` 的 `scenarios` 块输出。
 
 汇总表格：
 
@@ -422,6 +426,7 @@ python3 tools/report_audit.py verdict \
 | 依赖项 | 路径 | 用途 | 可达性 |
 |--------|------|------|--------|
 | financial_rigor.py | `tools/financial_rigor.py` | 财务数据校验、三情景建模 | ✅ |
+| equity_dcf.py | `tools/equity_dcf.py` | 反向 DCF / PVGO / 三情景概率加权 / EPV / EVA / 蒙特卡洛 / 预注册标定 | ✅ |
 | report_audit.py | `tools/report_audit.py` | 报告质量把关（数据抽检） | ✅ |
 | ashare_data.py | `tools/ashare_data.py` | Tushare 结构化取数（见"Tushare 数据引用"节） | ✅ |
 | full_analysis_contract.json | `tools/full_analysis_contract.json` | 编排契约（13 单元归属与依赖，本 skill 为其单元之一） | ✅ |

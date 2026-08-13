@@ -209,6 +209,8 @@ This skill is generated from `skills/earnings-review.md` so Claude Code and Code
 
 ### 第一步：获取一手资料
 
+> **行业附录路由（按需加载）**：四大师行业对比与 KPI 口径锁定前，先读 `skills/industry-routing.md`（20 行业路由矩阵 + A股数据命令映射），按主/次附录确定必备 KPI 与对比同业池（`ashare_data.py peers`）。
+
 使用 Agent 工具启动后台 Agent **并行**获取以下原始材料：
 
 | 资料类型 | 获取来源 | 优先级 |
