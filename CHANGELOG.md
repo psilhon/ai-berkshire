@@ -5,6 +5,84 @@
 
 ---
 
+## [v3.10.4] — 2026-08-13
+
+> **反哺式升级·贰（吸收 equity-research-skill）**：落地 20 行业 KPI 路由子模块 + berkshire 原生 `equity_dcf.py` 估值引擎。对方 `dcf.py` 因沙箱禁 raw.githubusercontent 直连无法逐字 vendor，改为基于其公开文档公式的忠实复刻（docstring 注明 MIT 移植、零外部依赖），标定阈值与 valuation-methods §9 逐字一致。
+
+### ✨ 新增 (Added)
+
+- **`skills/industry-routing.md`**：20 行业路由矩阵（主附录 / 适用边界 / 主估值方法 / 必备 KPI / 常用次附录）+ berkshire A 股数据命令映射（peers / mainbz / ratios / report-list / ths-hot 等）+ A 股主源入口 + 预注册字段 + consumer-skill 调用约定。MIT 归属 equity-research-skill `references/industry-routing.md`。
+- **`tools/equity_dcf.py`**（364 行，零依赖，可执行）：反向 DCF / PVGO / 三情景概率加权 / EPV / EVA / 蒙特卡洛 / 预注册标定 `calibrate()`（P<0.5L→显著低估、<0.85L→低估、≤1.15H→合理、≤1.5H→高估、否则显著高估）。`--demo` 自测 exit 0、标定阈值断言通过。`investment-research` 7.0 反向 DCF/PVGO 改走该工具、8.x 标定接入 `calibrate()` 可复算。
+
+### 🔧 变动 (Changed)
+
+- `skills/investment-research.md` 第一步 + `skills/earnings-review.md` 阶段一：加「按需加载 industry-routing」指针；7.0 / 8.x 改为引用 `equity_dcf.py`。
+
+### 🔍 验证 (Verification)
+
+- 双同步 exit 0（生成 18 个 codex skill，含 industry-routing）；`bash scripts/check.sh` 真实退出码 0（744 tests OK、18 skill frontmatter 合规、注册表校验通过）
+- `python3 tools/equity_dcf.py --demo` 自测通过（标定阈值断言全绿）
+
+---
+
+## [v3.10.3] — 2026-08-13
+
+> **反哺式升级·壹（吸收 equity-research-skill）**：评估 rollingSirius/equity-research-skill（机构级预期差/Mauboussin 系 mega-skill，MIT）后，按选项③反哺式升级吸收其领先项 —— forensic A/B/C/D 否决门 + 预期差 Gap 表 + 预注册标定，仅移植方法论（未引入外部脚本依赖，计算走 financial_rigor.py），保留四大师框架。
+
+### ✨ 新增 (Added)
+
+- **`skills/earnings-review.md` A.6 财报可信度 A/B/C/D 否决门**：应计质量 + Beneish M-Score 八变量代理 + 收入确认/治理红旗 → A/B/C/D 评级，与排雷 32 条共用数据不重复；C→最高「观望」、D/非标审计→「规避」写入阶段二第九章否决 + 一句话结论含可信度等级 + A.3 评分卡加行 + 反例红线加项。
+- **`skills/investment-research.md` 7.0 预期差开篇框架**：反向 DCF + PVGO + Gap 表 + base-rate 分位纪律，置于估值章开篇。
+- **`skills/investment-research.md` 第七步半·独立观点检验**：三问硬门槛（答不出→「观望」）。
+- **`skills/investment-research.md` 8.x 预注册标定**：区间 ±15% 缓冲 → 显著低估/低估/合理/高估/显著高估 → 动作矩阵 × 不确定性 + 否决项；综合决策表加「估值标签」行。
+
+### 🔧 变动 (Changed)
+
+- `skills/earnings-review.md` / `skills/investment-research.md` 输出要求、反例红线、失败处理补相应条目；依赖清单加移植声明（MIT 方法论来源）。
+
+### 🔍 验证 (Verification)
+
+- 双同步 exit 0；`bash scripts/check.sh` 真实退出码 0（744 tests OK、注册表校验通过）
+
+---
+
+## [v3.10.2] — 2026-08-13
+
+> **earnings-review 实测闭环优化（Darwin Phase 2）**：用独立子 agent 实跑阶段零，发现补丁后仅取 `financials` 致 31/32 规则 SKIP（裸跑 baseline 反更优）—— 根因是 A.0 取数映射缺失。补「取数清单」后阶段零从 31/32 SKIP → 23/32 可评、产出真实评分卡。Darwin 总分 88.4 → 94.8（+6.4）。
+
+### 🔧 修复 (Fixed)
+
+- **`skills/earnings-review.md` A.0 取数清单重写**：逐条列出阶段零必跑命令（`income-stmt` / `balance-sheet` / `cash-flow` / `announcements`）及覆盖规则族/关键字段，修复仅取 financials 致 31/32 规则 SKIP（dim5/dim6/dim8 full_test 修复）。
+- **章节编号重排**：`## 二之一、排雷前置评分卡` → `## 三`，顺延四~九改为五~九。
+- **规则 1.6 减值字段映射澄清**：`assets_impair_loss` / `credit_impa_loss`（dim2/dim5/dim7）。
+
+### 🔍 验证 (Verification)
+
+- 独立子 agent 重测：阶段零 23/32 可评（PASS22 + WARN1 + FAIL0），SKIP9（PDF 依赖 by-design），产出真实评分卡（风险等级低、综合得分 2、应收≈0、经营CF/净利=1.04、销售收现/营收=1.05、无有息债、商誉 0、其他应收 0.013%）
+- `bash scripts/check.sh` 真实退出码 0；Darwin 94.8/100（dim8 由 dry_run 升 full_test）
+
+---
+
+## [v3.10.1] — 2026-08-13
+
+> **量化排雷前置阶段零（吸收 minesweeper）**：评估 terancejiang/financial-report-minesweeper（基于唐朝《手把手教你读财报》的 32 条排雷规则程序化实现）后，把其量化排雷前置吸收进 `earnings-review` 的阶段零 —— 规则扫描 → 风险分 → 四大师定性 → 投资结论。继承本项目双源交叉验证 + 🔴人环 + report_audit 门禁，规避其单源弱点。Darwin 9维 rubric 基线 88.4/100。
+
+### ✨ 新增 (Added)
+
+- **`skills/earnings-review.md` 阶段零·量化排雷前置**：吸收 minesweeper 32 条规则（含 L0 审计意见/披露时效硬门槛、组合加分、行业高危标记），按双源适配（Tushare + 东财/年报 PDF）。新增加权打分 + 风险等级（直接排除/低/中/高/极高）+ 排雷评分卡 + 组合加分（3.2 FAIL+10、2.3+4.1 FAIL+8、1.2+3.1 FAIL+6）+ 报告结构新增评分卡节 + 依赖与红线更新。
+
+### 🔧 变动 (Changed)
+
+- `skills/earnings-review.md` 方法论定位：排雷为 L1 前置（与四大师「看懂生意」互补而非替代），阶段零输出风险分作为后续定性输入。
+
+### 🔍 验证 (Verification)
+
+- `python3 scripts/sync-codex-skills.py` + `~/.workbuddy/berkshire-skill-sync/sync.py` 双同步 exit 0
+- `bash scripts/check.sh` 真实退出码 0（744 tests OK、注册表校验通过）
+- Darwin 9维 rubric：88.4/100（dim4/dim6/dim9 = 10；dim8 dry_run 估计）
+
+---
+
 ## [v3.10.0] — 2026-08-10
 
 > **架构深化**（/improve-codebase-architecture 评审落地）：lean-v1 pivot 后「语义已 lean、接口面未 lean」的遗留债务系统性收口。契约解析收敛为唯一深模块缝；Gate 退役校验层拆除；一次性脚本墓地清零；momentum 分叉收口；validate_v2 显式冻结；④候选经调查推翻并归档首份真实 ADR。6 个候选全部闭环，每步 check.sh 真实退出码 0。
