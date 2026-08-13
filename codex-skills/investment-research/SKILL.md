@@ -25,6 +25,8 @@ This skill is generated from `skills/investment-research.md` so Claude Code and 
 
 基于巴菲特、芒格、段永平、李录四位投资大师的方法论，按以下七个模块顺序执行研究：
 
+> **编号约定（避免混用）**：模块主线按 `前置步骤 → 第〇步 → 第一步…第八步 → 第七步半` 中文编号；`7.0 / 8.x` 等小数点位为模块内小节；英文 `Step 1/2/3` 仅用于工具命令执行步骤（如 `financial_rigor.py` / `report_audit.py` 调用序列），不与其他编号混用。
+
 ### 前置步骤：AI研究偏见自觉（必须执行）
 
 在开始研究前，先评估该公司的"AI可研究性"，识别潜在的数据偏见：
@@ -205,11 +207,11 @@ python3 tools/financial_rigor.py verify-valuation \
 
 > 来源移植：本块方法论取自外部项目 `rollingSirius/equity-research-skill` 的 `references/expectations-investing.md` + `base-rates.md`（MIT），经本项目纪律改写。它解决的核心问题：第七步半只有"市场共识/我认为/他们错在"模板，缺可计算的"市场预期 vs 我的预期"量化对撞——结论容易流于叙事。本块把预期差做成可证伪表格。
 
-**第一步 · 解码市场预期（不预测，只解码）**：用反向 DCF 解出现价隐含的稳态 FCF、所需营收与隐含 CAGR；用 PVGO 分解 `现价 = 零增长价值(E/r) + 增长期权价值(PVGO)`，算出**现价中为"尚未发生的增长"付费的百分比**。反向 DCF / PVGO **一律用 `python3 tools/equity_dcf.py --config <assumptions.json>`（reverse 块 / pvgo 块）计算，禁止心算**；假设以 JSON 落盘即留档。结论须把隐含预期翻译成可感知参照系（"隐含未来 5 年 X% CAGR，对照 base rate 历史第 N 分位"）。
+**7.0.1 · 解码市场预期（不预测，只解码）**：用反向 DCF 解出现价隐含的稳态 FCF、所需营收与隐含 CAGR；用 PVGO 分解 `现价 = 零增长价值(E/r) + 增长期权价值(PVGO)`，算出**现价中为"尚未发生的增长"付费的百分比**。反向 DCF / PVGO **一律用 `python3 tools/equity_dcf.py --config <assumptions.json>`（reverse 块 / pvgo 块）计算，禁止心算**；假设以 JSON 落盘即留档。结论须把隐含预期翻译成可感知参照系（"隐含未来 5 年 X% CAGR，对照 base rate 历史第 N 分位"）。
 
-**第二步 · 建立自己的预期（外部视角纪律化）**：每个关键驱动（营收/利润率/ROIIC）先查 `base-rates.md` 历史分布定位分位；假设落在第 80 分位以上 → **必须写结构性理由 + 可验证领先指标**，否则下调。
+**7.0.2 · 建立自己的预期（外部视角纪律化）**：每个关键驱动（营收/利润率/ROIIC）定位 base rate 分位——若本地已配置 `base-rates.md`（或等价历史分布数据集）则查其历史分位；**berkshire 默认未捆绑该外部数据集**，此时按失败处理规则保守取第 50 分位并明示"分位未核验"，不得用第 80 分位以上假设支撑结论；假设落在第 80 分位以上 → **必须写结构性理由 + 可验证领先指标**，否则下调。
 
-**第三步 · 预期差 Gap 表（第一章必备交付物）**：
+**7.0.3 · 预期差 Gap 表（第一章必备交付物）**：
 
 | 关键驱动 | 市场隐含（反向 DCF/共识） | 我的预期 | Base rate 分位 | 分歧依据 | 验证信号与时点 |
 |---|---|---|---|---|---|
@@ -269,7 +271,7 @@ python3 tools/financial_rigor.py three-scenario \
 
 ### 8.x 预注册标定（可复算买卖标签，与 Variant View/Gap 表自洽）
 
-> 来源移植：同上 `valuation-methods.md` 第 9 节（MIT）。把第八步的结论从"大师纪要定性"升级为**可复算标签**——估值区间给定后，买卖标签由规则机械映射，不临场发挥。
+> 来源移植：同上 `valuation-methods.md` 第 9 节（MIT，仅作方法论来源）。把第八步的结论从"大师纪要定性"升级为**可复算标签**——估值区间给定后，买卖标签由下方 §8.x 内联阈值表规则机械映射，不临场发挥；**本文件内联阈值为权威，不依赖外部文件**。
 
 **估值标签**（综合区间 [L, H]，现价 P，±15% 缓冲带）：
 
@@ -295,7 +297,7 @@ python3 tools/financial_rigor.py three-scenario \
 
 **一致性要求**：第一章/Gap 表的"净预期差方向"、第七步半的"最大分歧"、本标签必须可复算地一致——标签"低估"但 Gap 表显示我的预期低于市场隐含 → 矛盾，必须回头查哪边错。标定标签写入下方综合决策表的"估值标签"行。
 
-> **标定可复算（接入 self-check）**：估值区间 [L, H] 与现价 P 给定后，标签由 `python3 tools/equity_dcf.py` 的 `calibrate(P, L, H)` 复算（±15% 缓冲阈值，与 `valuation-methods.md` §9 一致）；报告文本标签须与脚本输出一致，不一致须回查。三情景概率加权公允价值亦由 `equity_dcf.py` 的 `scenarios` 块输出。
+> **标定可复算（接入 self-check）**：估值区间 [L, H] 与现价 P 给定后，标签由 `python3 tools/equity_dcf.py` 的 `calibrate(P, L, H)` 复算（±15% 缓冲阈值，与 §8.x 内联表一致，移植自 `valuation-methods.md` §9）；报告文本标签须与脚本输出一致，不一致须回查。三情景概率加权公允价值亦由 `equity_dcf.py` 的 `scenarios` 块输出。
 
 汇总表格：
 
