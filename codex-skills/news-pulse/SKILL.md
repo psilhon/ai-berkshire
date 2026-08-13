@@ -57,13 +57,9 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 
 ### 第三步：创建团队
 
-> **首次团队原语调用前的可用性检查（环境降级，决定本流程走并行还是串行模式）**：在调用第一个团队原语（`TeamCreate`）**之前**，先判断当前环境是否支持：`TeamCreate`/`TeamDelete` 可用、同一条消息并行 Task 可被接受、Agent 可后台运行。若任一不可用 → 全程走**串行侦察模式**（见第五步降级说明）：跳过 Step 3 创建团队与 Step 9 清理团队，第四步的 4 个侦察任务依次创建（或由单 Agent 顺序完成），归因照常。若可用 → 按下方并行流程执行。
-
 使用 TeamCreate 创建团队：
 - `team_name`: `{公司名}-newspulse`（英文小写，如 `pdd-newspulse`）
 - `agent_type`: `team-lead`
-
-（以下第四~第九步为**并行模式**流程；降级模式下按第五步降级说明执行，第四步任务依次创建、第五步串行启动、第六步等待 4 维度依次完成、第七步照常归因、**跳过**第九步 TeamDelete。）
 
 ### 第四步：创建 4 个侦察任务
 
@@ -126,17 +122,10 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 
 ### 第五步：并行启动 4 个 Agent
 
-> **降级执行细则（首次可用性检查见第三步，此处为串行模式的操作流程）**：第三步判定环境不支持团队原语后，按以下执行：
-> 1. **跳过**第三步的 `TeamCreate` 与第九步的 `TeamDelete`（未创建团队则不清理）；依次创建 4 个侦察任务（如任务创建亦不可行，则单 Agent 按维度顺序完成 4 个侦察）；
-> 2. 逐个维度完成侦察，每完成一个维度向用户展示该维度 3 条核心发现；
-> 3. 4 个维度全部完成后，按第七步照常综合归因（归因质量承诺不变，仅执行机制不同）；
-> 4. 在最终报告"信息缺口声明"中注明"本次以降级模式执行（团队原语不可用），侦察耗时更长、维度间交叉验证弱于并行模式"。
-> 降级模式仍须遵守本 skill 的全部 🔴 STOP 检查点与"不替用户决策"原则，不得因降级而跳过确认门或降低"真因不明"的诚实标准。
-
 **必须在同一条消息中并行调用 4 次 Task 工具**。每个 Agent 配置：
 - `subagent_type`: `general-purpose`
 - `run_in_background`: `true`
-- `team_name`: `{公司名}-newspulse`（仅并行模式；降级模式下省略该字段）
+- `team_name`: `{公司名}-newspulse`
 - `name`: 对应角色名（company-event-scout / regulatory-watcher / industry-peer-analyst / sentiment-tracker）
 
 每个 Agent 的 prompt 模板：
@@ -169,14 +158,14 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 
 **完成后**：
 1. 使用 TaskUpdate 将任务标记为 completed
-2. 通过 SendMessage 把完整侦察报告发送给 team-lead（type: "message", recipient: "team-lead"）（仅并行模式；降级模式下无需 team-lead 中转，直接以消息返回主代理即可）
+2. 通过 SendMessage 把完整侦察报告发送给 team-lead（type: "message", recipient: "team-lead"）
 ```
 
 ### 第六步：实时跟踪进度
 
 - 每收到一份侦察报告，向用户展示该维度的 3 条核心发现
-- 等待全部 4 份到齐（降级模式下为等待 4 个维度依次完成）
-- 全部到齐后，通过 SendMessage 向 4 个 Agent 发送 shutdown_request（仅并行模式；降级模式/单 Agent 无此步骤）
+- 等待全部 4 份到齐
+- 全部到齐后，通过 SendMessage 向 4 个 Agent 发送 shutdown_request
 
 🔴 STOP / 检查点：在输出"价值事件/情绪技术波动/真因不明"等异动性质判断与"调仓动作"等强建议前，必须先向用户确认（给出明确选项：如"输出完整归因与行动建议""仅输出中性归因不替用户决策"），获得明确同意后再继续；未经确认不得自主替用户做买卖决策。
 
@@ -251,7 +240,7 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 
 ### 第九步：清理团队
 
-使用 TeamDelete 清理团队资源（仅并行模式；降级模式下未创建团队，跳过本步）。
+使用 TeamDelete 清理团队资源。
 
 ## 关键原则
 
@@ -283,8 +272,8 @@ This skill is generated from `skills/news-pulse.md` so Claude Code and Codex use
 - 如果在 news-pulse 中调用 `tools/xueqiu_scraper.py` 失败/无输出 → 执行 跳过该大 V 维度或改用 WebSearch，并标注"大 V 观点未获取"，不假装已分析。
 - 如果 4 份报告均无法解释异动幅度 → 执行 明确标注"真因不明"，提示可能市场提前抢跑或信息源缺失，不强行归因。
 - 如果 用户输入含糊/多义（如只说公司名无时间窗口）→ 执行 先反问"最近多少天？有具体股价异动要解释吗？"，不在未确认时自选窗口。
-- 如果 当前环境不支持团队原语（TeamCreate/并行 Task/后台 Agent 均不可用）→ 执行 降级为串行侦察模式（见第五步降级说明），不中断任务、不假装并行，报告注明"降级模式"。
-- 如果 降级模式下仍无法完成某维度侦察 → 执行 按"Agent 超时"同款处理：向用户展示已收到维度、标注缺失维度，不假装完整归因。
+
+---
 
 ---
 
