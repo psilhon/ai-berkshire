@@ -520,7 +520,7 @@ pre code {
       <tr>
         <td><code>tools/full_analysis_gate.py</code></td>
         <td>确定性验收器</td>
-        <td>生命周期管理：<code>start</code> → <code>next-work</code> → <code>self-check</code> → <code>submit-result</code> → <code>register-summary</code> → <code>render-html</code></td>
+        <td>生命周期管理：<code>start</code> → 🔴启动确认门 → <code>next-work</code> → <code>self-check</code> → <code>submit-result</code> → 🔴收口确认门 → <code>register-summary</code> → <code>render-html</code></td>
       </tr>
     </table>
   </div>
@@ -540,6 +540,10 @@ pre code {
       <div class="stage-title">① start — 创建运行</div>
       <div class="stage-content">创建运行目录与 13 个 work unit（依赖由 <code>next-work</code> 按其 <code>depends_on</code> 拓扑自动返回就绪单元）。</div>
     </div>
+    <div class="stage stage-2">
+      <div class="stage-title">🔴 启动确认门（用户）</div>
+      <div class="stage-content"><code>start</code> 后、<strong>派发第一个业务 Agent 前</strong>，必须先向用户确认公司/代码/as_of（选项：确认启动 / 修改参数后重启 / 取消本 run），未经确认不得自主启动流水线——防跑错标的白跑 13 单元。</div>
+    </div>
     <div class="stage stage-1">
       <div class="stage-title">② next-work — 拓扑派发</div>
       <div class="stage-content">返回 <code>LEASED</code> 后派 <strong>WorkBuddy 原生 Agent</strong>（禁止主上下文直写正文），Agent 完整落地 <code>methodology_text</code> 并写入 attempt 目录 + <code>artifact.formal_path</code>。</div>
@@ -551,6 +555,10 @@ pre code {
     <div class="stage stage-2">
       <div class="stage-title">④ mark-failed — 失败声明</div>
       <div class="stage-content">失败单元：<code>mark-failed --reason ...</code>（可选 <code>--retry</code> 重排一次），不自动重试、不启动看门狗、不做孤儿恢复。</div>
+    </div>
+    <div class="stage stage-3">
+      <div class="stage-title">🔴 收口确认门（用户）</div>
+      <div class="stage-content">deep-summary 熔炼 / <code>register-summary</code> 冻结 / <code>render-html</code> 渲染<strong>之前</strong>，必须先向用户确认收口（选项：确认收口 / 先人工审阅已完成报告再收口 / 补做失败单元再收口）；总结是全流水线最核心交付物，冻结即定稿。</div>
     </div>
     <div class="stage stage-3">
       <div class="stage-title">⑤ deep-summary → register-summary → render-html — 收口</div>
@@ -1463,6 +1471,14 @@ Layer 3：更底层瓶颈（特种气体/贵金属/稀土）</code></pre>
       </ol>
     </div>
     <div class="skill-section">
+      <h4>用户确认门（两个全局节点）</h4>
+      <ul style="margin-left:20px;">
+        <li><strong>🔴 启动确认门</strong>：<code>start</code> 后、派发首个业务 Agent 前，确认公司/代码/as_of（选项：确认启动 / 修改参数后重启 / 取消本 run），防跑错标的白跑 13 单元</li>
+        <li><strong>🔴 收口确认门</strong>：deep-summary 熔炼 / <code>register-summary</code> 冻结 / <code>render-html</code> 渲染前，确认收口（选项：确认收口 / 先人工审阅再收口 / 补做失败单元再收口），总结为最核心交付物、冻结即定稿</li>
+        <li><strong>单元级无用户门（有意设计）</strong>：13 单元流水线不逐单元打扰，业务 skill 内部本有各自的 🔴 STOP 确认门（启动后台 Agent / 输出强建议 / 落盘发布）</li>
+      </ul>
+    </div>
+    <div class="skill-section">
       <h4>lean 模式已移除的机制（勿再用）</h4>
       <table>
         <tr><th>已移除</th><th>说明</th></tr>
@@ -1558,8 +1574,10 @@ bash scripts/check.sh</code></pre>
     <h3>全量分析质量闭环</h3>
     <table>
       <tr><th>层</th><th>机制</th><th>说明</th></tr>
+      <tr><td>L0（用户门）</td><td>🔴 启动确认门</td><td>start 后、派发首个业务 Agent 前确认公司/代码/as_of，防跑错标的白跑 13 单元；未经确认不得自主启动</td></tr>
       <tr><td>L0（前置）</td><td>self-check</td><td>每个 skill 产出后、进 submit-result 前必跑。复用 Gate 的 _substance_errors + artifact.min_bytes 做确定性校验</td></tr>
       <tr><td>L0（兜底）</td><td>Gate substance 边界</td><td>submit-result 时 Gate 再跑一次 _substance_errors（双层互不信任）</td></tr>
+      <tr><td>L1（用户门）</td><td>🔴 收口确认门</td><td>deep-summary 熔炼 / register-summary 冻结 / render-html 渲染前确认收口；总结为最核心交付物，冻结即定稿</td></tr>
       <tr><td>L1（主线）</td><td>deep-summary → register-summary → render-html</td><td>总结熔炼 → 冻结 → 确定性渲染（零 LLM 零方差）</td></tr>
       <tr><td>L2（可选）</td><td>audit</td><td>substance 底线 + 字节/章节核对</td></tr>
       <tr><td>L3（可选）</td><td>review</td><td>五维语义评审</td></tr>

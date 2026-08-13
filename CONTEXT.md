@@ -14,7 +14,7 @@
 |---|---|---|
 | 价值投资研究 | 以企业内在价值为核心的投研工作流 | 项目定位 |
 | 四大师框架 | 巴菲特 / 芒格 / 段永平 / 李录 的分析视角合集 | `README.md` 项目概述 |
-| 全量公司分析（full-company-analysis-workbuddy） | 单一公司端到端投研编排 + 验收体系（WorkBuddy 编排器） | `tools/full_analysis_contract.json` |
+| 全量公司分析（full-company-analysis-workbuddy） | 单一公司端到端投研编排 + 验收体系（WorkBuddy 编排器，lean 模式；含启动/收口两个用户确认门） | `tools/full_analysis_contract.json` |
 | 双系统 Skill 管线 | `skills/*.md` 为权威源，Codex 侧由脚本生成 | `AGENTS.md` / `SKILLS-GUIDE.md` |
 | 金融严谨（financial rigor） | Decimal 精确计算、多源交叉验证、报告审计 | `tools/financial_rigor.py` / `tools/report_audit.py` |
 | ADR | 架构决策记录，存于 `docs/adr/` | `docs/agents/domain.md` |

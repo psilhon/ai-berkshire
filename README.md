@@ -155,7 +155,7 @@ AI Berkshire 确保：**同样的输入 → 结构一致、深度一致的输出
 
 ### 单公司全量分析（WorkBuddy）
 
-无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis-workbuddy/SKILL.md`](workbuddy-skills/full-company-analysis-workbuddy/SKILL.md) 进入（lean 模式），由 WorkBuddy 原生 Agent 按 `tools/full_analysis_contract.json`（schema `full-analysis-contract/lean-v1`）执行 13 项业务契约。两条底线：**内容质量 + 失败显式 `mark-failed`**——已移除租约/重试/恢复/波次错峰等冗余机制，报告是唯一交付物。每单元移交前跑 `self-check`，Gate 在 `submit-result` 再做 substance 边界兜底（双层互不信任）；收口经 deep-summary → `register-summary` → `render-html`（确定性渲染，零 LLM）。Audit / Review / finalize 为可选评估层（L2-L4），不强制。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
+无人值守的单公司全量流程只从 [`workbuddy-skills/full-company-analysis-workbuddy/SKILL.md`](workbuddy-skills/full-company-analysis-workbuddy/SKILL.md) 进入（lean 模式），由 WorkBuddy 原生 Agent 按 `tools/full_analysis_contract.json`（schema `full-analysis-contract/lean-v1`）执行 13 项业务契约。两条底线：**内容质量 + 失败显式 `mark-failed`**——已移除租约/重试/恢复/波次错峰等冗余机制，报告是唯一交付物。流程含两个用户确认门：🔴 **启动门**（`start` 后、派发首个 Agent 前确认公司/代码/as_of，防跑错标的白跑 13 单元）与 🔴 **收口门**（deep-summary 熔炼 / `register-summary` 冻结 / `render-html` 渲染前确认收口）；单元级不设用户门是有意设计（业务 skill 内部各有确认门）。每单元移交前跑 `self-check`，Gate 在 `submit-result` 再做 substance 边界兜底（双层互不信任）；收口经 deep-summary → `register-summary` → `render-html`（确定性渲染，零 LLM）。Audit / Review / finalize 为可选评估层（L2-L4），不强制。每次运行的中间产物统一位于 `local/Company/<code>-<name>/<run-id>/evidence/`。
 
 ```bash
 python3 scripts/full_analysis.py start \
@@ -368,7 +368,7 @@ cd ai-berkshire
 
 ## 各 Skill 详细介绍
 
-各 Skill 的完整使用说明（触发场景、核心工作流、调用示例、适用/不适用边界）见 **`SKILLS-GUIDE.md`**——17 个 canonical（16 业务 + 1 编排）全登记，含选择建议路由表。此处仅保留一页速览：
+各 Skill 的完整使用说明（触发场景、核心工作流、调用示例、适用/不适用边界）见 **`SKILLS-GUIDE.md`**——18 个 canonical（16 业务 + 1 编排 + 1 路由参考 `industry-routing`）全登记，含选择建议路由表。此处仅保留一页速览：
 
 | Skill | 一句话 | 详见 |
 |---|---|---|

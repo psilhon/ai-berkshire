@@ -1,10 +1,10 @@
 # Skills 使用指南
 
-本仓库当前包含 **16 个投研业务 Skill 和 1 个编排 Skill**（共 17 个 canonical 源）。`skills/*.md` 是 workflow 权威源；`codex-skills/*/SKILL.md` 与 WorkBuddy 全量分析适配器由 `python3 scripts/sync-codex-skills.py` 生成并通过 `--check` 校验。
+本仓库当前包含 **16 个投研业务 Skill、1 个编排 Skill 和 1 个行业路由参考**（共 18 个 canonical 源文件）。`industry-routing` 是被 12 个消费方 skill 按需加载的路由矩阵（选行业附录 / 必备 KPI / berkshire A股数据命令），不是独立业务入口。`skills/*.md` 是 workflow 权威源；`codex-skills/*/SKILL.md` 与 WorkBuddy 全量分析适配器由 `python3 scripts/sync-codex-skills.py` 生成并通过 `--check` 校验。
 
 其中 **13 个业务 Skill 组成单公司全量分析契约**（`tools/full_analysis_contract.json`，schema `full-analysis-contract/lean-v1`），另有 **3 个市场级 / IPO 独立 Skill**（`a-share-market-sentiment`、`macro-liquidity`、`a-share-prospectus-analysis`）不参与契约、独立运行。
 
-> 数据截止：2026-08-09。具体章节、证据和适用性要求以各 Skill 源文件及 `tools/full_analysis_contract.json` 为准。
+> 数据截止：2026-08-13。具体章节、证据和适用性要求以各 Skill 源文件及 `tools/full_analysis_contract.json` 为准。
 
 ## 通用前提
 
@@ -113,14 +113,17 @@
 
 lean 模式已移除租约看门狗 / 租约身份机 / 波次错峰白名单 / 证据账本 PLACEHOLDER / 双源强制 / 版本钉死 / 自动恢复等冗余机制。报告是**唯一交付物**；证据账本（result.json）只是可选辅助，空账本合法。
 
-闭环流程：
+闭环流程（含两个用户确认门）：
 
 1. `start` 创建运行目录与 13 个 work unit（依赖由 `next-work` 按其 `depends_on` 拓扑自动返回就绪单元）。
+   🔴 **启动确认门（用户）**：`start` 后、**派发第一个业务 Agent 前**，必须先向用户确认公司/代码/as_of（选项：确认启动 / 修改参数后重启 / 取消本 run），防跑错标的白跑 13 单元；未经确认不得自主启动流水线。
 2. `next-work` 返回 `LEASED` 后派 **WorkBuddy 原生 Agent**（禁止主上下文直写正文），Agent 完整落地 `methodology_text` 并写入 attempt 目录 + `artifact.formal_path`。
 3. 移交前必须跑 `self-check`（实质章节数 / 三锚 / 字节下限）；通过后 `submit-result`（或 `mk_result_bundle` 生成 result.json；空账本合法）。Gate 在 `submit-result` 再做一次 substance 边界兜底（双层互不信任）。
 4. 失败单元：`mark-failed --reason ...`（可选 `--retry` 重排一次），不自动重试、不启动看门狗、不做孤儿恢复。
-5. 全部业务单元终态后，派 deep-summary Agent 熔炼总结 → `register-summary` 冻结 → `render-html` 确定性渲染（零 LLM 零方差）。总结须如实标注缺失单元，且遵循 `docs/delivery-summary-quality-standard.md`（25-40KB、≥6 表格、≥5 内联 SVG、三大章节深化、数字溯源抽查）。
+5. 全部业务单元终态后，先经 🔴 **收口确认门（用户）**（deep-summary 熔炼 / `register-summary` 冻结 / `render-html` 渲染前须用户确认，选项：确认收口 / 先人工审阅已完成报告再收口 / 补做失败单元再收口），再派 deep-summary Agent 熔炼总结 → `register-summary` 冻结 → `render-html` 确定性渲染（零 LLM 零方差）。总结须如实标注缺失单元，且遵循 `docs/delivery-summary-quality-standard.md`（25-40KB、≥6 表格、≥5 内联 SVG、三大章节深化、数字溯源抽查）。
 6. **L2-L4 可选评估层**（不强制）：`audit`（结构验证）→ `review`（五维语义）→ `finalize`+`doctor`（digest 校验 + 退化指纹，advisory 非阻断）。L1 交付不依赖评估层。
+
+> **单元级无用户确认门（有意设计）**：每个 work unit 的派发不设用户门——13 单元自动流水线若每单元打扰会拖垮"全量研究"的连贯性；各业务 skill 内部本有各自的 🔴 STOP 确认门（启动后台 Agent / 输出强建议 / 落盘发布）。编排器仅在**启动**与**收口**两个全局节点设用户门，是 conscious trade-off，非遗漏。
 
 ```bash
 python3 scripts/full_analysis.py start \
