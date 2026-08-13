@@ -34,9 +34,13 @@ python3 scripts/full_analysis.py start --company <公司名> --code <证券代�
 
    只从返回的 `run_root` 继续。契约 `tools/full_analysis_contract.json`（schema `full-analysis-contract/lean-v1`）是 13 项业务 skill、依赖关系、正式产物路径、报告指引的唯一机器真源；不要在本适配器中复制清单。
 
+🔴 **STOP · 启动确认门（用户）**：`start` 返回 `run_root` 后、**派发第一个业务 Agent 前**，必须先向用户确认启动参数（给出明确选项：如「确认启动 13 单元全量研究：`<公司名>/<代码>/as_of=<日期>`」「修改参数后重启」「取消本 run」），获得明确同意后再继续派发；未经确认不得自主启动全量流水线。跑错标的是全流程最高成本错误（13 单元白跑），此门专防它。
+
 ## 派发循环（核心执行）
 
 按依赖顺序逐个单元派发原生 Agent。**依赖由 `next-work` 自动按其 `depends_on` 拓扑返回就绪单元**，无需手动错峰或白名单。
+
+> **单元级无用户确认门（有意设计）**：每个 work unit 的派发**不设**用户确认门——13 单元自动流水线若每单元打扰用户，会拖垮"全量研究"的连贯性与长时运行；且各业务 skill 内部本有各自的 🔴 STOP 确认门（启动后台 Agent / 输出强建议 / 落盘发布）。编排器仅在两个全局节点设用户门：**启动**（见上）与**收口**（见下），这是 conscious trade-off，非遗漏。
 
 ```text
 python3 scripts/full_analysis.py next-work --run-root <run_root>
@@ -94,6 +98,8 @@ python3 scripts/full_analysis.py mark-failed \
 ## 收口与交付（L1 主线）
 
 所有可完成的单元 DONE 后，编排器执行：
+
+🔴 **STOP · 收口确认门（用户）**：在派 deep-summary Agent 熔炼总结、`register-summary` 冻结、`render-html` 渲染**之前**，必须先向用户确认收口（给出明确选项：如「确认收口：熔炼总结并渲染 HTML」「先人工审阅已完成报告再收口」「补做失败单元（`--retry`）后再收口」），获得明确同意后再继续；未经确认不得自主冻结交付。总结报告是全流水线**最核心交付物**（HTML 完全依赖它），`register-summary` 将其登记为交付基线，属定稿动作，故冻结前须用户过目。
 
 ```text
 # 步骤 A：派 deep-summary Agent（独立原生 Agent），读取已完成的正式报告，
