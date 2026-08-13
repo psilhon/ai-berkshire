@@ -5,6 +5,25 @@
 
 ---
 
+## [v3.10.6] — 2026-08-13
+
+> **Darwin Phase 2 棘轮式优化·贰**：续上一轮，对剩余两只技能（news-pulse / full-company-analysis-workbuddy）优化。news-pulse 三轮独立复评均 < 基线（84.4/78.6/79.7），按棘轮纪律 `git revert` 回退、维持基线；full-company-analysis-workbuddy 单评未过（82.4）但 A/B 双盲同尺度复评通过（87.5 > 85.3），保留。全程 `check.sh` 真实退出码 0。
+
+### 🔧 优化 (Optimized)
+
+- **`skills/full-company-analysis-workbuddy.md`** 85.6 → **87.5**（+1.9，A/B 同尺度 +2.2）：补 dim4 用户确认门——🔴 启动确认门（`start` 后派发首个业务 Agent 前确认公司/代码/as_of，防跑错标的 13 单元白跑）+ 🔴 收口确认门（deep-summary 熔炼 / `register-summary` 冻结 / `render-html` 渲染前确认收口，总结为最核心交付物、冻结即定稿）+「单元级无用户确认门（有意设计）」说明（13 单元流水线不逐单元打扰，业务 skill 内部各有 🔴 STOP 门）。
+
+### ↩️ 回退 (Reverted)
+
+- **`skills/news-pulse.md`**（基线 84.9）：补团队原语不可用降级路径（串行侦察模式）三轮独立复评均 < 基线，按棘轮纪律 `git revert f370653` 回退，文件与 v3.10.5 逐字一致。留待后续以单轮大改动方式重试。
+
+### 🔍 验证 (Verification)
+
+- 双同步 exit 0（生成 18 个 codex skill）；`bash scripts/check.sh` 真实退出码 0（744 tests OK、18 skill frontmatter 合规、注册表校验通过）
+- full-company-analysis-workbuddy 经独立子 agent A/B 双盲同尺度复评（基线 85.3 vs 当前 87.5）；news-pulse 经三轮独立复评 + 纪律回退
+
+---
+
 ## [v3.10.5] — 2026-08-13
 
 > **Darwin Phase 2 棘轮式优化（从最低分起）**：用 darwin-skill 9 维 rubric 对全量 18 技能基线评估后，对用户选定的 4 个低分技能逐轮优化——每轮改完经**独立子 agent** 复评，严格 > 旧分才保留（否则 git revert），全程 `check.sh` 真实退出码 0。
