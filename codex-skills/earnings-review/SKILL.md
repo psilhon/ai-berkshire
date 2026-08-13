@@ -58,15 +58,26 @@ This skill is generated from `skills/earnings-review.md` so Claude Code and Code
 在进入四大师定性深读前，先以确定性规则扫描出"能不能碰"的硬性红灯与风险分。
 本阶段只回答**排雷**（能不能碰），不回答**价值**（值不值得买）；结论必须交四大师定性复核，不得单独作为投资依据。
 
-### A.0 数据来源（双源适配，严禁单源当事实）
+### A.0 数据来源与取数清单（双源适配，严禁单源当事实）
 
-| 字段类别 | 源 A（结构化序列） | 源 B（交叉验证） | 说明 |
-|---------|------------------|----------------|------|
-| 三表/指标(10年) | Tushare（若本地配置 `TUSHARE_TOKEN`）或 `python3 tools/ashare_data.py financials` | 东方财富 F10 / 巨潮年报 PDF | 关键聚合两源误差>1%须标记，>5%查原始财报（见 `skills/financial-data.md`） |
-| 审计意见/披露日 | 巨潮/公司公告 | Tushare audit | L0 硬门槛，双源其一可得即可判 |
-| PDF 依赖项 | 一手年报 PDF（运费/CFO变更/独董/客户供应商/跨行业收购/研发资本化/资金占用/监管处罚） | — | 沿用阶段一"获取一手资料"流程，未取到标 SKIP |
+> **取数前置（必读）**：阶段零要产出有效评分卡，必须取到**三张主表 + 审计意见 + 年报 PDF 附注**。只跑 `financials` 只会得到利润表聚合（营收/净利/增速/EPS/净资产/ROE），将导致 31/32 条规则因缺字段而 SKIP —— 这是首版实测踩过的坑。务必按下方清单逐条取数，再进 A.1 规则判定。
 
-> **单源纪律**：依赖 Tushare/ashare_data 单源的结构化字段，若东财/巨潮第二源不可得，按 `financial-data.md` 标 `[估计]`/数据不足，**该项不计入 FAIL 分**（避免单点误杀或虚警），但必须列入"需人工验证"。
+**取数清单（阶段零必跑；缺任一则对应规则族 SKIP，并在评分卡标注原因）**：
+
+| 取数命令（源 A，结构化序列） | 覆盖规则族 | 提供关键字段 |
+|---|---|---|
+| `python3 tools/ashare_data.py income-stmt <CODE>` | L1（1.1–1.6） | 毛利率、三费、减值 `assets_impair_loss`/`credit_impa_loss`、其他业务收支 |
+| `python3 tools/ashare_data.py balance-sheet <CODE>` | L1.2 / L2.3 / L3(3.1–3.5) / L4.3 / L5.7 / L5.8 | 应收、应付、存货、货币、借款、在建工程、商誉、其他应收、总资产 |
+| `python3 tools/ashare_data.py cash-flow <CODE>` | L2(2.1–2.3) / L4(4.1–4.5) | 经营CF、投资CF、销售收现 `c_recp_prov_sg_act`、FCF |
+| `python3 tools/ashare_data.py financials <CODE>` | L0/L1 概览 + 增速交叉 | 营收/净利/增速/EPS/净资产/ROE（仅聚合，不替代三表原始值） |
+| `python3 tools/ashare_data.py announcements <CODE>` | L0.1 / L5.3 / L5.4 / L5.9 | 审计意见、高管变更、独董辞职、监管处罚/立案 |
+| 一手年报 PDF（阶段一「获取一手资料」流程） | L1.3 / L5(5.3–5.6) / L6.2 | 运费、CFO/独董、前五大客户供应商、跨行业收购、研发资本化、资金占用 |
+
+`<CODE>` = 六位 A 股代码（如 `600519`）。未配置 `TUSHARE_TOKEN` 时，上述 `ashare_data` 命令走东财免费源；Tushare 字段（income/balancesheet/cashflow）作为**源 B 交叉验证**。
+
+**交叉验证（源 B）**：源 A 东财聚合 与 源 B Tushare 原始报表 关键项误差 >1% 标 `[差异]`，>5% 须查原始财报（见 `skills/financial-data.md`）。
+
+> **单源纪律**：依赖单源的结构化字段，若第二源不可得，按 `financial-data.md` 标 `[估计]`/数据不足，**该项不计入 FAIL 分**（避免单点误杀或虚警），但必须列入「需人工验证」。
 
 ### A.1 规则集（7 层 32 条，修正原 minesweeper 文档条数矛盾）
 
