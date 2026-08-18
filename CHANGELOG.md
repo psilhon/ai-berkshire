@@ -5,6 +5,23 @@
 
 ---
 
+## [v3.10.7] — 2026-08-18
+
+> **bottleneck-hunter 专项优化**：吸收 serenity-skill 增量 + darwin 评分驱动的优化（dim1/dim7/dim8），补齐证据分级标准、数据源手册与请求路由，并将估值/缺数据封顶规则收敛为单一事实源。全程 `check.sh` 真实退出码 0。
+
+### 🔧 优化 (Optimized)
+
+- **`skills/bottleneck-hunter.md`** 620 行（+89）：
+  - 吸收 serenity-skill 增量：新增 5.0 证据分级标准（强/中/弱/待核实 + 红旗清单）、4.1.1 数据源手册（A股优先路径 + 港股/美股/台日韩简表与核查重点）、6.0 层级优先排序纪律 + 口语化术语对照；
+  - dim8/dim1：新增请求路由（模式 A 超级趋势扫描 / B 单标的挑战 / C 澄清），模式 B 四步挑战路径复用现有章节，frontmatter 补触发词（挑战/验证/蹭热点/是不是真的）；
+  - dim7：6.1 星级/红线与缺数据封顶规则改为交叉引用 4.2.1 估值检查与失败处理规则 3，消除重复定义，2 处交叉引用替换。
+
+### 🔍 验证 (Verification)
+
+- 双同步 exit 0（生成 18 个 codex skill + 用户副本）；`bash scripts/check.sh` 真实退出码 0（744 tests OK、18 skill frontmatter 合规、Codex 生成物同步检查通过、注册表校验通过）
+
+---
+
 ## [v3.10.6] — 2026-08-13
 
 > **Darwin Phase 2 棘轮式优化·贰**：续上一轮，对剩余两只技能（news-pulse / full-company-analysis-workbuddy）优化。news-pulse 三轮独立复评均 < 基线（84.4/78.6/79.7），按棘轮纪律 `git revert` 回退、维持基线；full-company-analysis-workbuddy 单评未过（82.4）但 A/B 双盲同尺度复评通过（87.5 > 85.3），保留。全程 `check.sh` 真实退出码 0。
