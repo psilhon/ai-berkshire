@@ -5,6 +5,22 @@
 
 ---
 
+## [v3.10.8] — 2026-08-30
+
+> **tools 修复**：`ashare_data.py` PB/PE 分位取值顺序错误——`daily_basic` 按 trade_date 降序返回，原 `filtered[-1]` 取到窗口最旧交易日而非最新，导致 pe-band 输出的 current PE/PB 为历史值（实测宜安科技 PB 误取 4.75，真值 11.88）。改为显式按 trade_date 升序排序后取末项，去顺序依赖。全程 `check.sh` 真实退出码 0。
+
+### 🐛 修复 (Fixed)
+
+- **`tools/ashare_data.py`** `cmd_pe_band`（+4/−1）：
+  - `latest = filtered[-1]` → `sorted(filtered, key=trade_date)[-1]`，消除对 Tushare 返回顺序的隐式依赖；
+  - 影响面：所有走 `pe-band` 子命令的 run 的 current PE/PB 与分位读数（此前会取到数年前数值）。
+
+### 🔍 验证 (Verification)
+
+- `bash scripts/check.sh` 真实退出码 0（✅ 全部检查通过；输出中 E1 mock 版本门禁与 foo-workbuddy.md 测试夹具提示为预置 advisory，非回归）
+
+---
+
 ## [v3.10.7] — 2026-08-18
 
 > **bottleneck-hunter 专项优化**：吸收 serenity-skill 增量 + darwin 评分驱动的优化（dim1/dim7/dim8），补齐证据分级标准、数据源手册与请求路由，并将估值/缺数据封顶规则收敛为单一事实源。全程 `check.sh` 真实退出码 0。
