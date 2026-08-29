@@ -1780,7 +1780,10 @@ def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
 
     pe_vals = [float(r["pe"]) for r in filtered if r.get("pe") and float(r["pe"]) > 0]
     pb_vals = [float(r["pb"]) for r in filtered if r.get("pb") and float(r["pb"]) > 0]
-    latest = filtered[-1]
+    # Tushare daily_basic 默认按 trade_date 降序（最新在前）。为去除顺序依赖，
+    # 显式按 trade_date 升序排序，最新交易日取末尾一项。
+    filtered_sorted = sorted(filtered, key=lambda r: str(r.get("trade_date", "")))
+    latest = filtered_sorted[-1]
     current_pe = float(latest.get("pe") or 0)
     current_pb = float(latest.get("pb") or 0)
 
