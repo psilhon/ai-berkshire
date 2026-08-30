@@ -13,6 +13,9 @@ python3 -m unittest discover -s "$ROOT/tests"
 echo "== Skill frontmatter 治理元信息校验 =="
 python3 "$ROOT/scripts/check-skill-frontmatter.py"
 
+echo "== Skill 用户确认门（🔴 STOP）骨架校验 =="
+python3 "$ROOT/scripts/check-stop-gates.py"
+
 echo "== Codex skills 生成物同步检查 =="
 python3 "$ROOT/scripts/sync-codex-skills.py" --check
 
