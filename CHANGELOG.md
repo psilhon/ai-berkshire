@@ -5,6 +5,50 @@
 
 ---
 
+## [v3.10.9] — 2026-08-30
+
+> **架构评审落地（`improve-codebase-architecture`，6 个候选全部处理）**：抽出 `tools/substance.py`（实质地板单一事实源）与 `tools/run_layout.py`（run 目录布局单一事实源），删除 4 个零引用孤儿工具（1321 行），为 `equity_dcf` 补 26 个测试并**修掉一个静默归零的估值缺陷**，新增 STOP 确认门机器守卫，修正 4 处文档漂移；另含一项独立的港股代码放行。两条被推翻的评审前提已落成 ADR-0002 / ADR-0003。全程 `check.sh` 真实退出码 0（784 tests OK）。
+
+### 🚀 功能 (Added)
+
+- **`tools/full_analysis_gate.py`** `cmd_init`：放行港股 5 位 `.HK` 代码（如 `00700.HK`）。原正则只接受 A 股 6 位（`^[0-9A-Z]{6}\.(SH|SZ|BJ)$`），港股标的会被 `GateError` 直接拒绝、无法起 run。改为 alternation，A 股约束不变。无专属测试覆盖该格式校验，改动为纯正则、行为局部。
+
+### ✨ 新增 (Added)
+
+- **`tools/substance.py`**（199 行，候选①）：实质地板的深模块。收拢 `RESULT_STATUSES` / `NON_SUBSTANTIVE_SECTION_IDS` / `NA_REQUIRED_HEADINGS` / 三档 `*_MIN_BYTES` 等 17 个常量 + `section_blocks()` + `substance_errors()`；`full_analysis_gate.py` 改为 import 并保留别名（`_substance_errors` / `_section_blocks`），gate 净减 216 行。此前这套常量与函数体在 gate 内自成一份，与 `mk_result_bundle` 的 4 处直接 import 形成隐式双份。
+- **`tools/run_layout.py`**（48 行，候选②）：run 目录布局的单一事实源——`ATTEMPTS_REL` / `SUMMARY_ATTEMPTS_REL` / `MANIFEST_REL` / `RUNTIME_STATE_REL` / `EVENTS_REL` / `USAGE_REL` + `in_attempts()` / `in_summary_attempts()` 谓词（带尾斜杠保护，避免 `attempts_other/` 误判）。收敛前该知识散在 3 个模块 5 处，且 `full_analysis_runtime.py` **独立重定义了全部四个状态文件路径**。模块 docstring 明示边界：只管"东西放哪"，不管"谁写"。
+- **`scripts/check-stop-gates.py`**（139 行，候选④改道）：`🔴 STOP` 确认门骨架守卫，已接入 `scripts/check.sh`。区分三种语义——(a) 用户确认门（含「必须先向用户确认」）→ **强制校验三要素**：确认义务 + 明确选项 + 停止效力；(b) 硬停止规则；(c) 行文提及。当前基线：**44 个确认门全部合规，4 个非确认语义标记以 INFO 列出交人判**。支持 `--inventory`。
+- **`tests/test_substance.py`**（108 行 / 9 例）、**`tests/test_run_layout.py`**（57 行 / 5 例）、**`tests/test_equity_dcf.py`**（262 行 / 26 例 / 60 断言）。
+- **`docs/adr/0002-v2-archive-validator-not-dead-code.md`**、**`docs/adr/0003-stop-gates-not-templated.md`**：记录两条被证据推翻的评审前提，避免后续评审重复提出。
+
+### 🐛 修复 (Fixed)
+
+- **`tools/equity_dcf.py`** `run()`（+7/−1，**静默归零缺陷**）：原实现把**原始配置情景**（只有 `fcf`/`prob`，无 `per_share`）传给 `run_position`，触发其内部 `v = sc.get("per_share", price)` 回退，使 `expected_value` 恒为 `0.0`、`asymmetry_ratio` 恒为 `None` —— 一个不出错、只悄悄返回错数的缺陷。改为传 `run_scenarios` 的输出明细（已折算为每股）。实测：EV 由 `0.0` 修正为 `0.9038100047695197`（190.38100047695195 / 100 − 1）。新增回归守卫 `test_run_position_uses_computed_per_share`。
+
+### 🔧 优化 (Optimized)
+
+- **候选② subprocess 环回内化**：`full_analysis_runtime._accept_result` 不再 `subprocess.run([sys.executable, gate, "ingest-result", ...])` 再用 stdout 文本回传，改为直接调用新抽出的 `gate.ingest_result(run_root, registry, result) -> dict` 结构化回执（`cmd_ingest` 退化为薄 CLI 壳）。runtime 内用**延迟 import** 规避循环依赖（gate 顶层已 import runtime）；移除已无用的 `subprocess` / `sys` import。
+- **候选③ 孤儿工具删除**：`tools/momentum_backtest.py`(401) / `tools/stock_screener.py`(401) / `tools/star_history_chart.py`(367) / `tools/morningstar_fair_value.py`(152) —— 合计 **1321 行，零引用**。经 `skills/` `scripts/` `tools/` `tests/` 全量检索、`local/` 5887 文件检索、shell 历史检索三重确认无引用；唯一遗留痕迹是 `data/morningstar_fair_value_20260519.csv` 这一历史产物。
+- **候选⑤ 文档漂移**：
+  - `AGENTS.md`：修掉死掉的检出路径要求——原文强制 `~/ai-berkshire/tools/...`，本仓库实际在 `~/WorkSpace/stock/berkshire`，改为"按实际仓库根解析"。
+  - `CONTEXT.md`：目录树补齐 `AGENTS.md`/`SKILLS-GUIDE.md`/`README.md`、根 html 指南、`docs/agents/`、`workbuddy-skills/`、`scripts/`、`tests/` 及 `local/` 全貌，并标注计数（18 skills / 19 codex 包）。
+  - `SKILLS-GUIDE.md`：修正"industry-routing 有 12 个消费方"的**虚假声明**（实测 2 个：`earnings-review`、`investment-research`），改注真正的 ~10 消费方规范层是 `financial-data`。
+  - `architecture-and-skills-guide.html`：17→18 个 skill、17→19 个 codex 包、补 `industry-routing` 行；并**修掉自相矛盾**——`<title>` 写 v3.10.9 而徽章写 v3.10.0 / 2026-08-10，现统一为 v3.10.9 / 2026-08-30。
+
+### 🔍 验证 (Verification)
+
+- `env -u PYTHONPATH bash scripts/check.sh` **真实退出码 0**：`Ran 784 tests ... OK`（较 v3.10.8 的 779 +5，来自新增的 `test_run_layout.py`），五个阶段全绿（单元测试 / frontmatter 治理元信息 / **STOP 确认门骨架（本版新增阶段）** / Codex 生成物同步 / 全量分析注册表）。
+- 分模块复验：`test_full_analysis_gate*.py` OK(100)、`test_full_analysis*.py` OK(305)、`test_substance.py` OK(9, skipped=1)、`test_run_layout.py` OK(5)、`test_equity_dcf.py` OK(26)。
+- 缺陷修复前后对比（内置 demo 配置，price=100）：`expected_value` `0.0` → `0.9038100047695197`。
+- `python3 scripts/sync-codex-skills.py --check` exit 0（本版未改动 `skills/*.md`，两条同步链为 no-op）。
+- **沙箱已知干扰（非回归）**：WorkBuddy `sitecustomize.py` shim 对 `mkdir(exist_ok=True)` 抛 `PermissionError: EEXIST`，会污染 16 个测试（14 audit error + 2 install_scripts）。已用 `git worktree add /tmp/berk-baseline HEAD --detach` 建干净基线跑同一套测试，**16 个失败逐名一致**，证明为环境固有而非本版引入；绕开方式 `env -u PYTHONPATH`（附带收益：287s → 39s）。
+
+### ⏸ 有意未做 (Deferred)
+
+- **候选② 状态所有权收拢**：`manifest` / `events` 由 gate 写、`runtime-state` / `usage` 由 runtime 写，且 `submit-result` 跨锁触碰两个文件——把它并成单一 RunStore + 五个动词（initialize/next/accept/fail/finalize）属高风险手术，会改变"哪个模块写哪个状态文件"。本次只做机械部分（subprocess 内化 + 布局收敛），所有权未动；`run_layout.py` 的 docstring 已显式记录该边界。
+
+---
+
 ## [v3.10.8] — 2026-08-30
 
 > **tools 修复**：`ashare_data.py` PB/PE 分位取值顺序错误——`daily_basic` 按 trade_date 降序返回，原 `filtered[-1]` 取到窗口最旧交易日而非最新，导致 pe-band 输出的 current PE/PB 为历史值（实测宜安科技 PB 误取 4.75，真值 11.88）。改为显式按 trade_date 升序排序后取末项，去顺序依赖。全程 `check.sh` 真实退出码 0。
