@@ -783,7 +783,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     registry = load_registry(Path(args.registry))
     if args.platform != "workbuddy":
         raise GateError("生产全量分析只接受 WorkBuddy platform", 2)
-    if not re.match(r"^[0-9A-Z]{6}\.(SH|SZ|BJ)$", args.code):
+    # 2026-08-30：放行港股 .HK（5 位代码，如 00700.HK）；A 股仍限 6 位。
+    if not re.match(r"^[0-9A-Z]{6}\.(SH|SZ|BJ)$|^[0-9A-Z]{5}\.HK$", args.code):
         raise GateError(f"证券代码格式非法: {args.code}", 2)
     # v3.3.10：init 时即构建依赖图并落盘，供编排层波次调度与 runtime 依赖门禁使用。
     # 契约环在 init 前即拒绝（runtime/contract 校验器同源语义，此处刻意不 import 校验器）。
