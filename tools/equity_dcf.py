@@ -253,7 +253,6 @@ def run_position(price, scenarios):
             up = v
         if down is None or v < down:
             down = v
-    asym = (up / price - 1.0) / max(up / price - 1.0, 1e-9) if (up / price - 1.0) > 0 else 0.0
     down_side = max(down / price - 1.0, -1.0)
     asym_ratio = (up / price - 1.0) / abs(down_side) if down_side < 0 else None
     return {"expected_value": ev, "asymmetry_ratio": asym_ratio}
@@ -311,7 +310,12 @@ def run(top):
         out["calibration"] = calibrate(price, top["range_low"], top["range_high"])
 
     if price is not None and "scenarios" in top:
-        out["position"] = run_position(price, top["scenarios"])
+        # run_position 需要"已折算为每股"的情景（带 per_share）——原始配置里的
+        # scenarios 只有 fcf/prob，直接传入会触发 run_position 的 v=price 回退，
+        # 使 expected_value 恒为 0、asymmetry_ratio 恒为 None。
+        # 2026-08-30 修复（架构评审候选⑥ 顺带发现）：改用 run_scenarios 的输出明细。
+        computed = out.get("three_scenario", {}).get("scenarios")
+        out["position"] = run_position(price, computed or top["scenarios"])
 
     return out
 
