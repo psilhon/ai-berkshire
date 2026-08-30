@@ -17,6 +17,8 @@ import full_analysis_doctor as doctor  # noqa: E402
 import full_analysis_review as review  # noqa: E402
 import full_analysis_benchmark as benchmark  # noqa: E402
 import full_analysis_cache as cache  # noqa: E402
+# run 目录布局（2026-08-30 架构评审候选②）：attempts 路径不再本地硬编码
+from run_layout import ATTEMPTS_REL  # noqa: E402
 
 
 def emit(value: object) -> None:
@@ -172,7 +174,7 @@ def main(argv=None) -> int:
                 raise runtime.RuntimeErrorState("cleanup 仅支持 --dry-run；删除须由用户逐项授权")
             state = runtime.load_state(root)
             emit({"status": "DRY_RUN", "run_root": str(root), "removable_attempts": [
-                str(root / "evidence/attempts" / u["skill_id"] / (u.get("reuse_attempt") or ""))
+                str(root / ATTEMPTS_REL / u["skill_id"] / (u.get("reuse_attempt") or ""))
                 for u in state["work_units"] if u.get("status") in {"DONE", "FAILED"}
             ]})
             return 0

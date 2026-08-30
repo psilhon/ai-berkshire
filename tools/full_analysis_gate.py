@@ -381,8 +381,8 @@ def _admit_artifact_checks(bundle: dict, run_root: Path, skill: dict, status: st
     except GateError as exc:
         return [str(exc)]
     source = Path(run_root) / rel
-    if not source.is_file() or source.is_symlink() or not str(rel).startswith("evidence/attempts/"):
-        return [f"artifact 必须来自 evidence/attempts 且为普通文件: {rel}"]
+    if not source.is_file() or source.is_symlink() or not in_attempts(rel):
+        return [f"artifact 必须来自 {ATTEMPTS_REL.as_posix()} 且为普通文件: {rel}"]
     actual_bytes = source.stat().st_size
     if actual_bytes != rec.get("bytes") or sha256_file(source) != rec.get("sha256"):
         errs.append(f"artifact bytes/sha256 与 Result Bundle 不一致: {rel}")
@@ -1034,10 +1034,20 @@ def _merge_provenance(
         })
 
 
-def cmd_ingest(args: argparse.Namespace) -> int:
-    root, registry = Path(args.run_root), load_registry(Path(args.registry))
+def ingest_result(run_root: Path, registry: Path | None = None, result: Path | None = None) -> dict:
+    """Result Bundle 登记的唯一进程内入口（RunStore 收拢的第一步，评审候选②）。
+
+    runtime._accept_result 原先 spawn 子进程环回 `full_analysis_gate.py ingest-result`
+    靠 stdout 文本回传结果——同一事务拆两进程、以打印代返回。现在 runtime 与 CLI
+    共用本函数：gate 校验成为调用方的一步，返回结构化 dict（不再解析文本）。
+    抛 GateError = 准入拦截（CLI 侧由 main 翻译为退出码与 stderr）。
+    """
+    root = Path(run_root)
+    registry = load_registry(Path(registry if registry is not None else DEFAULT_REGISTRY))
+    result_path = Path(result) if result is not None else None
+    assert result_path is not None, "ingest_result 需要 result 路径"
     manifest = load_manifest(root)
-    bundle = load_json(Path(args.result), "Result Bundle")
+    bundle = load_json(result_path, "Result Bundle")
     # v3.4.15：完整准入口径（含 artifact 文件/实质/角色memo/NA 章节）统一由 admit_bundle
     # 判定，与生成器、correction 共用同一函数——消除「生成器 rc0 但 ingest 拒收」的口径分叉。
     errs = admit_bundle(bundle, root, registry, check_artifacts=True)
@@ -1054,8 +1064,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     for record in bundle["artifact_records"]:
         rel = safe_relative(root, record.get("path", ""))
         source = root / rel
-        if not source.is_file() or source.is_symlink() or not str(rel).startswith("evidence/attempts/"):
-            raise GateError(f"artifact 必须来自 evidence/attempts 且为普通文件: {rel}")
+        if not source.is_file() or source.is_symlink() or not in_attempts(rel):
+            raise GateError(f"artifact 必须来自 {ATTEMPTS_REL.as_posix()} 且为普通文件: {rel}")
         # 注：bytes/sha256/字节下限已由 admit_bundle(_admit_artifact_checks) 统一校验，此处不再重复。
         if accepted_status:
             formal_rel = safe_relative(root, skill["artifact"]["formal_path"])
@@ -1141,7 +1151,13 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         )
     save_manifest(root, next_manifest)
     append_event(root, {"type": "result_ingested", "skill_id": bundle["skill_id"], "attempt_id": bundle["attempt_id"], "status": bundle["status"]})
-    print(json.dumps({"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}, ensure_ascii=False))
+    receipt = {"skill_id": bundle["skill_id"], "status": bundle["status"], "formal_artifacts": records}
+    return receipt
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    """CLI 薄壳：与 runtime 共用同一 ingest_result（消除 stdout 文本协议）。"""
+    print(json.dumps(ingest_result(Path(args.run_root), Path(args.registry) if args.registry else None, Path(args.result)), ensure_ascii=False))
     return 0
 
 
@@ -1171,8 +1187,8 @@ def cmd_register_summary(args: argparse.Namespace) -> int:
         rel = resolved.relative_to(root.resolve())
     except (OSError, ValueError) as exc:
         raise GateError(f"总结报告必须位于 run_root 内: {source}: {exc}")
-    if not rel.as_posix().startswith("evidence/attempts/summary/"):
-        raise GateError("总结报告必须先写入 evidence/attempts/summary/")
+    if not in_summary_attempts(rel):
+        raise GateError(f"总结报告必须先写入 {SUMMARY_ATTEMPTS_REL.as_posix()}/")
     if not resolved.is_file() or resolved.is_symlink():
         raise GateError("总结报告必须是普通 Markdown 文件")
     try:

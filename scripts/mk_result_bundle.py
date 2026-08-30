@@ -95,6 +95,9 @@ from full_analysis_contract import (  # noqa: E402
     find_skill,
     load_contract,
 )
+# run 目录布局（2026-08-30 架构评审候选②）：attempts 前缀不再本地硬编码，
+# 与 Gate 准入判定共用同一真源，避免「生成器接受、Gate 拒收」的路径分叉。
+from run_layout import ATTEMPTS_REL, in_attempts  # noqa: E402
 from full_analysis_gate import (  # noqa: E402
     ALWAYS_APPLICABLE_PREDICATES,
     NA_MIN_BYTES,
@@ -355,8 +358,8 @@ def main() -> int:
         rel = report.relative_to(run_root).as_posix()
     except ValueError:
         fail(f"report 必须位于 run_root 内: {report}（run_root={run_root}）")
-    if not rel.startswith("evidence/attempts/"):
-        fail(f"report 必须位于 evidence/attempts/ 下: {rel}")
+    if not in_attempts(rel):
+        fail(f"report 必须位于 {ATTEMPTS_REL.as_posix()}/ 下: {rel}")
 
     def load_extra(flag_value: str | None, wrapper_key: str, flag: str) -> list:
         """读取 --extra-* JSON。错误消息必须指向**真实存在的命令行参数**

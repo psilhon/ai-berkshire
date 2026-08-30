@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,10 +23,15 @@ from full_analysis_contract import (  # noqa: E402
     load_contract,
 )
 DEFAULT_REGISTRY = CONTRACT_PATH
-STATE_REL = Path("evidence/runtime-state.json")
-EVENTS_REL = Path("evidence/events.jsonl")
-USAGE_REL = Path("evidence/usage.jsonl")
-MANIFEST_REL = Path("evidence/00-analysis-manifest.json")
+# Run 目录布局（2026-08-30 架构评审候选②）：路径常量与 gate 共用同一真源，
+# 此前 gate 与 runtime 各自定义一遍（改目录要追两处）。所有权不变：
+# state/usage 由 runtime 写，manifest/events 由 gate 写。
+from run_layout import (  # noqa: E402
+    EVENTS_REL,
+    MANIFEST_REL,
+    RUNTIME_STATE_REL as STATE_REL,
+    USAGE_REL,
+)
 LEASE_MINUTES = 20  # 扇出单元基础 TTL（按角色数倍增）
 NON_FANOUT_LEASE_MINUTES = 40  # 非扇出单元 TTL（宏景 run 实证：mgmt ~35min、ind-research ~25min）
 BACKOFF_SECONDS = (60, 180)
@@ -582,17 +585,23 @@ def _accept_result(
     bundle = json.loads(result.read_text(encoding="utf-8"))
     current_state = state if state is not None else load_state(run_root)
     unit = _validate_result_lease(current_state, bundle, allow_expired=allow_expired)
-    gate = Path(__file__).resolve().parent / "full_analysis_gate.py"
-    completed = subprocess.run([sys.executable, str(gate), "ingest-result", "--run-root", str(run_root), "--registry", str(registry), "--result", str(result)], capture_output=True, text=True)
-    if completed.returncode:
-        raise RuntimeErrorState(completed.stdout + completed.stderr)
+    # 2026-08-30 架构评审候选②：原先 spawn 子进程环回 `full_analysis_gate.py
+    # ingest-result` 靠 stdout 文本回传——同一事务拆两进程、以打印代返回。
+    # 现改为进程内调用 gate.ingest_result（gate 顶层 import runtime，此处
+    # 延迟 import 避免环），返回结构化 receipt。
+    # GateError 保持与原行为一致的向外传播（原为 RuntimeErrorState(stdoud+stderr)）。
+    import full_analysis_gate as gate_mod  # 延迟 import：gate 顶层已 import 本模块
+    try:
+        receipt = gate_mod.ingest_result(run_root, registry, result)
+    except gate_mod.GateError as exc:
+        raise RuntimeErrorState(str(exc)) from exc
     unit["status"] = "DONE" if bundle["status"] in {"PASS", "PASS_WITH_LIMITATIONS", "NOT_APPLICABLE"} else "FAILED"
     current_state["concurrency"]["current"] = max(
         0, current_state["concurrency"].get("current", 0) - 1)
     save_state(run_root, current_state)
     event(run_root, event_kind, work_unit_id=unit["work_unit_id"],
           attempt_id=bundle["attempt_id"], status=unit["status"])
-    return {"status": unit["status"], "gate": completed.stdout.strip()}
+    return {"status": unit["status"], "gate": json.dumps(receipt, ensure_ascii=False)}
 
 
 def submit_result(run_root: Path, registry: Path, result: Path) -> dict:
