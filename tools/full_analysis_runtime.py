@@ -28,17 +28,20 @@ DEFAULT_REGISTRY = CONTRACT_PATH
 # state/usage 由 runtime 写，manifest/events 由 gate 写。
 from run_layout import (  # noqa: E402
     EVENTS_REL,
+    LOCK_REL,
     MANIFEST_REL,
     RUNTIME_STATE_REL as STATE_REL,
     USAGE_REL,
 )
+# 状态文件 I/O 单一所有者（2026-08-30 候选②·完整版）：原子写/状态/账本收进 run_store，
+# runtime 只保留"何时写、写什么策略"（状态机流转、预算扣减等）。
+import run_store  # noqa: E402
 LEASE_MINUTES = 20  # 扇出单元基础 TTL（按角色数倍增）
 NON_FANOUT_LEASE_MINUTES = 40  # 非扇出单元 TTL（宏景 run 实证：mgmt ~35min、ind-research ~25min）
 BACKOFF_SECONDS = (60, 180)
 RATE_LIMIT_COOLDOWN_SECONDS = 600
 PARTIAL_REPORT = "PARTIAL_REPORT.md"
 SUMMARY_REPORT = "SUMMARY.md"
-LOCK_REL = Path("evidence/locks/runtime-state.lock")
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 # 反凑数刚性指令：随 methodology_text 一并注入执行 Agent，明确"深度优先于字数"。
@@ -220,30 +223,23 @@ def parse_time(value: str | None) -> datetime | None:
 
 
 def atomic_json(path: Path, value: object) -> None:
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    """薄委托：原子写收进 run_store（tmp+fsync+权限保持；此前本模块无 fsync）。"""
+    run_store.atomic_write_json(path, value)
 
 
 def load_state(run_root: Path) -> dict:
-    path = Path(run_root) / STATE_REL
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeErrorState(f"runtime-state 不可读: {path}: {exc}")
-    if state.get("state_version") != "runtime-state/v1":
-        raise RuntimeErrorState("runtime-state 版本不匹配")
-    return state
+        return run_store.load_runtime_state(run_root)
+    except run_store.RunStoreError as exc:
+        raise RuntimeErrorState(str(exc), code=exc.code) from exc
 
 
 def save_state(run_root: Path, state: dict) -> None:
-    atomic_json(Path(run_root) / STATE_REL, state)
+    run_store.write_runtime_state(run_root, state)
 
 
 def event(run_root: Path, kind: str, **payload: object) -> None:
-    path = Path(run_root) / EVENTS_REL
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"event_at": iso(now()), "type": kind, **payload}, ensure_ascii=False) + "\n")
+    run_store.append_event(run_root, {"type": kind, **payload})
 
 
 def budget_adjust(run_root: Path, *, stop_dispatch_at: int | None = None,
@@ -657,16 +653,7 @@ USAGE_PHASES = {"work", "summary", "review"}
 
 
 def _usage_records(run_root: Path) -> list[dict]:
-    path = Path(run_root) / USAGE_REL
-    if not path.exists():
-        return []
-    records = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-    return records
+    return run_store.read_usage(run_root)
 
 
 def _refresh_usage_summary(run_root: Path) -> dict:
@@ -701,14 +688,13 @@ def _refresh_usage_summary(run_root: Path) -> dict:
         "by_phase": [{"phase": k, **v} for k, v in sorted(by_phase.items())],
         "by_skill": [{"skill_id": k, **v} for k, v in sorted(by_skill.items())],
     }
-    manifest_path = Path(run_root) / MANIFEST_REL
+    manifest_path = run_store.manifest_path(run_root)
     if manifest_path.exists():
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = run_store.load_manifest(run_root)
         manifest["usage_summary"] = summary
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=1) + "\n",
-            encoding="utf-8",
-        )
+        # 2026-08-30 候选②·完整版：此处原为 write_text 直写（非原子，进程被杀会留
+        # 半截 JSON），现统一走 run_store 原子写。
+        run_store.write_manifest(run_root, manifest)
     return summary
 
 
@@ -752,7 +738,7 @@ def record_usage(
         "cache_hit": cache_hit,
         "recorded_at": iso(now()),
     }
-    path = Path(run_root) / USAGE_REL
+    path = run_store.usage_path(run_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     for existing in _usage_records(run_root):
         if existing.get("attempt_id") == attempt_id and existing.get("phase") == phase:
@@ -760,8 +746,7 @@ def record_usage(
                 f"重复 usage 记录：attempt_id={attempt_id} phase={phase} 已存在",
                 code=1,
             )
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(receipt, ensure_ascii=False) + "\n")
+    run_store.append_usage(run_root, receipt)
     event(run_root, "usage_recorded", phase=phase, skill_id=skill_id, attempt_id=attempt_id)
     summary = _refresh_usage_summary(run_root)
     return {"status": "RECORDED", "receipt": receipt, "usage_summary": summary}
@@ -790,17 +775,16 @@ def _rework_locked(run_root: Path, work_unit_id: str, reason: str) -> dict:
             code=1,
         )
     # 防呆：必须已有被 Gate 接受的 attempt（manifest.skills[].attempts 非空）
-    manifest_path = Path(run_root) / MANIFEST_REL
     accepted: list[str] = []
-    if manifest_path.exists():
+    if run_store.manifest_path(run_root).exists():
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = run_store.load_manifest(run_root)
             entry = next(
                 (item for item in manifest.get("skills", []) if item["skill_id"] == unit["skill_id"]),
                 None,
             )
             accepted = list((entry or {}).get("attempts") or [])
-        except (OSError, json.JSONDecodeError):
+        except run_store.RunStoreError:
             accepted = []
     if not accepted:
         raise RuntimeErrorState(

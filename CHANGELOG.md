@@ -5,6 +5,38 @@
 
 ---
 
+## [v3.10.10] — 2026-08-30
+
+> **架构评审候选②·完整版：RunStore 深模块**。v3.10.9 落地了候选②的机械部分（run_layout + subprocess 环回内化），状态文件所有权收拢当时被有意搁置（CHANGELOG「有意未做」节）。本版补齐：新建 `tools/run_store.py` 作为四个状态文件 I/O 的单一所有者，gate/runtime 全部状态 I/O 改为薄委托，并修掉一处**非原子写缺陷**。`check.sh` 真实退出码 0（809 tests OK）。
+
+### ✨ 新增 (Added)
+
+- **`tools/run_store.py`**（约 210 行）：run 状态文件 I/O 的单一所有者。收拢——
+  - 原语：`atomic_write_json` / `atomic_write_text`（tmp+fsync+权限保持，原 gate 实现上移）；
+  - 状态：`load/write_manifest`、`load/write_runtime_state`（`STATE_VERSION` 版本校验单点）；
+  - 账本：`append_event` / `read_events` / `reset_events`、`append_usage` / `read_usage`；
+  - 自有异常 `RunStoreError`（code 1=版本不匹配 / 2=不可读），由 gate（→`GateError`）与 runtime（→`RuntimeErrorState`）翻译。
+- **`tests/test_run_store.py`**（约 250 行 / 20 例）：机器证明三层分工（`run_layout` 放在哪 → `run_store` 怎么读写 → `gate/runtime` 何时写）。含 `assertIs` 单一真源断言（gate 原子写原语与 run_store **同一对象**）、原子写失败保留旧文件、无临时文件残留、版本不匹配 code 1、事件 `event_at` 键序、gate/runtime 错误翻译行为等价。
+- **`tools/run_layout.py`**：补 `LOCK_REL`（锁路径归属布局层，此前散在 runtime:41）并修正三层分工注释。
+
+### 🐛 修复 (Fixed)
+
+- **`tools/full_analysis_runtime.py` `_refresh_usage_summary`（非原子写缺陷）**：刷新 `manifest.usage_summary` 时原为 `write_text` 直写 manifest（进程中途被杀会留下半截 JSON，Gate 后续读入即崩）。改为经 `run_store.write_manifest` 原子写。顺带统一缩进（原 indent=1 vs gate indent=2 → 统一 indent=2）。
+
+### 🔧 优化 (Optimized)
+
+- **gate 状态 I/O 薄委托**：`atomic_write_json` / `atomic_write_text` 改为 run_store 的**直接别名绑定**（同一对象，`assertIs` 可证）；`load_manifest` / `save_manifest` / `append_event` / `manifest_path` 委托 run_store，gate 保留 schema 校验与 `updated_at` 策略；`cmd_init` 三处写（manifest / runtime-state / events 重置）改走 run_store，`state_version` 改用 `run_store.STATE_VERSION` 常量。净减约 40 行重复实现。
+- **runtime 状态 I/O 薄委托**：`atomic_json`（升级获得 fsync）/ `load_state` / `save_state` / `event` / `_usage_records` / usage 追加 / rework 防呆的 manifest 读取全部委托 run_store；`LOCK_REL` 改从 run_layout import（删除本地重定义）。
+- 所有权边界（有意保留，与 v3.10.9「有意未做」呼应）：**何时写、写什么策略**仍归 gate（manifest/events）与 runtime（runtime-state/usage）；跨进程互斥仍由 `runtime_lock` 承担。本版收拢的是"怎么读写"这一层，未改状态机语义。
+
+### 🔍 验证 (Verification)
+
+- `env -u PYTHONPATH bash scripts/check.sh` **真实退出码 0**：`Ran 809 tests ... OK`（较 v3.10.9 的 784 +25，来自 `test_run_store.py`）。
+- 分模块复验：`test_run_store` + `test_run_layout` + `test_full_analysis_runtime` + `test_mk_result_bundle` + `test_full_analysis_gate_v2` 全 OK。
+- 用户侧同步链 `~/.workbuddy/berkshire-skill-sync/sync.py --check` exit 0（18 副本一致；本版未动 `skills/*.md`，codex 侧 no-op）。
+
+---
+
 ## [v3.10.9] — 2026-08-30
 
 > **架构评审落地（`improve-codebase-architecture`，6 个候选全部处理）**：抽出 `tools/substance.py`（实质地板单一事实源）与 `tools/run_layout.py`（run 目录布局单一事实源），删除 4 个零引用孤儿工具（1321 行），为 `equity_dcf` 补 26 个测试并**修掉一个静默归零的估值缺陷**，新增 STOP 确认门机器守卫，修正 4 处文档漂移；另含一项独立的港股代码放行。两条被推翻的评审前提已落成 ADR-0002 / ADR-0003。全程 `check.sh` 真实退出码 0（784 tests OK）。

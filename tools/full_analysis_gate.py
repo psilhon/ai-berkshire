@@ -70,6 +70,9 @@ from run_layout import (  # noqa: E402,F401
     in_attempts,
     in_summary_attempts,
 )
+# 状态文件 I/O 单一所有者（2026-08-30 候选②·完整版）：原子写/事件/账本收进 run_store，
+# gate 只保留"何时写、写什么策略"（schema 校验、updated_at 等）。
+import run_store  # noqa: E402
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 
@@ -96,39 +99,9 @@ def now_iso() -> str:
     return datetime.now(TZ_SHANGHAI).isoformat()
 
 
-def atomic_write_json(path: Path, value: object) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(name, mode)
-        os.replace(name, path)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
-
-
-def atomic_write_text(path: Path, content: str) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(name, mode)
-        os.replace(name, path)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
+# 原子写原语直接别名绑定 run_store（同一对象，机器可证单一真源；保留名兼容既有调用/测试）
+atomic_write_json = run_store.atomic_write_json
+atomic_write_text = run_store.atomic_write_text
 
 
 def atomic_copy(
@@ -249,11 +222,14 @@ def load_registry(path: Path) -> dict:
 
 
 def manifest_path(run_root: Path) -> Path:
-    return Path(run_root) / MANIFEST_REL
+    return run_store.manifest_path(run_root)
 
 
 def load_manifest(run_root: Path) -> dict:
-    manifest = load_json(manifest_path(run_root), "manifest")
+    try:
+        manifest = run_store.load_manifest(run_root)
+    except run_store.RunStoreError as exc:
+        raise GateError(str(exc), exc.code) from exc
     if manifest.get("manifest_schema_version") != "full-analysis-manifest/v2":
         raise GateError("只接受 full-analysis-manifest/v2 manifest", 2)
     return manifest
@@ -261,14 +237,11 @@ def load_manifest(run_root: Path) -> dict:
 
 def save_manifest(run_root: Path, manifest: dict) -> None:
     manifest["run"]["updated_at"] = now_iso()
-    atomic_write_json(manifest_path(run_root), manifest)
+    run_store.write_manifest(run_root, manifest)
 
 
 def append_event(run_root: Path, event: dict) -> None:
-    path = Path(run_root) / EVENTS_REL
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"event_at": now_iso(), **event}, ensure_ascii=False) + "\n")
+    run_store.append_event(run_root, event)
 
 
 def safe_relative(run_root: Path, value: str) -> Path:
@@ -812,7 +785,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "judgments": [], "command_receipts": [], "role_runs": [],
         "capabilities": {}, "events": [], "delivery": {"summary": None},
     }
-    atomic_write_json(root / MANIFEST_REL, manifest)
+    run_store.write_manifest(root, manifest)
     # v3.4.10：normal_target 唯一机器真源 = 2 × 契约单元数 + 1（13 单元 → 27）：
     # preflight（1，计入 used 一次）+ 全员一次成功（13）+ 一轮全员返工余量（13）。
     # 口径与 runtime 的 used 计数严格对齐（used 在 preflight 与每次 job-started 各 +1），
@@ -820,8 +793,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     # stop_dispatch_at（软停非 core）与 hard_max（硬停全部）承担。
     # 历史口径：v3.4.9 前为 2N（26），漏计 preflight 导致与 used 实际计数差 1。
     budget_normal_target = 2 * len(registry["skills"]) + 1
-    atomic_write_json(root / RUNTIME_STATE_REL, {
-        "state_version": "runtime-state/v1",
+    run_store.write_runtime_state(root, {
+        "state_version": run_store.STATE_VERSION,
         "run_id": run_id,
         "budget": {
             "normal_target": budget_normal_target, "stop_dispatch_at": 30, "hard_max": 33,
@@ -840,7 +813,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "depends_on": dep_graph.get(item["skill_id"], []),
         } for item in registry["skills"]],
     })
-    (root / EVENTS_REL).write_text("", encoding="utf-8")
+    run_store.reset_events(root)
     # v3.4.15：本 run 的回执签名密钥。有它 Gate 才会启用执行器档（executor）回执校验；
     # 缺失则降级到 v1 弱绑定，见 _receipt_binding_mode。
     ensure_signing_secret(root)
