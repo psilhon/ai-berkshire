@@ -33,11 +33,17 @@
 ```
 /
 ├── CONTEXT.md            ← 本文件（领域词汇表）
+├── AGENTS.md / SKILLS-GUIDE.md / README.md ← 行为与使用规范
+├── architecture-and-skills-guide.html ← 架构速览（根目录）
 ├── docs/adr/             ← 架构决策记录（见 README）
-├── skills/*.md           ← Claude Code slash command 权威源
-├── codex-skills/*/       ← 生成的 Codex skill 包
-├── tools/*.py            ← 金融校验 / 数据工具
-└── local/reports/        ← 研究产出（本地、不公开）
+├── docs/agents/          ← Agent 相关文档（含 domain.md）
+├── skills/*.md           ← Claude Code slash command 权威源（18 个）
+├── codex-skills/*/       ← 生成的 Codex skill 包（19 个，含 1 个 Codex-only）
+├── workbuddy-skills/     ← WorkBuddy 全量分析适配器镜像（字节一致）
+├── tools/*.py            ← 金融校验 / 数据工具 / 全量分析编排链
+├── scripts/*.py          ← CLI 入口 / 同步 / 校验脚本
+├── tests/                ← 单元测试（check.sh 统一入口）
+└── local/                ← 研究产出（本地、不公开，含 reports/ Company/ IPO/）
 ```
 
 ## 使用词汇表

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Berkshire 架构与 Skill 使用说明 · v3.10.0</title>
+<title>AI Berkshire 架构与 Skill 使用说明 · v3.10.9</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { background:#0f172a; color:#e2e8f0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
@@ -25,11 +25,11 @@
 <header class="space-y-3">
   <div class="flex items-center gap-3 flex-wrap">
     <h1 class="text-2xl font-bold">AI Berkshire · 架构与 Skill 使用说明</h1>
-    <span class="tag bg-emerald-500/20 text-emerald-300 mono">v3.10.0</span>
-    <span class="text-slate-400 text-sm mono">2026-08-10</span>
+    <span class="tag bg-emerald-500/20 text-emerald-300 mono">v3.10.9</span>
+    <span class="text-slate-400 text-sm mono">2026-08-30</span>
   </div>
   <p class="text-slate-300 text-sm leading-relaxed">
-    兼容 Claude Code 与 Codex 的<strong>价值投资研究 Skill 合集</strong>：把巴菲特 / 芒格 / 段永平 / 李录四大师方法论沉淀为 17 个可复用研究 Skill + 金融严谨校验工具。
+    兼容 Claude Code 与 Codex 的<strong>价值投资研究 Skill 合集</strong>：把巴菲特 / 芒格 / 段永平 / 李录四大师方法论沉淀为 18 个可复用研究 Skill + 金融严谨校验工具。
     本文档替代 <code>docs/architecture-and-skills-guide.html</code>（v3.9.1 版，保留为历史档案）。完整 Skill 规范以 <code>SKILLS-GUIDE.md</code> 为唯一真源。
   </p>
 </header>
@@ -41,8 +41,8 @@
     <!-- 源真值层 -->
     <rect x="20" y="20" width="250" height="260" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
     <text x="145" y="44" text-anchor="middle" fill="#10b981" font-size="13" font-weight="bold">skills/*.md（唯一手写源真值）</text>
-    <text x="145" y="70" text-anchor="middle" fill="#cbd5e1" font-size="11">17 个 skill：编排 1 + 业务 13</text>
-    <text x="145" y="88" text-anchor="middle" fill="#cbd5e1" font-size="11">+ 市场 2 + 数据规范 1</text>
+    <text x="145" y="70" text-anchor="middle" fill="#cbd5e1" font-size="11">18 个 skill：编排 1 + 业务 13</text>
+    <text x="145" y="88" text-anchor="middle" fill="#cbd5e1" font-size="11">+ 市场 2 + IPO 1 + 规范 1</text>
     <rect x="45" y="110" width="200" height="26" rx="5" fill="#0f172a" stroke="#334155"/>
     <text x="145" y="127" text-anchor="middle" fill="#94a3b8" font-size="10">契约真源 tools/full_analysis_contract.json</text>
     <rect x="45" y="145" width="200" height="26" rx="5" fill="#0f172a" stroke="#334155"/>
@@ -60,7 +60,7 @@
     <rect x="385" y="45" width="240" height="90" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
     <text x="505" y="70" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="bold">codex-skills/*/SKILL.md</text>
     <text x="505" y="92" text-anchor="middle" fill="#cbd5e1" font-size="10">转换副本（adapter note）</text>
-    <text x="505" y="110" text-anchor="middle" fill="#cbd5e1" font-size="10">17 包 · 测试钉死字节一致性</text>
+    <text x="505" y="110" text-anchor="middle" fill="#cbd5e1" font-size="10">19 包 · 测试钉死字节一致性</text>
     <!-- 镜像 B -->
     <rect x="385" y="150" width="240" height="90" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
     <text x="505" y="175" text-anchor="middle" fill="#38bdf8" font-size="12" font-weight="bold">workbuddy-skills/…/SKILL.md</text>
@@ -144,13 +144,14 @@
 
 <!-- ══ 3. Skill 速查 ══ -->
 <section class="card p-5 space-y-4">
-  <h2 class="text-lg font-bold">3 · 17 个 Skill 速查表</h2>
+  <h2 class="text-lg font-bold">3 · 18 个 Skill 速查表</h2>
 
-  <h3 class="text-sm font-semibold text-emerald-400">数据与规范（2）</h3>
+  <h3 class="text-sm font-semibold text-emerald-400">数据与规范（3）</h3>
   <table>
     <tr><th>Skill</th><th>定位</th><th>输入示例</th><th>量级</th></tr>
     <tr><td class="mono text-emerald-300">ashare-data</td><td>A股数据管线统一入口：行情/财务/估值/年报史/公告/龙虎榜/互动易/研报等 90+ 子命令，零依赖 curl 直连（腾讯+东财+巨潮）</td><td><code>600519</code>、<code>贵州茅台 公告</code></td><td><span class="tag bg-emerald-500/20 text-emerald-300">轻量·高频</span></td></tr>
-    <tr><td class="mono text-emerald-300">financial-data</td><td>财务数据获取与交叉验证规范（美股/港股/A股源优先级、双源误差&gt;1% 须标记），供其他 skill 引用</td><td>被引用为主</td><td><span class="tag bg-slate-500/20 text-slate-300">规范层</span></td></tr>
+    <tr><td class="mono text-emerald-300">financial-data</td><td>财务数据获取与交叉验证规范（美股/港股/A股源优先级、双源误差&gt;1% 须标记），供其他 skill 引用</td><td><code>腾讯,茅台</code>（被 ~10 个 skill 引用为主）</td><td><span class="tag bg-slate-500/20 text-slate-300">规范层</span></td></tr>
+    <tr><td class="mono text-emerald-300">industry-routing</td><td>行业附录路由参考：25 行业的主附录选择、必备 KPI、主估值方法与数据命令映射，按需加载</td><td><code>先读 skills/industry-routing.md</code></td><td><span class="tag bg-slate-500/20 text-slate-300">规范层</span></td></tr>
   </table>
 
   <h3 class="text-sm font-semibold text-sky-400">公司研究（6）</h3>

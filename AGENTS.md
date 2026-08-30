@@ -30,8 +30,10 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
 - For Codex-only hand-written packages under `codex-skills/`, keep them clearly
   marked as Codex-only and do not create a same-named `skills/*.md` file unless
   intentionally adopting the workflow for Claude Code too.
-- Keep tool paths compatible with the documented checkout path:
-  `~/ai-berkshire/tools/...`
+- Tool paths in skill docs reference the documented checkout path
+  `~/ai-berkshire/tools/...`. When your checkout lives elsewhere (e.g.
+  `~/WorkSpace/stock/berkshire`), resolve tools against the actual
+  repository root instead of the literal path.
 - This `AGENTS.md` governs Codex behavior; shared project conventions
   (report naming, research quality, privacy boundaries) live in
   `SKILLS-GUIDE.md`.
