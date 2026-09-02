@@ -54,8 +54,7 @@
 | /management-deep-dive | `{公司名}-management-{YYYYMMDD}.md` | 公司文件夹 |
 | /thesis-tracker | `{公司名}-thesis.md`（长期维护） | 公司文件夹 |
 | /news-pulse | `{公司名}-news-{YYYYMMDD}.md` | 公司文件夹 |
-| /industry-research | `{行业名}-industry-{YYYYMMDD}.md` | 根目录 |
-| /industry-funnel | `{行业名}-funnel-{YYYYMMDD}.md` | 根目录 |
+| /industry-analysis | `{行业名}-industry-analysis-{YYYYMMDD}.md`（全景模式 A / 精选模式 B） | 根目录 |
 | /bottleneck-hunter | master-map / watchlist / daily / `{趋势名}-bottleneck-{YYYYMMDD}.md` | `local/reports/bottleneck-map/` |
 | /a-share-market-sentiment | `A股市场情绪-{YYYYMMDD}.md`（情绪评级 + 仓位分档） | 根目录 |
 | /macro-liquidity | `宏观流动性-{YYYYMMDD}.md`（美元层 + A股层双水位） | 根目录 |
@@ -82,8 +81,7 @@
 | 公司 | `investment-team` | 高重要性公司的多视角研究 | 四个独立角色先研究，再由整合角色仲裁分歧 |
 | 公司 | `management-deep-dive` | 管理层是核心变量时 | 诚信、执行、资本配置和治理纵深分析 |
 | 财报 | `earnings-review` | 最新财报或指定期间精读 | 四大师独立解读后整合，优先使用一手披露 |
-| 行业 | `industry-research` | 产业链全景和竞争格局 | 按环节扫描驱动力、风险、估值与机会 |
-| 行业 | `industry-funnel` | 从全市场筛到少量候选 | 分层筛选并保留淘汰理由 |
+| 行业 | `industry-analysis` | 行业全景 + 精选一体 | 逻辑链验证 → 产业链全景（模式 A）→ 硬指标去劣 → 终选 3 家 + 配置（模式 B） |
 | 行业 | `bottleneck-hunter` | 寻找产业链物理瓶颈 | 判断瓶颈是否真实、可持续和可投资 |
 | 风险 | `news-pulse` | 股价异动快速归因 | 公司、监管、行业和情绪四路侦察 |
 | 论文 | `thesis-tracker` | 买入后持续跟踪 | 记录证伪条件、触发器和论文健康度 |
@@ -98,7 +96,7 @@
 - 不确定公司是否值得深挖：先用 `quality-screen`，再用 `investment-checklist`。
 - 单公司常规深研：用 `investment-research`；关键决策需要独立视角交锋时用 `investment-team`。
 - 财报发布后：用 `earnings-review`；管理层判断仍是主要分歧时补 `management-deep-dive`。
-- 从行业找公司：先 `industry-research` 看结构，再用 `industry-funnel` 收敛候选；物理供给约束明显时补 `bottleneck-hunter`。
+- 从行业找公司：用 `industry-analysis`（模式 A 看结构 → 模式 B 收敛候选，一站式）；物理供给约束明显时补 `bottleneck-hunter`。
 - 股价突然异动：先 `news-pulse` 判断事件性质，再决定是否重跑公司研究或更新 `thesis-tracker`。
 - 判断"市场现在贪婪还是恐慌 / 是否过热"：用 `a-share-market-sentiment`；判断"全球或本土流动性水位"：用 `macro-liquidity`（两者互补：流动性回答"钱够不够"，情绪回答"人有多疯/多怕"）。
 - 打新 / IPO 研究：用 `a-share-prospectus-analysis`，基于一手招股书做独立判断。

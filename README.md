@@ -187,8 +187,7 @@ python3 scripts/full_analysis.py start \
 
 | Skill | 用途 | 适合场景 |
 |-------|------|---------|
-| [`/industry-research`](skills/industry-research.md) | 产业链全景扫描 | 研究一个行业的全部投资机会（按产业链环节切片） |
-| [`/industry-funnel`](skills/industry-funnel.md) | 行业漏斗筛选 | 全市场 → 粗筛 ≤10 家 → 终选 3 家深度分析 |
+| [`/industry-analysis`](skills/industry-analysis.md) | 行业全景 + 精选一体 | 逻辑链 → 产业链全景 → 硬指标去劣 → 终选 3 家（可只做全景） |
 | [`/quality-screen`](skills/quality-screen.md) | 去劣筛选（7条硬指标） | 快速排除非一流公司，支持个股/行业/指数/主题批量筛 |
 | [`/bottleneck-hunter`](skills/bottleneck-hunter.md) | 供应链瓶颈猎手 | 从超级趋势出发，寻找产业链物理瓶颈和套利机会 |
 | [`/investment-checklist`](skills/investment-checklist.md) | 巴菲特买入前 Checklist | 六关快速筛选，10分钟决定是否值得深入 |
@@ -330,8 +329,8 @@ cd ai-berkshire
 /earnings-review 腾讯 2025Q4
 
 # 行业筛选
-/industry-research 核电
-/industry-funnel AI算力
+/industry-analysis 核电          # 全景模式（看懂格局）
+/industry-analysis AI算力        # 精选模式（收敛到 3 家）
 /quality-screen 恒生指数成分股
 /bottleneck-hunter AI基础设施
 /investment-checklist 茅台, 英伟达, 苹果
@@ -353,7 +352,7 @@ cd ai-berkshire
 ```text
 使用 investment-research 研究腾讯
 使用 earnings-review 分析 PDD 2025年报
-使用 industry-funnel 筛选 AI算力
+使用 industry-analysis 精选 AI算力
 使用 bottleneck-hunter 扫描 AI基础设施瓶颈
 使用 full-company-analysis-workbuddy 完整研究格力电器
 ```
@@ -368,7 +367,7 @@ cd ai-berkshire
 
 ## 各 Skill 详细介绍
 
-各 Skill 的完整使用说明（触发场景、核心工作流、调用示例、适用/不适用边界）见 **`SKILLS-GUIDE.md`**——18 个 canonical（16 业务 + 1 编排 + 1 路由参考 `industry-routing`）全登记，含选择建议路由表。此处仅保留一页速览：
+各 Skill 的完整使用说明（触发场景、核心工作流、调用示例、适用/不适用边界）见 **`SKILLS-GUIDE.md`**——17 个 canonical（15 业务 + 1 编排 + 1 路由参考 `industry-routing`）全登记，含选择建议路由表。此处仅保留一页速览：
 
 | Skill | 一句话 | 详见 |
 |---|---|---|
@@ -380,8 +379,7 @@ cd ai-berkshire
 | `/investment-team` | 高重要性公司 4 Agent 并行多视角 | SKILLS-GUIDE |
 | `/management-deep-dive` | 管理层诚信/执行/资本配置纵深 | SKILLS-GUIDE |
 | `/earnings-review` | 最新财报四大师精读 | SKILLS-GUIDE |
-| `/industry-research` | 产业链全景与竞争格局 | SKILLS-GUIDE |
-| `/industry-funnel` | 全市场分层筛选到少量候选 | SKILLS-GUIDE |
+| `/industry-analysis` | 行业全景（逻辑链→产业链全景）+ 精选（硬指标去劣→终选 3 家），模式 A/B 一体 | SKILLS-GUIDE |
 | `/bottleneck-hunter` | 产业链物理瓶颈挖掘 | SKILLS-GUIDE |
 | `/news-pulse` | 股价异动四路快速归因 | SKILLS-GUIDE |
 | `/thesis-tracker` | 买入后论文持续跟踪 | SKILLS-GUIDE |

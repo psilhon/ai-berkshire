@@ -3265,7 +3265,7 @@ def cmd_ratios(code: str):
 def cmd_peers(code: str, level: str = "l3"):
     """行业可比公司池——Tushare index_member_all（申万分类）。
 
-    反查标的申万一/二/三级行业，列出全部成员股 = industry-funnel 候选池自动化。
+    反查标的申万一/二/三级行业，列出全部成员股 = industry-analysis 候选池自动化。
     """
     client = _get_tushare_client()
     if not client:
@@ -3314,7 +3314,7 @@ def cmd_peers(code: str, level: str = "l3"):
             mcode = str(m.get("ts_code", "-"))
             mark = "  ← 本标的" if mcode == ts_code else ""
             print(f"  {i:>2d}. {mcode:<12s} {str(m.get('name', '-'))}{mark}")
-        print("\n  注：此为 industry-funnel 候选池；可对每家跑 quote/valuation/ratios 逐层去劣。")
+        print("\n  注：此为 industry-analysis 候选池；可对每家跑 quote/valuation/ratios 逐层去劣。")
 
     verification = _safe_verification("peers", code, r1["data"])
     _print_verification(verification)

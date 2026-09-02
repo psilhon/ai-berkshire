@@ -286,7 +286,7 @@
       ],
       "category": "03-industry-opportunity",
       "stage_dir": "03-industry-opportunity",
-      "spec_source": "skills/industry-research.md",
+      "spec_source": "skills/industry-analysis.md",
       "core": true,
       "skill_type": "analysis",
       "applicability": {
@@ -302,7 +302,7 @@
         "required_roles": []
       },
       "min_substantive_sections": 2,
-      "report_guidance": "遵循 skills/industry-research.md 方法论的自然章节结构撰写，覆盖核心结论、关键分析、限制与缺口、仅供学习研究声明。不强制固定标题。",
+      "report_guidance": "本单元交付行业全景章。遵循 skills/industry-analysis.md 方法论（模式 A：第一至五步 + 第七步行业收尾）撰写，覆盖逻辑链验证结论、产业链全景与卡脖子环节、全球扫描与分层、各环节头部精细分析、行业级收尾。漏斗终选与组合配置仅概述或留白，不重复单元 10 报告。覆盖核心结论、关键分析、限制与缺口、仅供学习研究声明。不强制固定标题。",
       "substance": {
         "require_as_of": true,
         "require_sources": true,
@@ -317,7 +317,7 @@
       ],
       "category": "03-industry-opportunity",
       "stage_dir": "03-industry-opportunity",
-      "spec_source": "skills/industry-funnel.md",
+      "spec_source": "skills/industry-analysis.md",
       "core": true,
       "skill_type": "analysis",
       "applicability": {
@@ -333,7 +333,7 @@
         "required_roles": []
       },
       "min_substantive_sections": 2,
-      "report_guidance": "遵循 skills/industry-funnel.md 方法论的自然章节结构撰写，覆盖核心结论、关键分析、限制与缺口、仅供学习研究声明。不强制固定标题。",
+      "report_guidance": "本单元交付行业精选/漏斗章。在单元 09 全景基础上，按 skills/industry-analysis.md 方法论（模式 B：第四至七步）执行：5 条硬指标去劣与淘汰留痕、终选候选深析（800-1200 字/家，含管理层专项）、组合互补性终选 3 家、核心/卫星/期权配置与买卖信号、主题仓位上限。覆盖核心结论、关键分析、限制与缺口、仅供学习研究声明。不强制固定标题。",
       "substance": {
         "require_as_of": true,
         "require_sources": true,

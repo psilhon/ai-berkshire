@@ -58,7 +58,7 @@ This skill is generated from `skills/ashare-data.md` so Claude Code and Codex us
 | `audit <代码>` | 财务审计意见：是否标准无保留 + 事务所 + 费用 | — | Tushare `fina_audit`（**治理信号**，需 TUSHARE_TOKEN） |
 | `holder-num <代码>` | 股东户数趋势（筹码集中度） | — | Tushare `stk_holdernumber`（需 TUSHARE_TOKEN） |
 | `ratios <代码>` | 财务比率全景 ROE/扣非ROE/ROA/ROIC/毛利/净利/流动比/速动比/OCF·营收 | — | Tushare `fina_indicator`（**quality-screen 独立比率集**，需 TUSHARE_TOKEN） |
-| `peers <代码>` | 行业可比公司池：申万一/二/三级成员股（industry-funnel 候选池） | `--level l1/l2/l3`（默认l3） | Tushare `index_member_all`（**候选池自动化**，需 TUSHARE_TOKEN） |
+| `peers <代码>` | 行业可比公司池：申万一/二/三级成员股（industry-analysis 候选池） | `--level l1/l2/l3`（默认l3） | Tushare `index_member_all`（**候选池自动化**，需 TUSHARE_TOKEN） |
 | `north-hold <代码>` | 北向持股趋势（占比/外资情绪） | — | Tushare `hk_hold`（沪深股通，需 TUSHARE_TOKEN） |
 | `index-val [指数]` | 大盘估值分位：PE/PB 历史分位（市场择时锚） | 指数别名 hs300/zz500/sse/cyb…（默认hs300） | Tushare `index_dailybasic`（需 TUSHARE_TOKEN） |
 | `limit-pool` | 涨停生态池：涨停/炸板/跌停/昨涨停（市场情绪） | `--date YYYYMMDD` | 东方财富 push2ex（零鉴权） |

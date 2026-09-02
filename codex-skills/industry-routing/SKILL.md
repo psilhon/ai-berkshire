@@ -1,6 +1,6 @@
 ---
 name: industry-routing
-description: 行业附录路由（按需加载）：25 个行业的主附录选择、必备 KPI、主估值方法与 berkshire A股数据命令映射。消费方 skill（investment-research / earnings-review / industry-research / industry-funnel）在选定行业附录前读取本文件，避免机械按 GICS 标签选行业。
+description: 行业附录路由（按需加载）：25 个行业的主附录选择、必备 KPI、主估值方法与 berkshire A股数据命令映射。消费方 skill（investment-research / earnings-review / industry-analysis）在选定行业附录前读取本文件，避免机械按 GICS 标签选行业。
 owner: psilhon
 category: 数据与思维工具
 maturity: stable
@@ -19,7 +19,7 @@ This skill is generated from `skills/industry-routing.md` so Claude Code and Cod
 
 # 行业附录路由（Industry Routing，按需加载）
 
-> 来源移植：本文件路由矩阵与选择协议移植自外部项目 `rollingSirius/equity-research-skill` 的 `references/industry-routing.md`（MIT），经 berkshire 纪律改写——补充 **A股数据命令映射列**（对应 `ashare_data.py` / Tushare），并保留预测登记与复盘字段。它是行业分类的**唯一人工可读入口**，不替代 `industry-research` / `industry-funnel` 的行业级扫描，只在单公司研究时决定「读哪个附录、抓哪些 KPI」。
+> 来源移植：本文件路由矩阵与选择协议移植自外部项目 `rollingSirius/equity-research-skill` 的 `references/industry-routing.md`（MIT），经 berkshire 纪律改写——补充 **A股数据命令映射列**（对应 `ashare_data.py` / Tushare），并保留预测登记与复盘字段。它是行业分类的**唯一人工可读入口**，不替代 `industry-analysis` 的行业级扫描，只在单公司研究时决定「读哪个附录、抓哪些 KPI」。
 
 ## 1. 选择协议
 
@@ -110,7 +110,7 @@ This skill is generated from `skills/industry-routing.md` so Claude Code and Cod
 
 - `investment-research`：第一步行业分类、第七步估值方法选择前，先读本文件选定主/次附录与必备 KPI。
 - `earnings-review`：阶段一四大师分析、阶段二行业对比前，按本文件锁定行业 KPI 与对比口径。
-- `industry-research` / `industry-funnel`：行业级扫描后落地到单公司时，用本文件决定单公司估值方法与 KPI。
+- `industry-analysis`：行业级扫描后落地到单公司时，用本文件决定单公司估值方法与 KPI。
 - 只读按需加载，不强制全文载入；报告头部声明 `行业附录: <slug>[, <slug>]` 供检查器复核。
 
 ## 6. 边界与兜底（如果 X → Y）

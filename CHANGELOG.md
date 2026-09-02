@@ -5,6 +5,39 @@
 
 ---
 
+## [v3.10.11] — 2026-09-02
+
+> **行业投研双技能物理合并（全链路）**：应"物理合并、非简单堆砌"决策，评估 `industry-research`（产业链全景前半段）与 `industry-funnel`（精选 3 家后半段）为同一投研流程前后两半后，合并为**单源 `skills/industry-analysis.md`**——单主流程 + 双模式（模式 A 全景 = 原 research 第 1-5 步 + 行业收尾；模式 B 精选 = 原 funnel 第 4-7 步），共享模块全部去重。契约 09/10 单元 `spec_source` 同指新文件、`report_guidance` 按模式分工；**`skill_id` / `formal_path` / `depends_on` / 波次（W3b·W4a）不变**，下游按单元 id 或产物文件名匹配的层（语义评审 scope、deep-summary 熔炼）零改动。canonical 18→17。`check.sh` 真实退出码 0（809 tests OK）。
+
+### ✨ 新增 (Added)
+
+- **`skills/industry-analysis.md`**（单源，约 380 行）：运行模式表（A 全景 / B 精选，开始前先定）、7 步主流程（①逻辑链验证 → ②产业链全景 → ③全球上市公司扫描 → ④五条硬指标去劣 → ⑤分层四大师分析 → ⑥互补性终选 3 家与组合配置 → ⑦行业级收尾）、四大师四策略维度 5.1-5.6、5 条量化硬指标与淘汰留痕、6 层 STOP 确认门、偏见自觉 7 项表、Tushare 取数（`peers` / `industry-pe` / `sector-peers` / `sector-flow`）、依赖清单（`report_audit.py`）、失败分支与红线。frontmatter：`owner: psilhon` / `category: 行业与筛选` / `maturity: stable`。
+- **`codex-skills/industry-analysis/SKILL.md`**：sync-codex-skills 生成（17 个 + WorkBuddy adapter）。
+
+### 🔧 变更 (Changed)
+
+- **契约 `tools/full_analysis_contract.json`**：单元 09/10 `spec_source` → `skills/industry-analysis.md`；`report_guidance` 分工——09 = 模式 A（第 1-5 步 + 行业收尾，漏斗仅概述不重复 10）；10 = 模式 B（第 4-7 步：硬指标去劣留痕、候选深析 800-1200 字/家含管理层专项、终选 3 家与配置）。
+- **引用面**：README（"18 canonical（16 业务）" → **17 canonical（15 业务 + 1 编排 + 1 路由）**、速览表两行合一、示例改用 `/industry-analysis` 双模式）、SKILLS-GUIDE（命名表 + 目录表 + 选择建议）、`skills/industry-routing.md`（consumers 改指）、`skills/ashare-data.md` L51（peers = industry-analysis 候选池）、`tools/ashare_data.py` docstring ×2、根目录 `architecture-and-skills-guide.html`（速查表标题 18→17、行业组 3→2 行；SVG 波形图 W2/W3 保留契约单元标签）。
+- **WorkBuddy 用户侧**：`berkshire-skill-sync/sync.py` 重生成 `industry-analysis` 副本 + 手动删两孤儿目录；`SKILL-REGISTRY.md` v16（投资研究 25→24）；`deep-company-series` / `portfolio-review` 的 `/industry-research` 路由改指 `/industry-analysis`。
+
+### 🗑️ 移除 (Removed)
+
+- `skills/industry-research.md` / `skills/industry-funnel.md`（`git rm`）；`codex-skills/industry-research|industry-funnel/` 与 `~/.workbuddy/skills/industry-research|industry-funnel/` 孤儿目录手动删除（两个 sync 脚本均无孤儿清理责任）。
+
+### 📐 有意保留（契约单元不变）
+
+- `tools/full_analysis_review.py` `DEFAULT_REVIEW_SCOPE` 的 `"industry-research"`：scope 按契约单元 `skill_id` 匹配产物，改名反失配。
+- `deep-summary` 及 distillation-guide 引用的 `09-industry-research.md` / `10-industry-funnel.md`：运行产物 formal_path 未变，零改写天然兼容。
+- `docs/architecture-and-skills-guide.html`：v3.10.0 起被根目录版替代的旧副本，不维护。
+- CHANGELOG 既往条目、docs/superpowers·archive 历史文档不改写。
+
+### 🔍 验证 (Verification)
+
+- `env -u PYTHONPATH bash scripts/check.sh` **真实退出码 0**：`Ran 809 tests ... OK`（37.5s）；Skill frontmatter 17 个全合规；🔴 STOP 确认门 41 处骨架完整；codex 同步 `--check` exit 0；lean-v1 契约注册表校验通过。
+- 用户侧：`sync.py` 重生成后 `skill_usage_stats.py --verify` ✅（97 个磁盘 skill registry ↔ 磁盘双向一致）。
+
+---
+
 ## [v3.10.10] — 2026-08-30
 
 > **架构评审候选②·完整版：RunStore 深模块**。v3.10.9 落地了候选②的机械部分（run_layout + subprocess 环回内化），状态文件所有权收拢当时被有意搁置（CHANGELOG「有意未做」节）。本版补齐：新建 `tools/run_store.py` 作为四个状态文件 I/O 的单一所有者，gate/runtime 全部状态 I/O 改为薄委托，并修掉一处**非原子写缺陷**。`check.sh` 真实退出码 0（809 tests OK）。
