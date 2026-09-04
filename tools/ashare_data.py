@@ -288,6 +288,14 @@ def _fetch_52w(code: str) -> tuple:
     return "-", "-"
 
 
+def _num(v):
+    """转 float；不可转换返回 None（各命令表格打印共用，原为 7 份逐字相同的内部函数）。"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _fmt_yi(value) -> str:
     if value is None or value == "-" or value == "":
         return "-"
@@ -2770,12 +2778,6 @@ def cmd_mainbz(code: str):
         )
         return r["data"] if r.get("ok") else []
 
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-
     prod = _fetch("P")
     region = _fetch("D")
     all_rows = prod + region
@@ -2875,12 +2877,6 @@ def cmd_pledge(code: str):
     if not client:
         return False
 
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-
     ts_code = normalize_code(code).secu_code
     result = client.query(
         "pledge_stat",
@@ -2934,12 +2930,6 @@ def cmd_express(code: str):
     client = _get_tushare_client()
     if not client:
         return False
-
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -3001,12 +2991,6 @@ def cmd_kline(code: str, days: int = 120):
     client = _get_tushare_client()
     if not client:
         return False
-
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
 
     ts_code = normalize_code(code).secu_code
     start = (datetime.now() - timedelta(days=int(days * 1.7))).strftime("%Y%m%d")
@@ -3154,12 +3138,6 @@ def cmd_holder_num(code: str):
     client = _get_tushare_client()
     if not client:
         return False
-
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -3330,12 +3308,6 @@ def cmd_north_hold(code: str):
     if not client:
         return False
 
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-
     ts_code = normalize_code(code).secu_code
     start = (datetime.now() - timedelta(days=400)).strftime("%Y%m%d")
     result = client.query(
@@ -3415,12 +3387,6 @@ def cmd_index_val(index: str = "hs300"):
 
     rows = sorted(result["data"], key=lambda r: str(r.get("trade_date") or ""))
     latest = rows[-1]
-
-    def _num(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
 
     print("=" * 60)
     print(f"大盘估值分位: {idx_name}（{idx_code}）")
