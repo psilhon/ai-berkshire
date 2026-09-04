@@ -1397,13 +1397,6 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     manifest["run"]["status"] = "APPROVED"
     save_manifest(root, manifest)
     append_event(root, {"type": "run_finalized", "status": manifest["run"]["status"]})
-    # Task 5：APPROVED 后写入跨运行产物缓存（非阻断——失败不影响准出）
-    try:
-        import full_analysis_cache as _cache
-        _stored = _cache.store_approved(root, manifest, registry)
-        append_event(root, {"type": "cache_stored", "count": _stored.get("stored", 0)})
-    except Exception as _exc:  # pragma: no cover - cache 异常不阻断 APPROVED
-        append_event(root, {"type": "cache_store_unavailable", "reason": str(_exc)})
     # Task 6：成本门槛告警（非阻断，显式输出 COST_BUDGET_EXCEEDED 项）
     cost_budget = _cost_budget_check(root, manifest)
     if cost_budget["exceeded"]:

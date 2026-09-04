@@ -16,7 +16,6 @@ import full_analysis_audit as audit_tool  # noqa: E402
 import full_analysis_doctor as doctor  # noqa: E402
 import full_analysis_review as review  # noqa: E402
 import full_analysis_benchmark as benchmark  # noqa: E402
-import full_analysis_cache as cache  # noqa: E402
 # run 目录布局（2026-08-30 架构评审候选②）：attempts 路径不再本地硬编码
 from run_layout import ATTEMPTS_REL  # noqa: E402
 
@@ -142,11 +141,6 @@ def parser() -> argparse.ArgumentParser:
     bench = sub.add_parser("benchmark", help="重复运行稳定性基准（对比 2+ 个 run）")
     bench.add_argument("--run-roots", required=True, nargs="+")
     bench.add_argument("--output-dir", default=None)
-    cl = sub.add_parser("cache-lookup", help=argparse.SUPPRESS)
-    cl.add_argument("--run-root", required=True); cl.add_argument("--skill-id", required=True)
-    cl.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
-    cs = sub.add_parser("cache-store", help=argparse.SUPPRESS)
-    cs.add_argument("--run-root", required=True); cs.add_argument("--registry", default=gate.DEFAULT_REGISTRY)
     return p
 
 
@@ -206,14 +200,6 @@ def main(argv=None) -> int:
         if args.command == "register-summary": return gate.cmd_register_summary(args)
         if args.command == "render-html": return gate.cmd_render_html(args)
         if args.command == "finalize": return gate.cmd_finalize(args)
-        if args.command == "cache-lookup":
-            manifest = gate.load_manifest(root)
-            emit(cache.lookup(root, manifest, gate.load_registry(Path(args.registry)), args.skill_id))
-            return 0
-        if args.command == "cache-store":
-            manifest = gate.load_manifest(root)
-            emit(cache.store_approved(root, manifest, gate.load_registry(Path(args.registry))))
-            return 0
         if args.command == "review":
             if args.review_command == "prepare":
                 return review.cmd_prepare(args)
