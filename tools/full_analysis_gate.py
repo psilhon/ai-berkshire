@@ -45,7 +45,6 @@ from substance import (  # noqa: E402,F401
     NA_PREDICATE_FIELDS,
     NA_REQUIRED_HEADINGS,
     NAMED_DISSENT_DEFAULT,
-    NON_SUBSTANTIVE_SECTION_IDS,
     PWL_ALLOWLIST,
     RESULT_STATUSES,
     ROLE_NAME_MAP,
@@ -63,6 +62,7 @@ RESULT_SCHEMA_PATH = TOOLS_DIR / "full_analysis_result_schema.json"
 # gate 保留 re-export 以兼容既有 import。
 from run_layout import (  # noqa: E402,F401
     ATTEMPTS_REL,
+    EVIDENCE_REL,
     EVENTS_REL,
     MANIFEST_REL,
     RUNTIME_STATE_REL,
@@ -73,6 +73,16 @@ from run_layout import (  # noqa: E402,F401
 # 状态文件 I/O 单一所有者（2026-08-30 候选②·完整版）：原子写/事件/账本收进 run_store，
 # gate 只保留"何时写、写什么策略"（schema 校验、updated_at 等）。
 import run_store  # noqa: E402
+# Bundle 准入判定单一真源（2026-08-30 候选③）：占位水印扫描与 NA 证明规则
+# 收进 bundle_checks（纯判定），gate 与 mk_result_bundle 共用，各包装呈现。
+import bundle_checks  # noqa: E402
+# 派生展示件（2026-08-30 候选⑩）：静态 import 取代 importlib 文件加载——
+# 单次导入无重复 exec 开销；两模块均无反向依赖（零循环），import 副作用为零。
+import full_analysis_html  # noqa: E402
+_SCRIPTS_DIR = str(TOOLS_DIR.parent / "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+import build_company_index  # noqa: E402
 TZ_SHANGHAI = timezone(timedelta(hours=8))
 
 
@@ -617,53 +627,29 @@ def _precheck_placeholder_evidence(bundle: dict) -> list:
     """拒收 mk_result_bundle「结构地板」生成的 PLACEHOLDER 水印证据（v3.4.10）。
 
     返回错误消息列表（空=通过），由 validate_result_bundle 聚合抛出。
-    水印是确定性字符串（PLACEHOLDER 前缀），只可能来自生成器地板，误报为零。
-    背景：生成器为让 bundle 过结构校验会补最低条数的占位 fact/source（此前还
-    伪装成「巨潮资讯网」等权威来源 + confidence=high）；若不拦截，未做真实调研
-    的 bundle 也能把占位证据写进正式事实/来源账本，污染生产可信度。
+    扫描口径委托 bundle_checks.placeholder_offenders（与 mk 生成侧同一真源）；
+    本函数只负责把 offender 包装成逐类建议消息。
     """
+    _ADVICE = {
+        "fact": "（生成器结构地板，非真实调研）；请用真实数值替换，"
+                f"并通过 --extra-evidence 提供真实 fact_updates。",
+        "source": "（生成器结构地板，非真实检索）；请用真实检索来源替换，"
+                  f"并通过 --extra-sources 提供真实 source_records。",
+        "calculation": "（非真实验算）；请通过 --extra-calculations 提供真实 calculation_requests。",
+        "judgment": "（非真实判断）；请通过 --extra-judgments 提供真实 judgments。",
+        "receipt": "（命令未实际执行）；请通过 --extra-receipts 提供真实回执，"
+                   "或如实标注 UNAVAILABLE/FAIL + reason。",
+    }
+    _LABEL = {"fact": "fact {id} 的 value 为 PLACEHOLDER 水印",
+              "source": "source {id} 为 PLACEHOLDER 占位来源",
+              "calculation": "calculation {id} 为生成器结构地板",
+              "judgment": "judgment {id} 为生成器结构地板",
+              "receipt": "command_receipt {id} 为生成器结构地板"}
     errors = []
-    for fact in bundle.get("fact_updates") or []:
-        if "PLACEHOLDER" in str(fact.get("value", "")):
-            errors.append(
-                f"  - [占位证据] fact {fact.get('fact_id')} 的 value 为 PLACEHOLDER 水印"
-                f"（生成器结构地板，非真实调研）；请用真实数值替换，"
-                f"并通过 --extra-evidence 提供真实 fact_updates。"
-            )
-    for src in bundle.get("source_records") or []:
-        if "PLACEHOLDER" in str(src.get("publisher", "")) \
-                or "PLACEHOLDER" in str(src.get("title", "")):
-            errors.append(
-                f"  - [占位证据] source {src.get('source_id')} 为 PLACEHOLDER 占位来源"
-                f"（生成器结构地板，非真实检索）；请用真实检索来源替换，"
-                f"并通过 --extra-sources 提供真实 source_records。"
-            )
-    # v3.4.13：占位预检此前只覆盖 fact/source，导致生成器自动签发的 calculation/
-    # judgment/command_receipt 完全不受检——ashare-data 一个单元就能凭空产出 51 条
-    # status=PASS 的"命令已成功执行"回执并被接受为 DONE（未跑任何命令）。
-    # 证据账本的每一类都必须受同一水印口径约束，否则"自动自证"路径依然通畅。
-    for calc in bundle.get("calculation_requests") or []:
-        if "PLACEHOLDER" in str(calc.get("calculation_id", "")):
-            errors.append(
-                f"  - [占位证据] calculation {calc.get('calculation_id')} 为生成器结构地板"
-                f"（非真实验算）；请通过 --extra-calculations 提供真实 calculation_requests。"
-            )
-    for judgment in bundle.get("judgments") or []:
-        blob = f"{judgment.get('judgment_id', '')}{judgment.get('conclusion', '')}"
-        if "PLACEHOLDER" in blob:
-            errors.append(
-                f"  - [占位证据] judgment {judgment.get('judgment_id')} 为生成器结构地板"
-                f"（非真实判断）；请通过 --extra-judgments 提供真实 judgments。"
-            )
-    for rcpt in bundle.get("command_receipts") or []:
-        blob = (f"{rcpt.get('receipt_id', '')}{rcpt.get('reason', '')}"
-                f"{rcpt.get('detail', '')}")
-        if "PLACEHOLDER" in blob:
-            errors.append(
-                f"  - [占位证据] command_receipt {rcpt.get('receipt_id')} 为生成器结构地板"
-                f"（命令未实际执行）；请通过 --extra-receipts 提供真实回执，"
-                f"或如实标注 UNAVAILABLE/FAIL + reason。"
-            )
+    for kind, entry_id in bundle_checks.placeholder_offenders(bundle):
+        errors.append(
+            f"  - [占位证据] {_LABEL[kind].format(id=entry_id)}{_ADVICE[kind]}"
+        )
     return errors
 
 
@@ -688,21 +674,12 @@ def _validate_not_applicable(bundle: dict, skill: dict, manifest: dict) -> None:
     )
     if not fact:
         raise GateError("not_applicable.fact_id 必须引用本次提交的判定事实")
-    if expected_predicate == "min_independent_contexts_2":
-        valid_value = (
-            fact.get("field") == "independent_context_count"
-            and isinstance(fact.get("value"), int)
-            and not isinstance(fact.get("value"), bool)
-            and fact["value"] < 2
-        )
-    else:
-        valid_value = (
-            fact.get("field") == NA_PREDICATE_FIELDS.get(expected_predicate)
-            and fact.get("value") is False
-        )
-    if not valid_value:
+    # 谓词证伪规则委托 bundle_checks（与 mk 生成侧同一真源，特例只写一遍）
+    violation = bundle_checks.na_predicate_violation(expected_predicate, fact)
+    if violation:
         raise GateError(
-            f"not_applicable 判定事实不能证明谓词 {expected_predicate!r} 为假")
+            f"not_applicable 判定事实不能证明谓词 {expected_predicate!r} 为假"
+            f"（期望 {violation}，实际 field={fact.get('field')!r} value={fact.get('value')!r}）")
 
     source_ids = fact.get("source_ids") or []
     known_source_ids = {
@@ -738,13 +715,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     # 2026-08-30：放行港股 .HK（5 位代码，如 00700.HK）；A 股仍限 6 位。
     if not re.match(r"^[0-9A-Z]{6}\.(SH|SZ|BJ)$|^[0-9A-Z]{5}\.HK$", args.code):
         raise GateError(f"证券代码格式非法: {args.code}", 2)
-    # v3.3.10：init 时即构建依赖图并落盘，供编排层波次调度与 runtime 依赖门禁使用。
+    # v3.3.10：init 时即构建依赖图并落盘，供 runtime 依赖门禁（next_work 按 depends_on）使用。
     # 契约环在 init 前即拒绝（runtime/contract 校验器同源语义，此处刻意不 import 校验器）。
     dep_graph = runtime_mod.build_dependency_graph(registry["skills"])
     dep_cycle = runtime_mod.detect_dependency_cycle(dep_graph)
     if dep_cycle:
         raise GateError(f"contract depends_on 存在依赖环: {' -> '.join(dep_cycle)}", 2)
-    dep_waves = runtime_mod.compute_dependency_waves(dep_graph)
     # v3.4.4：start 版本机器门禁（E1 机器化）——不确定或过期的 checkout 不得启动新 run。
     # 仅当显式 --allow-stale 才放行（人工确认目标版本后覆盖）。
     if not getattr(args, "allow_stale", False):
@@ -804,7 +780,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         "authorization": registry["authorization_profile"],
         "run_started_at": now_iso(),
         "dependency_graph": dep_graph,
-        "dependency_waves": dep_waves,
         "work_units": [{
             "work_unit_id": f"wu-{item['skill_id']}", "skill_id": item["skill_id"],
             "core": item["core"],
@@ -818,7 +793,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     # 缺失则降级到 v1 弱绑定，见 _receipt_binding_mode。
     ensure_signing_secret(root)
     for name in ("facts.json", "sources.json", "calculations.json", "artifacts.json"):
-        atomic_write_json(root / "evidence" / name, [])
+        atomic_write_json(root / EVIDENCE_REL / name, [])
     append_event(root, {"type": "run_initialized", "run_id": run_id})
     print(json.dumps({"run_root": str(root), "run_id": run_id}, ensure_ascii=False))
     return 0
@@ -1433,8 +1408,6 @@ def _generate_summary_html(root: Path, manifest: dict) -> bool:
     保证两次输出逐字节一致、互不冲突。返回 True 表示已写出 HTML。
     """
     try:
-        import importlib.util
-
         delivery = manifest.get("delivery") or {}
         summary = delivery.get("summary") or {}
         md_rel = summary.get("path", "")
@@ -1445,18 +1418,14 @@ def _generate_summary_html(root: Path, manifest: dict) -> bool:
         if not md_path.is_file():
             print(f"[html-gen] ⚠  summary 文件不存在: {md_path}", file=sys.stderr)
             return False
-        renderer_path = TOOLS_DIR / "full_analysis_html.py"
-        if not renderer_path.is_file():
-            print(f"[html-gen] ⚠  渲染器不存在: {renderer_path}，跳过 HTML 生成", file=sys.stderr)
+        if not (TOOLS_DIR / "full_analysis_html.py").is_file():
+            print("[html-gen] ⚠  渲染器 full_analysis_html.py 不存在，跳过 HTML 生成", file=sys.stderr)
             return False
-        spec = importlib.util.spec_from_file_location("full_analysis_html", renderer_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
 
         company_info = manifest.get("company") or {}
         run_info = manifest.get("run") or {}
         md_text = md_path.read_text(encoding="utf-8")
-        html = module.build_summary_page(
+        html = full_analysis_html.build_summary_page(
             md_text,
             company=company_info.get("name", ""),
             code=company_info.get("code", ""),
@@ -1491,19 +1460,14 @@ def _rebuild_company_index(root: Path) -> bool:
     index.html，可安全反复重建。索引是派生展示件，绝不影响 APPROVED 状态。
     """
     try:
-        import importlib.util
-
         scripts_dir = TOOLS_DIR.parent / "scripts"
         builder_path = scripts_dir / "build_company_index.py"
         if not builder_path.is_file():
             print(f"[index-gen] ⚠  索引生成器不存在: {builder_path}，跳过索引重建", file=sys.stderr)
             return False
         company_base = _company_base_from_run_root(root)
-        spec = importlib.util.spec_from_file_location("build_company_index", builder_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
 
-        result = module.rebuild_index(company_base)
+        result = build_company_index.rebuild_index(company_base)
         for warning in result["warnings"]:
             print(f"[index-gen] ⚠  manifest 读取失败: {warning}", file=sys.stderr)
         print(
@@ -1655,17 +1619,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Gate 意图命令 → 处理函数的**唯一** dispatch 表（2026-08-30 候选⑩合一）：
+# gate.main 与 scripts/full_analysis.py 共用此表，此前两份 if/elif/dict 各自为政。
+GATE_COMMANDS = {
+    "init": cmd_init,
+    "ingest-result": cmd_ingest,
+    "register-summary": cmd_register_summary,
+    "finalize": cmd_finalize,
+    "render-html": cmd_render_html,
+    "self-check": cmd_self_check,
+}
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return {
-            "init": cmd_init,
-            "ingest-result": cmd_ingest,
-            "register-summary": cmd_register_summary,
-            "finalize": cmd_finalize,
-            "render-html": cmd_render_html,
-            "self-check": cmd_self_check,
-        }[args.command](args)
+        return GATE_COMMANDS[args.command](args)
     except GateError as exc:
         print(f"❌ {exc}")
         return exc.code
@@ -1673,147 +1642,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-# ---------------------------------------------------------------- correction bundle
-CORRECTION_SCHEMA = "correction-bundle/v1"
-CORRECTION_KINDS = ("calculation_requests", "command_receipts", "fact_updates", "judgments")
-_CORRECTION_ID_KEYS = {
-    "calculation_requests": "calculation_id",
-    "command_receipts": "receipt_id",
-    "fact_updates": "fact_id",
-    "judgments": "judgment_id",
-}
-_CORRECTION_TARGETS = {
-    "calculation_requests": "calculations",
-    "command_receipts": "command_receipts",
-    "fact_updates": "facts",
-    "judgments": "judgments",
-}
-CORRECTION_FORBIDDEN = {
-    "artifact_records", "source_records", "role_runs", "capability_records",
-    "limitations", "pwl_candidates", "report", "summary",
-}
-
-
-def _validate_correction(correction: dict, manifest: dict, registry: dict) -> None:
-    if correction.get("schema_version") != CORRECTION_SCHEMA:
-        raise GateError(f"correction schema_version 必须是 {CORRECTION_SCHEMA}")
-    run_id = (manifest.get("run") or {}).get("run_id")
-    if correction.get("run_id") != run_id:
-        raise GateError(f"correction run_id 与 run 不匹配: {correction.get('run_id')!r}")
-    skill_id = correction.get("skill_id")
-    find_skill(registry, skill_id)  # 不存在即抛
-    forbidden = sorted(k for k in CORRECTION_FORBIDDEN if k in correction)
-    if forbidden:
-        raise GateError(f"correction 禁止携带 {forbidden}（只允许 corrections 内四类账本修正，不得带正式报告路径）")
-    corrections = correction.get("corrections")
-    if not isinstance(corrections, dict):
-        raise GateError("corrections 必须为对象")
-    non_empty = [k for k in CORRECTION_KINDS if corrections.get(k)]
-    if not non_empty:
-        raise GateError("corrections 至少一类非空")
-    extra = sorted(set(corrections) - set(CORRECTION_KINDS))
-    if extra:
-        raise GateError(f"corrections 含未知类别 {extra}（允许 {list(CORRECTION_KINDS)}）")
-    entry = next((item for item in manifest["skills"] if item["skill_id"] == skill_id), None)
-    known_attempts = set(entry.get("attempts") or []) if entry else set()
-    base = correction.get("base_attempt_id")
-    if not base or base not in known_attempts:
-        raise GateError(f"base_attempt_id {base!r} 不在 {skill_id} 已接受 attempts {sorted(known_attempts)} 中")
-    id_sets = {
-        "calculation_requests": {c.get("calculation_id") for c in manifest["calculations"] if c.get("calculation_id")},
-        "command_receipts": {r.get("receipt_id") for r in manifest["command_receipts"] if r.get("receipt_id")},
-        "fact_updates": {f.get("fact_id") for f in manifest["facts"] if f.get("fact_id")},
-        "judgments": {j.get("judgment_id") for j in manifest["judgments"] if j.get("judgment_id")},
-    }
-    for kind in CORRECTION_KINDS:
-        id_key = _CORRECTION_ID_KEYS[kind]
-        for item in corrections.get(kind) or []:
-            if not isinstance(item, dict):
-                raise GateError(f"{kind} 条目必须为对象")
-            rid = item.get(id_key)
-            if not rid:
-                raise GateError(f"{kind} 条目缺 {id_key}")
-            if rid not in id_sets[kind]:
-                raise GateError(
-                    f"{kind} 引用不存在的 {id_key}={rid!r}（correction 只允许修改已有 ID，禁止新增）")
-
-
-def _validate_correction_receipts(correction: dict, registry: dict, run_root: Path) -> None:
-    """Task #45：correction 同样受回执绑定约束，禁止借 correction 绕过 Gate 注入
-    未经执行器签发的 PASS 回执。
-
-    correction 直接改写 manifest 的账本、不走 admit_bundle，若不重跑回执预检，伪造的
-    PASS 回执可借此绕过签名校验进入生产账本。这里对 correction 提交的非 removed 回执
-    复用与 submit-result 完全相同的 `_precheck_command_receipts`，保证两条路径口径一致。
-    """
-    skill = find_skill(registry, correction["skill_id"])
-    recs = [r for r in correction["corrections"].get("command_receipts") or []
-            if not r.get("removed")]
-    if not recs:
-        return
-    errs = _precheck_command_receipts({"command_receipts": recs}, skill, run_root)
-    if errs:
-        raise GateError(
-            "correction 回执预检未通过（禁止借 correction 注入未经验证签发的 PASS 回执）：\n"
-            + "\n".join(errs))
-
-
-def _apply_correction(manifest: dict, correction: dict, run_root: Path) -> None:
-    corrections = correction["corrections"]
-    # 1. removed 差集清理（雅克 run 经验：已删除请求的残留会让 audit 二次暴露）
-    for kind, target in _CORRECTION_TARGETS.items():
-        id_key = _CORRECTION_ID_KEYS[kind]
-        removed = {
-            item.get(id_key)
-            for item in corrections.get(kind) or []
-            if item.get("removed") is True
-        }
-        if removed:
-            manifest[target] = [
-                record for record in manifest[target]
-                if record.get(id_key) not in removed
-            ]
-    # 2. 非 removed → last-write-wins 覆盖（复用 _merge_provenance 同一套合并逻辑）
-    pseudo = {
-        "skill_id": correction["skill_id"],
-        "fact_updates": [f for f in corrections.get("fact_updates") or [] if not f.get("removed")],
-        "calculation_requests": [c for c in corrections.get("calculation_requests") or [] if not c.get("removed")],
-        "judgments": [j for j in corrections.get("judgments") or [] if not j.get("removed")],
-        "command_receipts": [r for r in corrections.get("command_receipts") or [] if not r.get("removed")],
-    }
-    _merge_provenance(manifest, pseudo, run_root=run_root)
-    # 3. 保留 correction 记录（base_attempt_id + digest，供审计/复核追溯）
-    digest = hashlib.sha256(
-        json.dumps(correction, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    manifest.setdefault("corrections", []).append({
-        "schema_version": CORRECTION_SCHEMA,
-        "skill_id": correction["skill_id"],
-        "base_attempt_id": correction["base_attempt_id"],
-        "digest": digest,
-        "applied_at": now_iso(),
-    })
-
-
-def cmd_submit_correction(args: argparse.Namespace) -> int:
-    root, registry = Path(args.run_root), load_registry(Path(args.registry))
-    manifest = load_manifest(root)
-    correction = load_json(Path(args.correction), "Correction Bundle")
-    _validate_correction(correction, manifest, registry)
-    _validate_correction_receipts(correction, registry, root)
-    next_manifest = copy.deepcopy(manifest)
-    _apply_correction(next_manifest, correction, root)
-    save_manifest(root, next_manifest)
-    append_event(root, {
-        "type": "correction_applied",
-        "skill_id": correction["skill_id"],
-        "base_attempt_id": correction["base_attempt_id"],
-    })
-    print(json.dumps({
-        "status": "CORRECTED",
-        "skill_id": correction["skill_id"],
-        "base_attempt_id": correction["base_attempt_id"],
-    }, ensure_ascii=False))
-    return 0

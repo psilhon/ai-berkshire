@@ -574,27 +574,9 @@ class DependencyGraphTests(unittest.TestCase):
         graph = {"ashare-data": [], "a": ["ashare-data"], "b": ["ashare-data", "a"]}
         self.assertIsNone(rt.detect_dependency_cycle(graph))
 
-    def test_compute_waves_matches_expected_six_waves(self):
-        # v3.4.8: bottleneck-hunter + news-pulse 依赖 industry-funnel → W4 拆为 W4a+W4b，共 6 波
-        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
-        graph = rt.build_dependency_graph(registry["skills"])
-        waves = rt.compute_dependency_waves(graph)
-        self.assertEqual(len(waves), 6, f"应为 6 波，实际 {waves}")
-        wave_sets = [set(w) for w in waves]
-        self.assertEqual(wave_sets[0], {"ashare-data"})
-        self.assertEqual(wave_sets[1],
-                         {"financial-data", "quality-screen", "investment-checklist",
-                          "investment-research"})
-        self.assertEqual(wave_sets[2],
-                         {"investment-team", "management-deep-dive",
-                          "earnings-review", "industry-research"})
-        self.assertEqual(wave_sets[3], {"industry-funnel"})
-        self.assertEqual(wave_sets[4], {"bottleneck-hunter", "news-pulse"})
-        self.assertEqual(wave_sets[5], {"thesis-tracker"})
-
     # ---- 端到端：init 持久化依赖图、拒绝有环契约 ----
 
-    def test_init_persists_dependency_waves_into_state(self):
+    def test_init_persists_dependency_graph_and_depends_on(self):
         result = self.cli(
             "start", "--registry", REGISTRY, "--repo-root", self.root,
             "--company", "格力电器", "--code", "000651.SZ", "--as-of", "2026-07-23",
@@ -603,8 +585,6 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         state = json.loads((self.run_root / "evidence/runtime-state.json").read_text())
         self.assertIn("dependency_graph", state)
-        self.assertIn("dependency_waves", state)
-        self.assertEqual(len(state["dependency_waves"]), 6)  # v3.4.8: W4 拆为 W4a+W4b
         # 每个 work_unit 带 depends_on
         by_id = {u["work_unit_id"]: u for u in state["work_units"]}
         self.assertEqual(by_id["wu-financial-data"].get("depends_on"), ["ashare-data"])

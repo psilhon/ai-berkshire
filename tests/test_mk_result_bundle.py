@@ -10,12 +10,12 @@ lean 契约 `full-analysis-contract/lean-v1` 已移除 `sections` / `evidence_ru
 3. 契约不再声明命令操作白名单，`_precheck_command_receipts` 对全部 13 个 skill
    直接放行（whitelist 为空即 return []），故旧的「回执执行绑定」用例已无被测行为。
 
-已知 impl 缺陷（**不得在本次修改中动实现**）：`_substance_errors` 仍从
-`skill["sections"]` 统计实质章节（tools/full_analysis_gate.py:971），lean 契约无
-sections → `min_substantive_sections` 永远不满足 → 任何 PASS bundle 都无法通过
-`admit_bundle(check_artifacts=True)`。因此本文件的 PASS 路径只断言与该缺陷无关的
-不变量（零占位 / 路径解析 / 实质锚点拦截），完整准入的绿灯用例走 NA 路径与
-`validate_result_bundle(check_artifacts=False)` 轻量准入。
+实质地板现状（2026-09-04 更新）：`_substance_errors` 已改为对报告原文按
+`^#{2,6}` 直接重扫（数据截止日 + 来源声明 + 免责 + 实质章节数），
+与 `skill["sections"]` 无关——早期版本的「lean 契约无 sections → 永不满足」
+缺陷已修复。本文件 PASS 路径断言零占位 / 路径解析 / 实质锚点拦截等不变量，
+完整准入的绿灯用例走 NA 路径与 `validate_result_bundle(check_artifacts=False)`
+轻量准入。
 """
 import json
 import subprocess
@@ -30,6 +30,9 @@ SCHEMA = REPO / "tools" / "full_analysis_result_schema.json"
 
 sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "tools"))  # 供 true-oracle 测试直接调用 Gate 预检
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import conftest  # noqa: E402  # run 目录工厂（经 run_layout/run_store 构造）
+import run_store  # noqa: E402
 import full_analysis_gate as gate_module  # noqa: E402
 import mk_result_bundle as mkb  # noqa: E402
 
@@ -300,38 +303,31 @@ class MkResultBundleCliTests(unittest.TestCase):
 
     def _make_run_root(self, td: Path, skill_id: str | None = None,
                        body: str | None = None) -> Path:
-        """构造最小 run_root：attempt 目录 + lean 报告 + 租约身份。"""
+        """构造最小 run_root：attempt 目录 + lean 报告 + 租约身份（经 conftest 工厂）。"""
         skill_id = skill_id or self.SKILL
-        run_root = td / "run"
-        attempt_dir = run_root / "evidence" / "attempts" / skill_id / self.ATTEMPT
-        attempt_dir.mkdir(parents=True)
+        run_root = conftest.make_run_root(
+            td, run_id="run-cli-test", skills=[skill_id],
+            work_units=[{
+                "work_unit_id": f"wu-{skill_id}",
+                "skill_id": skill_id,
+                "status": "LEASED",
+                "lease": {"attempt_id": self.ATTEMPT, "lease_nonce": self.NONCE,
+                          "agent_job_id": self.JOB},
+            }])
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
         skill = next(s for s in registry["skills"] if s["skill_id"] == skill_id)
         if body is None:
             body = lean_report(skill["artifact"].get("min_bytes", 0) + 200)
-        (attempt_dir / "report.md").write_text(body, encoding="utf-8")
-        (run_root / "evidence" / "runtime-state.json").write_text(
-            json.dumps({
-                "run_id": "run-cli-test",
-                "work_units": [{
-                    "work_unit_id": f"wu-{skill_id}",
-                    "skill_id": skill_id,
-                    "status": "LEASED",
-                    "lease": {"attempt_id": self.ATTEMPT, "lease_nonce": self.NONCE,
-                              "agent_job_id": self.JOB},
-                }],
-            }, ensure_ascii=False), encoding="utf-8")
+        conftest.seed_attempt(run_root, skill_id, self.ATTEMPT, body)
         return run_root
 
     def _write_manifest(self, run_root: Path, run_id: str = "run-cli-test") -> None:
-        """Gate 准入要求 manifest 与 bundle 的 run_id 一致，且版本为
-        full-analysis-manifest/v2。"""
-        (run_root / "evidence" / "00-analysis-manifest.json").write_text(
-            json.dumps({
-                "manifest_schema_version": "full-analysis-manifest/v2",
-                "run": {"run_id": run_id},
-                "sources": [],
-            }, ensure_ascii=False), encoding="utf-8")
+        """manifest 已由 conftest.make_run_root 统一写出（v2 + run_id 一致）。
+        本方法保留调用点，仅在 run_id 不一致时经 run_store 校正。"""
+        manifest = run_store.load_manifest(run_root)
+        if manifest["run"]["run_id"] != run_id:
+            manifest["run"]["run_id"] = run_id
+            run_store.write_manifest(run_root, manifest)
 
     def _run(self, run_root: Path, extra=None, skill_id=None):
         skill_id = skill_id or self.SKILL

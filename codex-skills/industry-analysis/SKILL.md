@@ -358,14 +358,15 @@ A = 数据充分可信；B = 部分缺失但不影响主结论；C = 缺失较�
 
 ## 数据抽检（准出流程）
 
-报告写入后，执行数据抽检，通过方可发布：
+报告写入后，执行数据抽检，通过方可发布。**准出口径以 `tools/report_audit.py` 为单一真源**（默认 15% 随机抽样；偏差 ≤ 1% 准出，> 1% 打回；最低核验点数由工具内置），skill 层不另设口径：
 
 ```bash
-# Step 1 — 提取抽检清单（15% 随机抽样）
+# Step 1 — 提取抽检清单（默认 15% 随机抽样）
 python3 tools/report_audit.py extract \
   --report <报告文件路径>
 
-# Step 2 — 对清单每项从可靠信源取数（参见 skills/financial-data.md）
+# Step 2 — 对清单每项从可靠信源取数（参见 skills/financial-data.md），
+#          填入 fetched_value / fetched_source / fetched_value2 / fetched_source2
 
 # Step 3 — 输出三态判决（准出/证据不足/打回）
 python3 tools/report_audit.py verdict \
@@ -373,7 +374,9 @@ python3 tools/report_audit.py verdict \
   --report <报告文件名>
 ```
 
-**【准出】** 全部抽检点双源核验通过 → 可发布；**【证据不足】** 有未核验/单一来源/两源冲突点 → 补齐第二来源后重跑；**【打回】** 有不通过 → 修正后重审。
+- **【准出】**：全部抽检点双源核验且偏差 ≤ 1% → 可发布
+- **【证据不足】**：有未核验/单一来源/两源冲突点 → 补齐第二来源后重跑
+- **【打回】**：偏差 > 1% → 修正对应数据后重新抽检，直到准出
 
 🔴 STOP / 检查点：在跑 `report_audit.py` 准出并对外发布报告前，必须先向用户确认（给出明确选项：如"确认发布""仅生成草稿待审阅"），获得明确同意后再继续；未经确认不得自主发布。
 

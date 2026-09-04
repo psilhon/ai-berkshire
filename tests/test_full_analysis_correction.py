@@ -1,15 +1,14 @@
 """Task 2：correction bundle —— 确定性证据错误的定向修正（lean 契约现代化版）。
 
 lean 契约（full-analysis-contract/lean-v1）已移除 sections / evidence_rules /
-artifact_id：Gate 改为校验「实质地板」（三锚 + 实质章节 + 字节下限）。这带来两点
-对 correction 单测的影响，本文件据此现代化：
+artifact_id：Gate 改为校验「实质地板」（三锚 + 实质章节 + 字节下限）。对本文件的
+两点影响：
 
-1. submit-result 走完整准入 admit_bundle(check_artifacts=True) → _substance_errors，
-   而后者仍按 contract `sections` 计数（lean 已移除），导致 min_substantive_sections
-   永远无法满足、任何 PASS 报告都 ingest 失败（见 tests/test_full_analysis_e2e.py
-   的 expectedFailure 注释，属 impl 缺陷，**不在此修改 tools/**）。correction 命令
-   本身不调 admit_bundle，因此本测试直接把「已接受 attempt」写进 manifest，绕开
-   损坏的 submit-result 链路，仅服务 correction 逻辑本身的单测。
+1. submit-result 全链路（admit_bundle(check_artifacts=True) → substance_errors
+   原文 `^#{2,6}` 重扫实质章节）由 tests/test_full_analysis_e2e.py 的 canary 覆盖。
+   correction 命令本身不调 admit_bundle，因此本测试直接把「已接受 attempt」写进
+   manifest——这是单元测试隔离手段（只测 correction 逻辑本身），非对 submit-result
+   链路的绕行。
 
 2. lean 下所有技能 evidence_rules 为空 → 没有回执白名单 → Gate 不再对 correction
    做执行器签名校验（_precheck_command_receipts 白名单为空直接放行）。原

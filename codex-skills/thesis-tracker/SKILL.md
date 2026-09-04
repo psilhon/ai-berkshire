@@ -272,7 +272,7 @@ This skill is generated from `skills/thesis-tracker.md` so Claude Code and Codex
 
 ## 依赖与资源清单
 
-本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=~/ai-berkshire（按实际 checkout 位置解析）`）：
 
 | 依赖项 | 路径 | 用途 | 可达性 |
 |--------|------|------|--------|

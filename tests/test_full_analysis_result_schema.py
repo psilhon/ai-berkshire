@@ -64,7 +64,7 @@ class ResultSchemaTests(unittest.TestCase):
         self.assertFalse(self.schema["additionalProperties"])
         self.assertEqual(set(self.schema["required"]), {
             "schema_version", "run_id", "work_unit_id", "attempt_id",
-            "agent_job_id", "lease_nonce", "skill_id", "role_id", "status",
+            "skill_id", "role_id", "status",
             "artifact_records", "fact_updates", "source_records",
             "calculation_requests", "judgments", "limitations", "pwl_candidates",
             "started_at", "completed_at", "error",

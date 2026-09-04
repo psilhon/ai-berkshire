@@ -611,7 +611,7 @@ A股核查重点：应收/存货/合同负债/经营现金流；毛利率/产能
 本 Skill 为自包含的 Agent 驱动工作流，不依赖外部工具脚本。
 
 - **运行时环境**：依赖 Task / WebSearch / Agent 等内置能力，由 WorkBuddy 托管。
-- **项目根**：`/Users/psilhon/WorkSpace/stock/berkshire`（约定路径，Skill 源文件所在仓库）。
+- **项目根**：`~/ai-berkshire（按实际 checkout 位置解析）`（约定路径，Skill 源文件所在仓库）。
 - **同步管线**：Skill 副本由 `~/.workbuddy/berkshire-skill-sync/sync.py` 从仓库源生成。
 
 > **自检**：无外部脚本依赖，所有能力由 Agent 运行时提供。若新增工具依赖，需追加本清单并验证路径。

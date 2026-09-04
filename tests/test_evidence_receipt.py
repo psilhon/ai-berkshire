@@ -19,6 +19,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 EXECUTOR = REPO / "scripts" / "run_evidence_command.py"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import conftest  # noqa: E402  # run 目录工厂（经 run_layout/run_store 构造）
+
 sys.path.insert(0, str(REPO / "tools"))
 import evidence_receipt as er  # noqa: E402
 
@@ -26,15 +29,14 @@ RUN_ID = "run-executor-test"
 
 
 def make_run_root(td: Path, run_id: str = RUN_ID) -> Path:
-    """最小 run_root：只需 runtime-state（run_id + run_started_at）。"""
-    run_root = td / "run"
-    (run_root / "evidence").mkdir(parents=True)
-    (run_root / "evidence" / "runtime-state.json").write_text(json.dumps({
-        "state_version": "runtime-state/v1",
-        "run_id": run_id,
-        "run_started_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
-    }, ensure_ascii=False), encoding="utf-8")
-    return run_root
+    """最小 run_root：经 conftest 工厂构造（run_layout 路径 + run_store I/O）。
+
+    本测试只依赖 runtime-state 的 run_id 与 5 分钟前的 run_started_at（时效窗校验）；
+    工厂产出的 canonical 全量布局是其超集。
+    """
+    return conftest.make_run_root(
+        td, run_id=run_id,
+        run_started_at=(datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat())
 
 
 def make_fake_cmd(td: Path) -> Path:

@@ -263,7 +263,7 @@ ashare 报告的 `artifact_records` 必须把上述 fact IDs 与全部成功 com
 
 ## 依赖与资源清单
 
-本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=~/ai-berkshire（按实际 checkout 位置解析）`）：
 
 | 依赖项 | 路径 | 用途 | 可达性 |
 |--------|------|------|--------|

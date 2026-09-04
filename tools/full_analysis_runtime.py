@@ -327,8 +327,8 @@ def _load_registry() -> dict:
     return load_contract(strict=False)
 
 
-# v3.3.10 依赖波次调度：contract depends_on → 拓扑分层 → 波次并行派发。
-# 这三个纯函数是依赖图的单一所有者，gate.cmd_init（持久化）与
+# 依赖图单一所有者：contract depends_on → 拓扑依赖图 → depends_on 门禁（next_work）。
+# 这两个纯函数是依赖图的单一所有者，gate.cmd_init（持久化）与
 # check-full-analysis-contract.py（校验环）均复用，避免多处各自解析漂移。
 PIPELINE_ROOT = "ashare-data"
 
@@ -392,34 +392,6 @@ def detect_dependency_cycle(graph: dict) -> list | None:
                 return found
     return None
 
-
-def compute_dependency_waves(graph: dict) -> list[list[str]]:
-    """按拓扑层级把 skill 分层为波次：layer 0 = 无依赖，layer N = 依赖全在 <N 层。
-
-    返回 [[wave0 skills], [wave1 skills], ...]，每波内的单元可并行派发。
-    要求传入图已无环（调用方先 detect_dependency_cycle）。
-    """
-    layer_of: dict[str, int] = {}
-
-    def layer(node: str) -> int:
-        if node in layer_of:
-            return layer_of[node]
-        deps = graph.get(node, [])
-        if not deps:
-            layer_of[node] = 0
-            return 0
-        depth = max(layer(dep) for dep in deps) + 1
-        layer_of[node] = depth
-        return depth
-
-    for node in graph:
-        layer(node)
-
-    waves: dict[int, list[str]] = {}
-    for node, depth in layer_of.items():
-        waves.setdefault(depth, []).append(node)
-    # 每波内按契约 registry 顺序稳定排序，保证派发顺序可复现
-    return [sorted(waves[d]) for d in sorted(waves)]
 
 def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:
     """领取下一个可派发 work unit（lean：无租约、无波次白名单）。
@@ -521,7 +493,6 @@ def _next_work_locked(run_root: Path, methodology_mode: str = "full") -> dict:
             "宁短勿水。深度由实质校验保证，详略由问题本身决定。"
         ),
         "skill_type": skill.get("skill_type") if skill else None,
-        "min_dissent_points": skill.get("min_dissent_points") if skill else None,
         "min_substantive_sections": skill.get("min_substantive_sections") if skill else None,
         "roles": roles,
         "fanout_required": bool(roles.get("mode") == "independent_then_integrator"),

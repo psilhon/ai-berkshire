@@ -97,7 +97,12 @@ from full_analysis_contract import (  # noqa: E402
 )
 # run 目录布局（2026-08-30 架构评审候选②）：attempts 前缀不再本地硬编码，
 # 与 Gate 准入判定共用同一真源，避免「生成器接受、Gate 拒收」的路径分叉。
-from run_layout import ATTEMPTS_REL, in_attempts  # noqa: E402
+from run_layout import (  # noqa: E402
+    ATTEMPTS_REL,
+    MANIFEST_REL,
+    RUNTIME_STATE_REL,
+    in_attempts,
+)
 from full_analysis_gate import (  # noqa: E402
     ALWAYS_APPLICABLE_PREDICATES,
     NA_MIN_BYTES,
@@ -106,9 +111,10 @@ from full_analysis_gate import (  # noqa: E402
     admit_bundle,
 )
 
-# 结构地板水印：确定性字符串，Gate `_precheck_placeholder_evidence` 按它硬拒收。
-# 生成器与 Gate 必须同口径，任何新增的地板字段都要带上它。
-PLACEHOLDER = "PLACEHOLDER"
+# 结构地板水印与占位/NA 判定规则（2026-08-30 候选③）：单一真源在 tools/bundle_checks.py，
+# 生成侧与 Gate 拒收侧共用同一扫描口径，任何新增地板字段都只需改一处。
+from bundle_checks import PLACEHOLDER, na_predicate_violation  # noqa: E402,F401
+from bundle_checks import placeholder_offenders as _scan_placeholder  # noqa: E402
 
 # 退出码契约（v3.4.14 完整化）：0 ⟺ **Gate 预期会接受**这个 bundle
 # = 零占位 AND 状态为可验收终态 AND 报告满足该状态对应的章节/字节要求。
@@ -179,27 +185,11 @@ def build_evidence_ledger(skill: dict, extra_facts: list, extra_sources: list,
 def placeholder_offenders(bundle: dict) -> list:
     """返回 bundle 中所有带 PLACEHOLDER 水印的证据条目描述（空=零占位）。
 
-    与 Gate 的 `_precheck_placeholder_evidence` 同口径，用于在**提交前**就把
-    "含占位的 bundle"暴露为非零退出，而不是等到 Gate 才拒收。
+    扫描口径委托 bundle_checks.placeholder_offenders（与 Gate 预检同一真源），
+    本函数只负责包装成生成侧的短描述，用于在**提交前**就把"含占位的 bundle"
+    暴露为非零退出，而不是等到 Gate 才拒收。
     """
-    hits = []
-    for fact in bundle.get("fact_updates") or []:
-        if PLACEHOLDER in str(fact.get("value", "")):
-            hits.append(f"fact {fact.get('fact_id')}")
-    for src in bundle.get("source_records") or []:
-        if PLACEHOLDER in f"{src.get('publisher', '')}{src.get('title', '')}":
-            hits.append(f"source {src.get('source_id')}")
-    for calc in bundle.get("calculation_requests") or []:
-        if PLACEHOLDER in str(calc.get("calculation_id", "")):
-            hits.append(f"calculation {calc.get('calculation_id')}")
-    for judgment in bundle.get("judgments") or []:
-        if PLACEHOLDER in f"{judgment.get('judgment_id', '')}{judgment.get('conclusion', '')}":
-            hits.append(f"judgment {judgment.get('judgment_id')}")
-    for rcpt in bundle.get("command_receipts") or []:
-        blob = f"{rcpt.get('receipt_id', '')}{rcpt.get('reason', '')}{rcpt.get('detail', '')}"
-        if PLACEHOLDER in blob:
-            hits.append(f"receipt {rcpt.get('receipt_id')}")
-    return hits
+    return [f"{kind} {entry_id}" for kind, entry_id in _scan_placeholder(bundle)]
 
 
 # 回执伪造标记（v3.4.14）：PASS 回执的 argv/详情/输出含这些串即视为自报成功而无真实执行。
@@ -234,21 +224,11 @@ def build_not_applicable(skill: dict, na_fact_id: str | None, facts: list,
         fail(f"--na-fact-id={na_fact_id} 未出现在 --extra-evidence 中；"
              f"负向验收的判定事实必须随本次提交一起给出。")
 
-    if predicate == "min_independent_contexts_2":
-        expected_field = "independent_context_count"
-        ok = (fact.get("field") == expected_field
-              and isinstance(fact.get("value"), int)
-              and not isinstance(fact.get("value"), bool)
-              and fact["value"] < 2)
-        expectation = f"field={expected_field!r} 且 value 为 <2 的整数"
-    else:
-        expected_field = NA_PREDICATE_FIELDS.get(predicate)
-        ok = expected_field is not None and fact.get("field") == expected_field \
-            and fact.get("value") is False
-        expectation = f"field={expected_field!r} 且 value=false"
-    if not ok:
+    # 谓词证伪规则委托 bundle_checks（与 Gate 拒收侧同一真源，特例只写一遍）
+    violation = na_predicate_violation(predicate, fact)
+    if violation:
         fail(f"判定事实 {na_fact_id} 不能证明谓词 {predicate!r} 为假："
-             f"期望 {expectation}，实际 field={fact.get('field')!r} value={fact.get('value')!r}。")
+             f"期望 {violation}，实际 field={fact.get('field')!r} value={fact.get('value')!r}。")
 
     source_ids = fact.get("source_ids") or []
     unknown = [s for s in source_ids if s not in known_source_ids]
@@ -268,14 +248,15 @@ def check_report(skill: dict, report: Path, *, na: bool = False):
     txt = report.read_text(encoding="utf-8")
     body_bytes = report.stat().st_size
     if na:
-        # 负向验收产物走 Gate 的 NA 口径：章节与字节下限都与 PASS 路径不同，
-        # 沿用 skill.sections 会让 NA 报告永远"缺章节"。
+        # 负向验收产物走 Gate 的 NA 口径：章节与字节下限都与 PASS 路径不同。
         required_headings = list(NA_REQUIRED_HEADINGS)
         min_bytes = NA_MIN_BYTES
     else:
-        required_headings = [sec.get("heading", "")
-                             for sec in skill.get("sections", [])
-                             if sec.get("required")]
+        # lean-v1 契约（full-analysis-contract/lean-v1）已删除 sections 键
+        # （实测 13/13 均无），PASS 路径不存在 per-skill 必需章节——
+        # 实质章节由 Gate `_substance_errors` 对报告原文 `^#{2,6}` 重扫校验。
+        # 此处只守 min_bytes 防坍塌下限；v2 归档校验器（ADR-0002）不走本路径。
+        required_headings = []
         min_bytes = skill["artifact"].get("min_bytes", 0)
     warnings = []
     missing = [h for h in required_headings
@@ -339,7 +320,7 @@ def main() -> int:
         skill = find_skill(registry, args.skill_id)
     except ContractError as exc:
         fail(str(exc))
-    state = load_json(run_root / "evidence" / "runtime-state.json")
+    state = load_json(run_root / RUNTIME_STATE_REL)
     run_id = state.get("run_id")
 
     # lean 模式（v3.7+）：编排不再签发租约，故不再校验租约身份。agent_job_id /
@@ -441,7 +422,7 @@ def main() -> int:
 
     not_applicable = None
     if is_na:
-        manifest_path = run_root / "evidence" / "00-analysis-manifest.json"
+        manifest_path = run_root / MANIFEST_REL
         known_source_ids = {s.get("source_id") for s in sources if s.get("source_id")}
         if manifest_path.is_file():
             try:

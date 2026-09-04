@@ -62,6 +62,70 @@ def _err(errors: list[str], message: str) -> None:
     errors.append(message)
 
 
+# ---- depends_on 依赖图校验共用实现（2026-08-30 候选⑨·去重第一步）----
+# 此前 v2（validate_v2）与 lean（validate_lean）各写一份 ~48 行同构代码，
+# 仅错误标签（:v2 / :lean）不同，三色 DFS 环检测逐字相同。抽成模块级纯函数，
+# 两侧共用；语义与 runtime.build_dependency_graph / detect_dependency_cycle 一致
+# （ashare-data 为根；缺省 depends_on 视为仅依赖 ashare-data；整图不得有环）。
+# 不改变任何校验规则与错误文本——ADR-0002 冻结的 validate_v2 行为不变，
+# 由 test_full_analysis_contract_v2 快照守护。跨模块与 runtime 的合一属后续步骤。
+
+
+def _check_depends_on(errors: list[str], skills: list, known: set,
+                      tag: str) -> dict[str, list[str]]:
+    """校验 depends_on 字段并构建依赖图（边=被依赖的已注册 skill，排除自引用）。"""
+    graph: dict[str, list[str]] = {}
+    for item in skills:
+        sid = item.get("skill_id")
+        if not isinstance(sid, str):
+            continue
+        if sid == "ashare-data":
+            deps: list = []
+        else:
+            deps = item.get("depends_on")
+            if deps is None:
+                deps = ["ashare-data"]
+            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+                _err(errors, f"[{sid}:{tag}] depends_on 必须为字符串数组")
+                deps = []
+        unknown = [d for d in deps if d not in known]
+        if unknown:
+            _err(errors, f"[{sid}:{tag}] depends_on 引用未注册 skill: {unknown}")
+        if sid in deps:
+            _err(errors, f"[{sid}:{tag}] depends_on 不得自引用")
+        graph[sid] = [d for d in deps if d in known and d != sid]
+    return graph
+
+
+def _find_dep_cycle(graph: dict[str, list[str]]) -> list | None:
+    """三色 DFS 找依赖环，返回环路径（如 [a, b, a]）；无环返回 None。"""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in graph}
+
+    def _has_cycle(node: str, stack: list) -> list | None:
+        color[node] = GRAY
+        stack.append(node)
+        for dep in graph.get(node, []):
+            if dep not in color:
+                continue
+            if color[dep] == GRAY:
+                return stack[stack.index(dep):] + [dep]
+            if color[dep] == WHITE:
+                found = _has_cycle(dep, stack)
+                if found:
+                    return found
+        stack.pop()
+        color[node] = BLACK
+        return None
+
+    for node in graph:
+        if color[node] == WHITE:
+            cycle = _has_cycle(node, [])
+            if cycle:
+                return cycle
+    return None
+
+
 def _ashare_cli_commands(repo_root: Path) -> tuple[set[str] | None, str | None]:
     path = repo_root / "tools" / "ashare_data.py"
     try:
@@ -353,54 +417,11 @@ def validate_v2(registry_path: Path, repo_root: Path) -> list[str]:
         _validate_evidence(errors, label, item.get("evidence_rules"), known, ashare_commands)
 
     # v3.3.10 T4：depends_on 依赖图校验（自包含，不 import Runtime——本脚本刻意独立）。
-    # 语义与 runtime.build_dependency_graph 一致：ashare-data 为根；缺省 depends_on 视为
-    # 仅依赖 ashare-data；依赖须引用已注册 skill；整图不得有环（否则波次调度死锁）。
-    graph: dict[str, list[str]] = {}
-    for item in skills:
-        sid = item.get("skill_id")
-        if not isinstance(sid, str):
-            continue
-        if sid == "ashare-data":
-            deps: list = []
-        else:
-            deps = item.get("depends_on")
-            if deps is None:
-                deps = ["ashare-data"]
-            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
-                _err(errors, f"[{sid}:v2] depends_on 必须为字符串数组")
-                deps = []
-            unknown = [d for d in deps if d not in known]
-            if unknown:
-                _err(errors, f"[{sid}:v2] depends_on 引用未注册 skill: {unknown}")
-            if sid in deps:
-                _err(errors, f"[{sid}:v2] depends_on 不得自引用")
-        graph[sid] = [d for d in deps if d in known and d != sid]
-
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color = {node: WHITE for node in graph}
-
-    def _has_cycle(node: str, stack: list) -> list | None:
-        color[node] = GRAY
-        stack.append(node)
-        for dep in graph.get(node, []):
-            if dep not in color:
-                continue
-            if color[dep] == GRAY:
-                return stack[stack.index(dep):] + [dep]
-            if color[dep] == WHITE:
-                found = _has_cycle(dep, stack)
-                if found:
-                    return found
-        stack.pop()
-        color[node] = BLACK
-        return None
-
-    for node in graph:
-        if color[node] == WHITE:
-            cycle = _has_cycle(node, [])
-            if cycle:
-                _err(errors, f"depends_on 存在依赖环: {' -> '.join(cycle)}")
-                break
+    # 共用实现见模块头 _check_depends_on / _find_dep_cycle（候选⑨去重）。
+    graph = _check_depends_on(errors, skills, known, "v2")
+    cycle = _find_dep_cycle(graph)
+    if cycle:
+        _err(errors, f"depends_on 存在依赖环: {' -> '.join(cycle)}")
     return errors
 
 
@@ -495,53 +516,11 @@ def validate_lean(registry: dict, repo_root: Path) -> list[str]:
         elif roles.get("mode") not in {"single_agent", "independent_then_integrator"}:
             _err(errors, f"{label} roles.mode 非法")
 
-    # depends_on 依赖图校验（自包含，与 runtime.build_dependency_graph 语义一致）
-    graph: dict[str, list[str]] = {}
-    for item in skills:
-        sid = item.get("skill_id")
-        if not isinstance(sid, str):
-            continue
-        if sid == "ashare-data":
-            deps = []
-        else:
-            deps = item.get("depends_on")
-            if deps is None:
-                deps = ["ashare-data"]
-            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
-                _err(errors, f"[{sid}:lean] depends_on 必须为字符串数组")
-                deps = []
-        unknown = [d for d in deps if d not in known]
-        if unknown:
-            _err(errors, f"[{sid}:lean] depends_on 引用未注册 skill: {unknown}")
-        if sid in deps:
-            _err(errors, f"[{sid}:lean] depends_on 不得自引用")
-        graph[sid] = [d for d in deps if d in known and d != sid]
-
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color = {node: WHITE for node in graph}
-
-    def _has_cycle(node: str, stack: list) -> list | None:
-        color[node] = GRAY
-        stack.append(node)
-        for dep in graph.get(node, []):
-            if dep not in color:
-                continue
-            if color[dep] == GRAY:
-                return stack[stack.index(dep):] + [dep]
-            if color[dep] == WHITE:
-                found = _has_cycle(dep, stack)
-                if found:
-                    return found
-        stack.pop()
-        color[node] = BLACK
-        return None
-
-    for node in graph:
-        if color[node] == WHITE:
-            cycle = _has_cycle(node, [])
-            if cycle:
-                _err(errors, f"depends_on 存在依赖环: {' -> '.join(cycle)}")
-                break
+    # depends_on 依赖图校验（共用实现见模块头，候选⑨去重）
+    graph = _check_depends_on(errors, skills, known, "lean")
+    cycle = _find_dep_cycle(graph)
+    if cycle:
+        _err(errors, f"depends_on 存在依赖环: {' -> '.join(cycle)}")
     return errors
 
 

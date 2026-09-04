@@ -25,8 +25,12 @@ from __future__ import annotations
 from pathlib import Path
 
 # ---- 产出物目录 ----
+# ---- 产出物目录 ----
+# evidence 根目录：账本种子文件（facts/sources/calculations/artifacts.json）等
+# 散文件的父目录；此前 gate:788 直拼 "evidence"/name，是全仓最后一处字面量。
+EVIDENCE_REL = Path("evidence")
 # attempt 目录：每个业务单元一次的尝试产物（report.md / result.json …）
-ATTEMPTS_REL = Path("evidence/attempts")
+ATTEMPTS_REL = EVIDENCE_REL / "attempts"
 # 总结专属子目录：deep-summary 的熔炼产物必须先落在这里才被 Gate 接受
 SUMMARY_ATTEMPTS_REL = ATTEMPTS_REL / "summary"
 

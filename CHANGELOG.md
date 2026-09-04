@@ -5,6 +5,36 @@
 
 ---
 
+## [v3.10.14] — 2026-09-04
+
+> **架构深化落地（2026-08-30 /improve-codebase-architecture 12 候选，本轮修复 8 项，4 项前轮已完成或撤回）**：数据抽检准出收敛单一真源、同步链孤儿检测、测试基建 factory、守卫故障注入、准入判定单一真源、verdict 原语收敛、source-level adapter 去重、gate 分区与 dispatch 合一、ashare_data 归一化返回示踪步。单测 **741 → 761**，`check.sh` 退出码 **0**。
+
+### ✨ 新增 (Added)
+
+- **`tools/bundle_checks.py`**：bundle 准入判定单一真源（候选③）——PLACEHOLDER 水印扫描 `placeholder_offenders()`（五类账本口径表单点定义）+ NA 谓词证伪规则 `na_predicate_violation()`（`min_independent_contexts_2` 特例只写一遍）。gate（拒收侧）与 mk（生成侧）共同委托，消息各自包装呈现。
+- **`tools/full_analysis_correction.py`**：correction bundle 校验与落账自 gate 外移（候选⑩分区），gate 1787 → 1644 行；单向依赖 gate 判定真源，`submit-correction` 路由同步。
+- **`tests/conftest.py` + `tests/test_run_factory.py`**：run 目录测试工厂 `make_run_root()` / `seed_attempt()`（候选⑪）——经 `run_store` 构造 canonical 布局、路径取 `run_layout` 常量零字面量；`test_evidence_receipt` / `test_mk_result_bundle` 两处手拼 JSON 样板迁移至工厂。
+- **同步链目标侧孤儿检测（候选⑥）**：`sync-codex-skills.py` 以生成标记（`GENERATED_MARKER`）判定孤儿——`--check` 遇孤儿 exit 1 点名，生成模式清理孤儿整目录；Codex-only 手写包（`investment-memo-craft`，无标记）天然豁免。新增 `tests/test_sync_orphan_detection.py`（5 用例，含假仓库 e2e 红→清→绿）。用户侧 `~/.workbuddy/berkshire-skill-sync/sync.py` 同步补检测，但**只报告不删除**——实测发现 7 个「孤儿」（deep-company-series 等）实为源删除后被收养的活 skill，机器不可辨残留与收养。
+- **守卫故障注入（候选⑪）**：`tests/test_check_stop_gates.py` 7 用例——注入缺要素确认门必红、补齐必绿、非确认类落 INFO、真仓 41 门完整不变式。首跑即抓到 `check-stop-gates.py` 对注入目录 `relative_to(ROOT)` ValueError 的潜在缺陷（改 `relative_to(skills_dir)`）。
+
+### 🔧 变更 (Changed)
+
+- **数据抽检准出收敛（候选⑤）**：4 份 skill 副本（earnings-review / industry-analysis / investment-team / investment-research）的抽检流程统一为同一模板，准出口径显式声明以 `tools/report_audit.py` 为单一真源（15% 抽样 / 偏差 ≤1% / 三态判决）；补齐 earnings-review 缺失的 1% 口径。STOP 门文本零改动（ADR-0003）。
+- **判决原语收敛（候选②）**：`financial_rigor.py` 新增 `_OUTCOME_EXIT` / `_verdict()`——outcome → exit_code 映射单点化（此前 (outcome, exit_code) 散布 7 处）；6 个 `_json_*` 重投影消除（约 195 行重复逻辑），文本/JSON 两路共用 `_mc_inputs` / `_valuation_metrics` / `_cross_validate_core` / `_benford_core` / `_calc_eval` 纯计算核心，print 降为投影。**修复 cmd_valuation 恒真退出**：无任何指标可算时文本路径从恒 exit 0 改为 exit 2（与 --json 路径 INSUFFICIENT 对齐）。TDD 红→绿，`test_financial_rigor` 96 用例全绿。
+- **source-level adapter 去重（候选⑧，修订 ADR-0001）**：`ashare_data._em_secu_code` / `_em_secid` 委托 `CodeIdentity`，`_fetch_datacenter_rows` 委托 `ashare_plugin.fetch_datacenter_rows`（原 `_fetch_rows` 转公开别名；`_curl_json` 经 TransportClient 适配注入、`TransportError`→`ConnectionError` 保语义）；`_qq_code` 有效码走 `CodeIdentity.quote_code`、无效码保留旧前缀映射垫片（`cmd_quote("INVALID") → False` 降级路径被测试锁定，严格化单独立项）。测试零改动，142 用例全绿。
+- **gate dispatch 表合一（候选⑩）**：`GATE_COMMANDS` 成为 Gate 意图命令的唯一 dispatch 表，`gate.main` 与 `scripts/full_analysis.py` 共用；派生展示件（`full_analysis_html` / `build_company_index`）由 importlib 文件加载改回静态 import（零反向依赖，无循环）。
+- **ashare_data 归一化返回示踪步（候选①）**：新增 `CommandOutcome`（ok/data/warnings），`cmd_quote` / `cmd_valuation` 迁移为「数据进返回值、print 为投影」；CLI 契约（退出码 + stdout）逐字节不变，恒等断言升级为布尔断言，新增 3 用例锁定返回值编程接口。其余 62 命令按同模式分批。
+- **`run_layout.py` 补 `EVIDENCE_REL`**：gate 种子文件写入与 `conftest` 工厂改用常量，全仓 `"evidence" /` 字面量直拼清零（候选⑦收尾）。
+- **`check-stop-gates.py` docstring 对齐实际语义**：删「骨架五要素」死常量 `ELEMENTS`（从未被 `check()` 引用）与过时宣讲，改为真门三要素（GATE_ELEMENTS）+ (b)/(c) INFO 桶，留历史注记。
+
+### 📐 有意保留 / 边界裁决
+
+- **判决词汇不跨工具强行合一**：report_audit 三态（准出/证据不足/打回）与 mk 退出码 0/2/3 分属「抽检准出」「提交有效性」语义轴，与 rigor 的「验算判决」不同域；各域保留自有词汇，仅 rigor 域内单点化。
+- **`test_mk_result_bundle.py` docstring 过期理由同步修正**：「min_substantive_sections 永不满足」的已知缺陷描述在 v3.10.13 已失效（substance 原文重扫已修），本轮补齐这份漏改。
+- **契约环检测去重为第一步（候选⑨）**：`check-full-analysis-contract.py` 两段 ~48 行同构（v2 :355-403 / lean :498-545）收敛为模块级 `_check_depends_on` / `_find_dep_cycle`，错误标签参数化（:v2/:lean）、校验规则与文本逐字不变（ADR-0002 冻结语义由 25 个契约测试守护）；与 runtime `detect_dependency_cycle` 的跨模块合一属后续步骤。
+
+---
+
 ## [v3.10.13] — 2026-09-04
 
 > **代码精简（ponytail-audit 全仓过度设计审计）**：审计 `tools/` + `scripts/` + `tests/`（约 29k 行），执行全部可削减项与 5 个决策项，累计 **25 files changed, 281 insertions(+), 989 deletions(−)**（净 **−708 行**）。单测 **809 → 741**（消除 61 次重复执行 + 删 7 个随功能移除的测试），`check.sh` 退出码 **0**（顺带修好既有的报告索引漂移）。方案与逐条复核记录见 `docs/ponytail-audit-optimization-plan-2026-09-04.md`。

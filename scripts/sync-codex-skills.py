@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -13,6 +14,31 @@ CLAUDE_SKILLS = ROOT / "skills"
 CODEX_SKILLS = ROOT / "codex-skills"
 WORKBUDDY_SOURCE = CLAUDE_SKILLS / "full-company-analysis-workbuddy.md"
 WORKBUDDY_TARGET = ROOT / "workbuddy-skills/full-company-analysis-workbuddy/SKILL.md"
+
+# 每个生成 SKILL.md 都带此标记（见 codex_body 的 adapter note）。
+# 孤儿判定以标记为准而非目录名：Codex-only 手写包（如 investment-memo-craft）
+# 无此标记，永远不会被误删。
+GENERATED_MARKER = "This skill is generated from `skills/"
+
+
+def find_generated_orphans(codex_dir: Path, source_names: set[str]) -> list[Path]:
+    """目标侧遍历：找出「带生成标记但源已删除」的整目录孤儿。
+
+    只标记本脚本生成过的目录；手写 Codex-only 包（无标记）与用户自建
+    目录一律不受影响。
+    """
+    orphans: list[Path] = []
+    if not codex_dir.is_dir():
+        return orphans
+    for child in sorted(codex_dir.iterdir()):
+        skill = child / "SKILL.md"
+        if not child.is_dir() or not skill.is_file():
+            continue
+        if child.name in source_names:
+            continue
+        if GENERATED_MARKER in skill.read_text(encoding="utf-8"):
+            orphans.append(child)
+    return orphans
 
 
 def split_frontmatter(text: str) -> tuple[str | None, str]:
@@ -103,8 +129,10 @@ def main() -> None:
 
     count = 0
     stale: list[str] = []
+    source_names: set[str] = set()
     for source in sorted(CLAUDE_SKILLS.glob("*.md")):
         name = source.stem
+        source_names.add(name)
         source_text = source.read_text(encoding="utf-8")
         target_dir = CODEX_SKILLS / name
         target = target_dir / "SKILL.md"
@@ -129,10 +157,16 @@ def main() -> None:
         WORKBUDDY_TARGET.write_text(workbuddy_content, encoding="utf-8")
 
     if check:
+        orphans = find_generated_orphans(CODEX_SKILLS, source_names)
         if stale:
             print("Codex skills are out of date:")
             for path in stale:
                 print(f"  {path}")
+        if orphans:
+            print("Orphaned generated Codex skill dirs (source deleted; rerun without --check to remove):")
+            for path in orphans:
+                print(f"  {path.relative_to(ROOT)}")
+        if stale or orphans:
             raise SystemExit(1)
         print(
             f"Checked {count} Codex skills and WorkBuddy adapter "
@@ -140,10 +174,17 @@ def main() -> None:
         )
         return
 
+    orphans = find_generated_orphans(CODEX_SKILLS, source_names)
+    for path in orphans:
+        shutil.rmtree(path)
     print(
         f"Generated {count} Codex skills and WorkBuddy adapter "
         f"in {CODEX_SKILLS.relative_to(ROOT)}"
     )
+    if orphans:
+        print(f"Removed {len(orphans)} orphaned generated skill dir(s):")
+        for path in orphans:
+            print(f"  {path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

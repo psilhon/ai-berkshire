@@ -217,9 +217,11 @@ class TestEquityHistoryCommand(OfflineAshareDataTestCase):
 class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
     def test_quote_and_valuation_return_false_without_quote(self, _curl):
+        # 候选①示踪步：quote/valuation 返回 CommandOutcome——CLI 契约（exit 1）
+        # 与旧 bool 时代逐字节一致；恒等断言相应升级为布尔断言。
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            self.assertIs(ashare_data.cmd_quote("INVALID"), False)
-            self.assertIs(ashare_data.cmd_valuation("INVALID"), False)
+            self.assertFalse(ashare_data.cmd_quote("INVALID"))
+            self.assertFalse(ashare_data.cmd_valuation("INVALID"))
 
     @mock.patch.object(ashare_data, "_curl_json")
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
@@ -242,8 +244,8 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_curl", return_value=_quote_raw())
     def test_quote_and_valuation_return_true_with_quote(self, _curl, _fetch):
         with redirect_stdout(StringIO()):
-            self.assertIs(ashare_data.cmd_quote("600036"), True)
-            self.assertIs(ashare_data.cmd_valuation("600036"), True)
+            self.assertTrue(ashare_data.cmd_quote("600036"))
+            self.assertTrue(ashare_data.cmd_valuation("600036"))
 
     @mock.patch.object(ashare_data, "_curl_json")
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
@@ -282,8 +284,8 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     )
     def test_quote_and_valuation_request_errors_return_false(self, _curl):
         with redirect_stderr(StringIO()) as error:
-            self.assertIs(ashare_data.cmd_quote("600036"), False)
-            self.assertIs(ashare_data.cmd_valuation("600036"), False)
+            self.assertFalse(ashare_data.cmd_quote("600036"))
+            self.assertFalse(ashare_data.cmd_valuation("600036"))
 
         self.assertIn("offline", error.getvalue())
 
@@ -1579,6 +1581,43 @@ class TestL3TriadCli(OfflineAshareDataTestCase):
         help_text = run_cli("report-list", "--help").stdout
         self.assertIn("--industry", help_text)
         self.assertIn("--limit", help_text)
+
+
+class TestCommandOutcomeContract(OfflineAshareDataTestCase):
+    """候选①示踪步（quote/valuation）的归一化返回结构契约。
+
+    CLI 契约冻结不变：退出码与 stdout 由 subprocess 级测试另行守护；
+    本类锁定的是**返回值编程接口**——数据进返回值，print 降为投影。
+    """
+
+    @mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8"))
+    @mock.patch.object(ashare_data, "_curl", return_value=_quote_raw())
+    def test_quote_returns_normalized_outcome_with_data(self, _curl, _fetch):
+        with redirect_stdout(StringIO()):
+            outcome = ashare_data.cmd_quote("600036")
+        self.assertIsInstance(outcome, ashare_data.CommandOutcome)
+        self.assertTrue(outcome.ok)
+        self.assertEqual(outcome.data["name"], "样本公司")
+        self.assertEqual(outcome.data["code"], "600036")
+        self.assertEqual(outcome.data["price"], "10.00")
+
+    @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
+    def test_quote_failure_carries_warning_not_exception(self, _curl):
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            outcome = ashare_data.cmd_quote("INVALID")
+        self.assertIsInstance(outcome, ashare_data.CommandOutcome)
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.warnings, "失败必须带可编程 warnings")
+        self.assertEqual(outcome.data, {})
+
+    def test_main_exits_one_on_failed_outcome(self):
+        """CLI 退出码契约冻结：CommandOutcome(ok=False) → exit 1（与旧 bool 一致）。"""
+        with mock.patch.object(ashare_data, "_curl", return_value='v_none="";'), \
+                mock.patch.object(sys, "argv", [TOOL, "quote", "INVALID"]), \
+                redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                ashare_data.main()
+        self.assertEqual(ctx.exception.code, 1)
 
 
 if __name__ == "__main__":

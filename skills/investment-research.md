@@ -331,7 +331,7 @@ python3 tools/financial_rigor.py three-scenario \
 
 ## 数据抽检（准出流程）
 
-报告写入文件后，**必须**执行数据抽检，通过后方可发布：
+报告写入文件后，**必须**执行数据抽检，通过后方可发布。**准出口径以 `tools/report_audit.py` 为单一真源**（默认 15% 随机抽样；偏差 ≤ 1% 准出，> 1% 打回；最低核验点数由工具内置），skill 层不另设口径：
 
 **Step 1 — 提取抽检清单（15%随机抽样）：**
 ```bash
@@ -423,7 +423,7 @@ python3 tools/report_audit.py verdict \
 
 ## 依赖与资源清单
 
-本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=~/ai-berkshire（按实际 checkout 位置解析）`）：
 
 | 依赖项 | 路径 | 用途 | 可达性 |
 |--------|------|------|--------|

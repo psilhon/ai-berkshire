@@ -1,17 +1,13 @@
 """rework 命令 —— 报告正文/artifact 类返工的有状态封装（lean 契约现代化版）。
 
 lean 契约（full-analysis-contract/lean-v1）已移除 sections / evidence_rules /
-artifact_id：Gate 改为校验「实质地板」（三锚 + 实质章节 + 字节下限）。这带来一点
-对 rework 单测的影响，本文件据此现代化：
+artifact_id：Gate 改为校验「实质地板」（三锚 + 实质章节 + 字节下限）。
 
-submit-result 走完整准入 admit_bundle(check_artifacts=True) → _substance_errors，
-而后者用 `heading.startswith("##")` 过滤 _section_blocks 的输出，但后者已把 `#`
-标记剥掉，导致 min_substantive_sections 永远无法满足、任何 PASS 报告都 ingest 失败
-（tools/full_analysis_gate.py:973，属 impl 缺陷，**不在此修改 tools/**）。
-rework 命令本身不调 admit_bundle，只读 runtime-state 与 manifest.skills[].attempts，
-因此 setUp 沿用 tests/test_full_analysis_correction.py 的既有约定：直接把
-「已接受 attempt」播种进 manifest 与 runtime-state，绕开损坏的 submit-result 链路，
-仅服务 rework 逻辑本身的单测。
+submit-result 全链路（admit_bundle(check_artifacts=True) → substance_errors 原文
+`^#{2,6}` 重扫实质章节）由 tests/test_full_analysis_e2e.py 的 canary 覆盖。rework
+命令本身不调 admit_bundle，只读 runtime-state 与 manifest.skills[].attempts，因此
+setUp 把「已接受 attempt」直接播种进 manifest 与 runtime-state——这是单元测试
+隔离手段（只测 rework 逻辑本身），非对 submit-result 链路的绕行。
 """
 
 import json

@@ -11,12 +11,13 @@
 （没有"明确选项"的门 = 用户无法真正选择；没有"未经确认不得" = 没有停止效力）。
 本脚本把「门必须具备的全部要素」变成机器断言：缺一项即红。
 
-骨架五要素（缺一即违规）：
-  1. 检查点            — 标明这是流程中的确认节点
-  2. 必须先向用户确认   — 确认义务的显式声明
-  3. 明确选项          — 必须给出可点选的具体选项，否则用户无从选择
-  4. 获得明确同意      — 必须等到明确同意（而非"未反对"）
-  5. 未经确认不得      — 停止效力：未确认时禁止自主执行
+真门三要素（(a) 类「用户确认门」缺一即违规，见 GATE_ELEMENTS）：
+  1. 必须先向用户确认   — 确认义务的显式声明
+  2. 明确选项          — 必须给出可点选的具体选项，否则用户无从选择
+  3. 停止效力          — 「未经确认不得…」（禁止式）或「获得明确同意后再继续」（许可式）
+
+其余 🔴 STOP 标记属 (b) 硬停止规则 / (c) 散文提及（见下方三语义注释），
+只计数并列 INFO，交人工判语义，不判红。
 
 用法：
   python3 scripts/check-stop-gates.py            # 校验（违规即 exit 1）
@@ -32,14 +33,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = ROOT / "skills"
 
-# 要素名 -> 匹配该要素的正则（任一命中即算具备）
-ELEMENTS: list[tuple[str, str]] = [
-    ("检查点", r"检查点"),
-    ("必须先向用户确认", r"必须先向用户确认|须先向用户确认|需先向用户确认"),
-    ("明确选项", r"明确选项|给出选项|选项[:：]"),
-    ("获得明确同意", r"获得明确同意|得到明确同意|明确同意后"),
-    ("未经确认不得", r"未经确认不得|未获确认不得|未经确认前不得"),
-]
+# 要素名 -> 匹配该要素的正则（任一命中即算具备）——见 GATE_ELEMENTS（唯一要素表）。
+# 历史注记：初版曾按「五要素」设计（含 检查点/获得明确同意 两个独立要素），
+# 实施时收敛为三要素：检查点并入标记本身，获得明确同意与未经确认不得
+# 合并为「停止效力」（许可式与禁止式等价）。此前的五要素 ELEMENTS 常量
+# 从未被 check() 引用（死常量），已于 v3.10.14 删除。
 
 STOP_RE = re.compile(r"🔴\s*STOP")
 
@@ -102,7 +100,7 @@ def check(skills_dir: Path = SKILLS_DIR) -> tuple[int, int, list[str]]:
                        if not re.search(pat, gate)]
             if missing:
                 violations.append(
-                    f"{path.relative_to(ROOT)}:{lineno} 缺要素 {missing}\n"
+                    f"{path.relative_to(skills_dir)}:{lineno} 缺要素 {missing}\n"
                     f"    原文: {gate[:160]}"
                 )
     return gates, others, violations

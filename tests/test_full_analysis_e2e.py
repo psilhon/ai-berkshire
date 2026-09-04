@@ -35,11 +35,9 @@ def build_compliant_report(registry_path, skill_id):
 
     lean 已移除 sections/evidence_rules/artifact_id：Gate 不再校验固定标题，
     改校验「实质地板」（数据截止日 + 数据来源 + 免责 + 足量实质章节 + 字节下限）。
-    注意：当前 impl 的 _substance_errors 仍按 contract sections 计数
-    （tools/full_analysis_gate.py:971），导致 min_substantive_sections 永远无法满足、
-    任何 PASS 报告都无法 ingest——这是已知 impl 缺陷，见 canary 的 expectedFailure 注释。
-    此处报告尽量贴近 lean 要求（三锚 + 多 ## 实质章节 + 字节下限），以便 impl 修复后
-    canary 直接转绿。
+    substance_errors 对实质章节按原文 `^#{2,6}` 直接重扫（不依赖被剥掉 # 标记的
+    section_blocks 输出），min_substantive_sections 可正常满足。本报告贴近 lean
+    要求（三锚 + 多 ## 实质章节 + 字节下限），供 canary 全链路 ingest。
     """
     reg = json.loads(Path(registry_path).read_text(encoding="utf-8"))
     skill = next(s for s in reg["skills"] if s["skill_id"] == skill_id)

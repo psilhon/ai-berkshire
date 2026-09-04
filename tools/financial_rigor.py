@@ -69,8 +69,8 @@ def fmt_number(d: Decimal, unit: str = "") -> str:
 # 1. Market Cap Verification (股价×总股本 vs 报告市值)
 # ---------------------------------------------------------------------------
 
-def verify_market_cap(price, shares, reported_cap, currency=""):
-    """Verify market cap = price × shares, compare with reported value."""
+def _mc_inputs(price, shares, reported_cap):
+    """市值验算共用校验+计算核心（文本/JSON 两路共用，候选②去重）。"""
     p = _require_finite("股价", price)
     if p <= 0:
         raise ValueError(f"股价必须为正数, 收到 {price}")
@@ -80,10 +80,15 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
     r = _require_finite("报告市值", reported_cap)
     if r <= 0:
         raise ValueError(f"报告市值必须为正数, 收到 {reported_cap}")
-
     calculated = _CTX.multiply(p, s)
     # 偏差全程 Decimal 计算, 不经过 float
     deviation = _CTX.divide(abs(calculated - r), r) * 100
+    return p, s, r, calculated, deviation
+
+
+def verify_market_cap(price, shares, reported_cap, currency=""):
+    """Verify market cap = price × shares, compare with reported value."""
+    p, s, r, calculated, deviation = _mc_inputs(price, shares, reported_cap)
 
     print("=" * 60)
     print("市值验算 (Market Cap Verification)")
@@ -113,12 +118,57 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
 # 2. Valuation Metrics Verification (估值指标验算)
 # ---------------------------------------------------------------------------
 
-def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
-                     dividend=None, revenue_per_share=None):
-    """Calculate and verify key valuation ratios from raw inputs."""
+def _valuation_metrics(price, eps=None, bvps=None, fcf_per_share=None,
+                       dividend=None, revenue_per_share=None):
+    """估值指标共用计算核心（文本/JSON 两路共用，候选②去重）。
+
+    返回 (p, metrics, skipped)。metrics: json_key -> Decimal；
+    skipped: [{"metric", "reason_code"}]。
+    """
     p = _require_finite("股价", price)
     if p <= 0:
         raise ValueError(f"股价必须为正数, 收到 {price}")
+
+    metrics, skipped = {}, {}
+    if eps is not None:
+        e = _require_finite("EPS", eps)
+        if e > 0:
+            metrics["pe"] = _CTX.divide(p, e)
+            metrics["earnings_yield_pct"] = _CTX.divide(e, p) * 100
+        else:
+            skipped["pe"] = "eps_non_positive"
+    if bvps is not None:
+        b = _require_finite("每股净资产", bvps)
+        if b != 0:
+            metrics["pb"] = _CTX.divide(p, b)
+            if eps is not None and exact(eps) != 0:
+                metrics["roe_pct"] = _CTX.divide(exact(eps), b) * 100
+        else:
+            skipped["pb"] = "bvps_zero"
+    if fcf_per_share is not None:
+        f = _require_finite("每股FCF", fcf_per_share)
+        if f != 0:
+            metrics["p_fcf"] = _CTX.divide(p, f)
+            metrics["fcf_yield_pct"] = _CTX.divide(f, p) * 100
+        else:
+            skipped["p_fcf"] = "fcf_zero"
+    if dividend is not None:
+        d = _require_finite("每股股息", dividend)
+        metrics["dividend_yield_pct"] = _CTX.divide(d, p) * 100
+    if revenue_per_share is not None:
+        rv = _require_finite("每股营收", revenue_per_share)
+        if rv != 0:
+            metrics["ps"] = _CTX.divide(p, rv)
+        else:
+            skipped["ps"] = "revenue_zero"
+    return p, metrics, skipped
+
+
+def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
+                     dividend=None, revenue_per_share=None):
+    """Calculate and verify key valuation ratios from raw inputs."""
+    p, metrics, skipped = _valuation_metrics(price, eps, bvps, fcf_per_share,
+                                             dividend, revenue_per_share)
 
     print("=" * 60)
     print("估值指标验算 (Valuation Verification)")
@@ -129,35 +179,35 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
     results = {}
 
     if eps is not None:
-        e = _require_finite("EPS", eps)
-        if e > 0:
-            pe = _CTX.divide(p, e)
+        if "pe" in metrics:
+            e = exact(eps)
+            pe = metrics["pe"]
             print(f"  PE (TTM):  {p} / {e} = {pe:.2f}x")
             results["PE"] = float(pe)
             # Earnings yield
-            ey = _CTX.divide(e, p) * 100
+            ey = metrics["earnings_yield_pct"]
             print(f"  盈利收益率: {ey:.2f}%")
         else:
             print(f"  PE: EPS ≤ 0 (亏损/不适用), 跳过 PE 与盈利收益率")
 
     if bvps is not None:
-        b = _require_finite("每股净资产", bvps)
-        if b != 0:
-            pb = _CTX.divide(p, b)
+        if "pb" in metrics:
+            b = exact(bvps)
+            pb = metrics["pb"]
             print(f"  PB:        {p} / {b} = {pb:.2f}x")
             results["PB"] = float(pb)
-            if eps is not None and exact(eps) != 0:
-                roe = _CTX.divide(exact(eps), b) * 100
+            if "roe_pct" in metrics:
+                roe = metrics["roe_pct"]
                 print(f"  ROE:       {exact(eps)} / {b} = {roe:.2f}%")
                 results["ROE"] = float(roe)
         else:
             print(f"  PB: 每股净资产为0, 无法计算, 跳过")
 
     if fcf_per_share is not None:
-        f = _require_finite("每股FCF", fcf_per_share)
-        if f != 0:
-            fcf_yield = _CTX.divide(f, p) * 100
-            pfcf = _CTX.divide(p, f)
+        if "p_fcf" in metrics:
+            f = exact(fcf_per_share)
+            pfcf = metrics["p_fcf"]
+            fcf_yield = metrics["fcf_yield_pct"]
             print(f"  P/FCF:     {p} / {f} = {pfcf:.2f}x")
             print(f"  FCF Yield: {fcf_yield:.2f}%")
             results["P_FCF"] = float(pfcf)
@@ -166,16 +216,16 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
             print(f"  P/FCF: FCF为0, 无法计算, 跳过")
 
     if dividend is not None:
-        d = _require_finite("每股股息", dividend)
-        div_yield = _CTX.divide(d, p) * 100
+        d = exact(dividend)
+        div_yield = metrics["dividend_yield_pct"]
         print(f"  股息率:    {d} / {p} = {div_yield:.2f}%")
         results["Dividend_Yield"] = float(div_yield)
 
     if revenue_per_share is not None:
-        r = _require_finite("每股营收", revenue_per_share)
-        if r != 0:
-            ps = _CTX.divide(p, r)
-            print(f"  PS:        {p} / {r} = {ps:.2f}x")
+        if "ps" in metrics:
+            rv = exact(revenue_per_share)
+            ps = metrics["ps"]
+            print(f"  PS:        {p} / {rv} = {ps:.2f}x")
             results["PS"] = float(ps)
         else:
             print(f"  PS: 每股营收为0, 无法计算, 跳过")
@@ -189,8 +239,12 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
 # 3. Cross-Source Data Validation (多源交叉验证)
 # ---------------------------------------------------------------------------
 
-def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
-    """Compare a data point across multiple sources, flag discrepancies."""
+def _cross_validate_core(field_name, source_values: dict, tolerance_pct):
+    """交叉验证共用计算核心（文本/JSON 两路共用，候选②去重）。
+
+    返回 (values, tol, median, rows, all_ok)；
+    rows: [{"source", "value", "deviation_pct", "within"}]（Decimal/bool 原生值）。
+    """
     if len(source_values) < 2:
         raise ValueError(
             f"交叉验证至少需要 2 个独立来源, 收到 {len(source_values)} 个"
@@ -199,15 +253,8 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
     values = {k: _require_finite(f"来源[{k}]", v) for k, v in source_values.items()}
     tol = _require_finite("容差", tolerance_pct)
 
-    print("=" * 60)
-    print(f"交叉验证: {field_name} (Cross-Validation)")
-    print("=" * 60)
-
-    sources = list(values.keys())
-    nums = list(values.values())
-
     # Find median as reference — 全程 Decimal, 不经过 float
-    sorted_vals = sorted(nums)
+    sorted_vals = sorted(values.values())
     n = len(sorted_vals)
     if n % 2 == 1:
         median = sorted_vals[n // 2]
@@ -217,17 +264,34 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
     if median == 0:
         raise ValueError(f"{field_name} 的中位数为 0, 无法计算相对偏差")
 
-    print(f"  数据来源数: {len(sources)}")
+    rows, all_ok = [], True
+    for src, val in values.items():
+        dev = _CTX.divide(abs(val - median), abs(median)) * 100
+        within = dev <= tol
+        if not within:
+            all_ok = False
+        rows.append({"source": src, "value": val,
+                     "deviation_pct": dev, "within": within})
+    return values, tol, median, rows, all_ok
+
+
+def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
+    """Compare a data point across multiple sources, flag discrepancies."""
+    values, tol, median, rows, all_ok = _cross_validate_core(
+        field_name, source_values, tolerance_pct)
+
+    print("=" * 60)
+    print(f"交叉验证: {field_name} (Cross-Validation)")
+    print("=" * 60)
+
+    print(f"  数据来源数: {len(values)}")
     print(f"  参考中位数: {fmt_number(median)} {unit}")
     print()
 
-    all_ok = True
-    for src, val in values.items():
-        dev = _CTX.divide(abs(val - median), abs(median)) * 100
-        status = "✅" if dev <= tol else "❌"
-        if dev > tol:
-            all_ok = False
-        print(f"  {status} {src:20s}: {fmt_number(val)} {unit}  (偏差 {dev:.2f}%)")
+    for row in rows:
+        status = "✅" if row["within"] else "❌"
+        print(f"  {status} {row['source']:20s}: {fmt_number(row['value'])} {unit}"
+              f"  (偏差 {row['deviation_pct']:.2f}%)")
 
     print()
     if all_ok:
@@ -249,12 +313,13 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
 _BENFORD = {d: math.log10(1 + 1/d) for d in range(1, 10)}
 
 
-def benford_check(values: list):
-    """Quick Benford's Law check on a list of financial values."""
-    print("=" * 60)
-    print("Benford定律检测 (Financial Data Fabrication Check)")
-    print("=" * 60)
+def _benford_core(values: list):
+    """Benford 共用计算核心（文本/JSON 两路共用，候选②去重）。
 
+    返回 (sample_size, stats)。sample_size 为有效首位数个数；
+    stats 为 None 表示样本不足（<50）；否则含 quantize 后的 mad/chi2、
+    符合度代码、is_conforming、observed 分布与 counts。
+    """
     # Extract leading significant digits — Decimal 全程:
     # 大数不过 float 不溢出; 也避免 int(10**log10(v)) 的浮点截位错误 (如 8 → 7)
     digits = []
@@ -266,10 +331,8 @@ def benford_check(values: list):
 
     n = len(digits)
     if n < 50:
-        print(f"  ⚠️  样本量不足: {n} < 50, Benford分析不可靠")
-        return None
+        return n, None
 
-    # Observed distribution
     counts = {}
     for d in digits:
         counts[d] = counts.get(d, 0) + 1
@@ -281,15 +344,46 @@ def benford_check(values: list):
     # Chi-square
     chi2 = sum((counts.get(d, 0) - _BENFORD[d] * n) ** 2 / (_BENFORD[d] * n) for d in range(1, 10))
 
-    # Conformity
-    if mad < 0.006:
-        conformity = "Close (高度符合)"
-    elif mad < 0.012:
-        conformity = "Acceptable (可接受)"
-    elif mad < 0.015:
-        conformity = "Marginally Acceptable (边缘)"
+    # 量化到 6 位, 消除跨平台 libm ULP 边界翻转 (v1.4 §10.2)
+    mad_q = Decimal(str(mad)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
+    chi2_q = Decimal(str(chi2)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
+    if mad_q < Decimal("0.006"):
+        conformity = "CLOSE"
+    elif mad_q < Decimal("0.012"):
+        conformity = "ACCEPTABLE"
+    elif mad_q < Decimal("0.015"):
+        conformity = "MARGINAL"
     else:
-        conformity = "Nonconforming (不符合 ⚠️)"
+        conformity = "NONCONFORMING"
+    is_conforming = mad_q < Decimal("0.015")
+    stats = {"mad": mad_q, "chi2": chi2_q, "conformity": conformity,
+             "is_conforming": is_conforming, "observed": observed, "counts": counts}
+    return n, stats
+
+
+_BENFORD_LABELS = {
+    "CLOSE": "Close (高度符合)",
+    "ACCEPTABLE": "Acceptable (可接受)",
+    "MARGINAL": "Marginally Acceptable (边缘)",
+    "NONCONFORMING": "Nonconforming (不符合 ⚠️)",
+}
+
+
+def benford_check(values: list):
+    """Quick Benford's Law check on a list of financial values."""
+    print("=" * 60)
+    print("Benford定律检测 (Financial Data Fabrication Check)")
+    print("=" * 60)
+
+    n, stats = _benford_core(values)
+    if stats is None:
+        print(f"  ⚠️  样本量不足: {n} < 50, Benford分析不可靠")
+        return None
+
+    mad = stats["mad"]
+    chi2 = stats["chi2"]
+    conformity = _BENFORD_LABELS[stats["conformity"]]
+    observed = stats["observed"]
 
     print(f"  样本量:    {n}")
     print(f"  MAD:       {mad:.6f}")
@@ -308,7 +402,7 @@ def benford_check(values: list):
         print(f"  {d:>6d} {obs:>8.3f} {exp:>12.3f} {dev:>+8.3f}{flag}")
 
     print()
-    is_ok = mad < 0.015
+    is_ok = stats["is_conforming"]
     if is_ok:
         print("  ✅ 数据首位数字分布符合Benford定律")
     else:
@@ -350,6 +444,28 @@ def _expand_round(expr: str) -> str:
     return expr
 
 
+def _calc_eval(expr: str):
+    """calc 共用求值核心（文本/JSON 两路共用，候选②去重）。
+
+    返回 (value, expanded, err)：value 为 Decimal 或 None；
+    expanded 为展开 round 后的表达式（展开失败时为 None）；
+    err 为 None 或 {"code", "message"}，code ∈ {"unsafe_expression", "calc_error"}。
+    """
+    try:
+        expr = _expand_round(expr)
+    except ValueError as e:
+        return None, None, {"code": "unsafe_expression", "message": str(e)}
+    if not all(c in _CALC_ALLOWED for c in expr.replace(" ", "")):
+        return None, expr, {"code": "unsafe_expression", "message": "表达式含非法字符"}
+    try:
+        # Wrap each numeric literal (incl. scientific notation) in Decimal(...)
+        # so evaluation never touches binary floats
+        dec_expr = _NUMBER_RE.sub(r"Decimal('\g<0>')", expr)
+        return exact(eval(dec_expr, {"__builtins__": {}}, {"Decimal": Decimal})), expr, None
+    except Exception as e:  # noqa: BLE001 — 计算错误一律降级为 ERROR
+        return None, expr, {"code": "calc_error", "message": str(e)}
+
+
 def exact_calc(expr: str):
     """Evaluate a financial expression with exact decimal arithmetic.
 
@@ -359,31 +475,20 @@ def exact_calc(expr: str):
     print("精确计算 (Exact Calculator)")
     print("=" * 60)
 
-    # Safe evaluation: only allow numbers and arithmetic
-    # round(EXPR, N) 先展开为量化字面量（内层单独过白名单），再校验整体
-    try:
-        expr = _expand_round(expr)
-    except ValueError as e:
-        print(f"  ❌ 不安全的表达式: {e}")
-        return None
-    allowed = set("0123456789.+-*/() eE")
-    if not all(c in allowed for c in expr.replace(" ", "")):
-        print(f"  ❌ 不安全的表达式: {expr}")
+    value, expanded, err = _calc_eval(expr)
+    if err:
+        # round 展开失败打印原因；整体白名单不过打印展开后表达式（与历史输出一致）
+        detail = expanded if (err["code"] == "unsafe_expression"
+                              and expanded is not None) else err["message"]
+        print(f"  ❌ 不安全的表达式: {detail}" if err["code"] == "unsafe_expression"
+              else f"  ❌ 计算错误: {err['message']}")
         return None
 
-    try:
-        # Wrap each numeric literal (incl. scientific notation) in Decimal(...)
-        # so evaluation never touches binary floats
-        dec_expr = _NUMBER_RE.sub(r"Decimal('\g<0>')", expr)
-        result = eval(dec_expr, {"__builtins__": {}}, {"Decimal": Decimal})
-        d_result = exact(result)
-        print(f"  表达式: {expr}")
-        print(f"  结果:   {fmt_number(d_result)}")
-        print(f"  精确值: {d_result}")
-        return d_result
-    except Exception as e:
-        print(f"  ❌ 计算错误: {e}")
-        return None
+    d_result = value
+    print(f"  表达式: {expanded}")
+    print(f"  结果:   {fmt_number(d_result)}")
+    print(f"  精确值: {d_result}")
+    return d_result
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +609,20 @@ def _capture(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
 
+# 判决原语单一真源（2026-08-30 候选②）：outcome → exit_code 映射。
+# 此前 (outcome, exit_code) 二元组散布各 _json_* 与文本分发共 7 处、
+# WARN 与 PASS 两套"通过"词汇并存；统一自此表出。
+# 语义：0=验证通过（PASS/WARN 均属通过带警告）/ 1=业务不通过（FAIL/ERROR）/
+# 2=证据不足（INSUFFICIENT）。与 report_audit 三态、mk 退出码分属不同语义轴，
+# 不强行跨工具合一（那是提交有效性/抽检准出，不是验算判决）。
+_OUTCOME_EXIT = {"PASS": 0, "WARN": 0, "FAIL": 1, "ERROR": 1, "INSUFFICIENT": 2}
+
+
+def _verdict(outcome: str) -> tuple[str, int]:
+    """outcome → (outcome, exit_code)。exit_code 不允许本地另写。"""
+    return outcome, _OUTCOME_EXIT[outcome]
+
+
 def _envelope(operation, inputs, result, outcome, exit_code, warnings=None, errors=None):
     is_pass = True if outcome == "PASS" else False if outcome == "FAIL" else None
     return {
@@ -520,23 +639,15 @@ def _envelope(operation, inputs, result, outcome, exit_code, warnings=None, erro
 
 
 def _json_market_cap(price, shares, reported_cap, currency=""):
-    p = _require_finite("股价", price)
-    if p <= 0:
-        raise ValueError(f"股价必须为正数, 收到 {price}")
-    s = _require_finite("总股本", shares)
-    if s <= 0:
-        raise ValueError(f"总股本必须为正数, 收到 {shares}")
-    r = _require_finite("报告市值", reported_cap)
-    if r <= 0:
-        raise ValueError(f"报告市值必须为正数, 收到 {reported_cap}")
-    calculated = _CTX.multiply(p, s)
-    deviation = _CTX.divide(abs(calculated - r), r) * 100
+    p, s, r, calculated, deviation = _mc_inputs(price, shares, reported_cap)
     if deviation > Decimal("5"):
-        band, outcome, exit_code = "FAIL", "FAIL", 1
+        band = "FAIL"
     elif deviation > Decimal("1"):
-        band, outcome, exit_code = "WARN", "PASS", 0
+        band = "WARN"
     else:
-        band, outcome, exit_code = "PASS", "PASS", 0
+        band = "PASS"
+    # band 是偏差分带；outcome 是判决原语——WARN 属于带警告的通过（PASS）
+    outcome, exit_code = _verdict("FAIL" if band == "FAIL" else "PASS")
     result = {
         "calculated_market_cap": _dstr(calculated),
         "reported_market_cap": _dstr(r),
@@ -550,44 +661,13 @@ def _json_market_cap(price, shares, reported_cap, currency=""):
 
 def _json_valuation(price, eps=None, bvps=None, fcf_per_share=None,
                     dividend=None, revenue_per_share=None):
-    p = _require_finite("股价", price)
-    if p <= 0:
-        raise ValueError(f"股价必须为正数, 收到 {price}")
-    metrics = {}
-    skipped = []
-    if eps is not None:
-        e = _require_finite("EPS", eps)
-        if e > 0:
-            metrics["pe"] = _dstr(_CTX.divide(p, e))
-            metrics["earnings_yield_pct"] = _dstr(_CTX.divide(e, p) * 100)
-        else:
-            skipped.append({"metric": "pe", "reason_code": "eps_non_positive"})
-    if bvps is not None:
-        b = _require_finite("每股净资产", bvps)
-        if b != 0:
-            metrics["pb"] = _dstr(_CTX.divide(p, b))
-            if eps is not None and exact(eps) != 0:
-                metrics["roe_pct"] = _dstr(_CTX.divide(exact(eps), b) * 100)
-        else:
-            skipped.append({"metric": "pb", "reason_code": "bvps_zero"})
-    if fcf_per_share is not None:
-        f = _require_finite("每股FCF", fcf_per_share)
-        if f != 0:
-            metrics["p_fcf"] = _dstr(_CTX.divide(p, f))
-            metrics["fcf_yield_pct"] = _dstr(_CTX.divide(f, p) * 100)
-        else:
-            skipped.append({"metric": "p_fcf", "reason_code": "fcf_zero"})
-    if dividend is not None:
-        d = _require_finite("每股股息", dividend)
-        metrics["dividend_yield_pct"] = _dstr(_CTX.divide(d, p) * 100)
-    if revenue_per_share is not None:
-        rv = _require_finite("每股营收", revenue_per_share)
-        if rv != 0:
-            metrics["ps"] = _dstr(_CTX.divide(p, rv))
-        else:
-            skipped.append({"metric": "ps", "reason_code": "revenue_zero"})
-    outcome, exit_code = ("PASS", 0) if metrics else ("INSUFFICIENT", 2)
-    result = {"metrics": metrics, "skipped": skipped}
+    p, metrics, skipped = _valuation_metrics(price, eps, bvps, fcf_per_share,
+                                             dividend, revenue_per_share)
+    outcome, exit_code = _verdict("PASS" if metrics else "INSUFFICIENT")
+    result = {
+        "metrics": {k: _dstr(v) for k, v in metrics.items()},
+        "skipped": [{"metric": m, "reason_code": rc} for m, rc in skipped.items()],
+    }
     given = [("price", price), ("eps", eps), ("bvps", bvps),
              ("fcf_per_share", fcf_per_share), ("dividend", dividend),
              ("revenue_per_share", revenue_per_share)]
@@ -596,96 +676,42 @@ def _json_valuation(price, eps=None, bvps=None, fcf_per_share=None,
 
 
 def _json_cross_validate(field_name, source_values, unit="", tolerance_pct=Decimal("2.0")):
-    if len(source_values) < 2:
-        raise ValueError(
-            f"交叉验证至少需要 2 个独立来源, 收到 {len(source_values)} 个"
-            f"（项目规则: 关键数据至少 2 个独立来源交叉验证）")
-    values = {k: _require_finite(f"来源[{k}]", v) for k, v in source_values.items()}
-    tol = _require_finite("容差", tolerance_pct)
-    sorted_vals = sorted(values.values())
-    n = len(sorted_vals)
-    if n % 2 == 1:
-        median = sorted_vals[n // 2]
-    else:
-        median = _CTX.divide(_CTX.add(sorted_vals[n//2-1], sorted_vals[n//2]), Decimal("2"))
-    if median == 0:
-        raise ValueError(f"{field_name} 的中位数为 0, 无法计算相对偏差")
-    sources = []
-    all_ok = True
-    for src, val in values.items():
-        dev = _CTX.divide(abs(val - median), abs(median)) * 100
-        within = dev <= tol
-        if not within:
-            all_ok = False
-        sources.append({"source": src, "value": _dstr(val),
-                        "deviation_pct": _dstr(dev), "within_tolerance": bool(within)})
+    values, tol, median, rows, all_ok = _cross_validate_core(
+        field_name, source_values, tolerance_pct)
+    sources = [{"source": row["source"], "value": _dstr(row["value"]),
+                "deviation_pct": _dstr(row["deviation_pct"]),
+                "within_tolerance": bool(row["within"])} for row in rows]
     result = {"consensus": _dstr(median), "tolerance_pct": _dstr(tol),
               "sources": sources, "all_consistent": all_ok}
-    outcome, exit_code = ("PASS", 0) if all_ok else ("FAIL", 1)
+    outcome, exit_code = _verdict("PASS" if all_ok else "FAIL")
     inputs = {"field": field_name, "unit": unit,
               "values": {k: _dstr(v) for k, v in values.items()}}
     return _envelope("cross-validate", inputs, result, outcome, exit_code)
 
 
 def _json_benford(values):
-    digits = []
-    for v in values:
-        d = v if isinstance(v, Decimal) else Decimal(str(v))
-        if not d.is_finite() or d == 0:
-            continue
-        digits.append(d.as_tuple().digits[0])
-    n = len(digits)
-    if n < 50:
+    n, stats = _benford_core(values)
+    if stats is None:
         result = {"sample_size": n, "mad": None, "chi_square": None,
                   "conformity": "INSUFFICIENT", "is_conforming": None}
         return _envelope("benford", {"count": len(values)}, result, "INSUFFICIENT", 2)
-    counts = {}
-    for d in digits:
-        counts[d] = counts.get(d, 0) + 1
-    observed = {d: counts.get(d, 0) / n for d in range(1, 10)}
-    mad = sum(abs(observed.get(d, 0) - _BENFORD[d]) for d in range(1, 10)) / 9
-    chi2 = sum((counts.get(d, 0) - _BENFORD[d] * n) ** 2 / (_BENFORD[d] * n)
-               for d in range(1, 10))
-    # 量化到 6 位, 消除跨平台 libm ULP 边界翻转 (v1.4 §10.2)
-    mad_q = Decimal(str(mad)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
-    chi2_q = Decimal(str(chi2)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
-    if mad_q < Decimal("0.006"):
-        conformity = "CLOSE"
-    elif mad_q < Decimal("0.012"):
-        conformity = "ACCEPTABLE"
-    elif mad_q < Decimal("0.015"):
-        conformity = "MARGINAL"
-    else:
-        conformity = "NONCONFORMING"
-    is_conforming = mad_q < Decimal("0.015")
-    result = {"sample_size": n, "mad": _dstr(mad_q), "chi_square": _dstr(chi2_q),
-              "conformity": conformity, "is_conforming": is_conforming}
-    outcome, exit_code = ("PASS", 0) if is_conforming else ("FAIL", 1)
+    result = {"sample_size": n, "mad": _dstr(stats["mad"]),
+              "chi_square": _dstr(stats["chi2"]),
+              "conformity": stats["conformity"],
+              "is_conforming": stats["is_conforming"]}
+    outcome, exit_code = _verdict("PASS" if stats["is_conforming"] else "FAIL")
     return _envelope("benford", {"count": len(values)}, result, outcome, exit_code)
 
 
 def _json_calc(expr):
-    allowed = set("0123456789.+-*/() eE")
-    try:
-        expr = _expand_round(expr)
-    except ValueError as e:
-        result = {"expression": expr, "value": None}
-        return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
-                         errors=[{"code": "unsafe_expression", "message": str(e)}])
-    if not all(c in allowed for c in expr.replace(" ", "")):
-        result = {"expression": expr, "value": None}
-        return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
-                         errors=[{"code": "unsafe_expression", "message": "表达式含非法字符"}])
-    try:
-        expr = _expand_round(expr)
-        dec_expr = _NUMBER_RE.sub(r"Decimal('\g<0>')", expr)
-        value = exact(eval(dec_expr, {"__builtins__": {}}, {"Decimal": Decimal}))
-        result = {"expression": expr, "value": _dstr(value)}
-        return _envelope("calc", {"expr": expr}, result, "PASS", 0)
-    except Exception as e:  # noqa: BLE001 — 计算错误一律降级为 ERROR
-        result = {"expression": expr, "value": None}
-        return _envelope("calc", {"expr": expr}, result, "ERROR", 1,
-                         errors=[{"code": "calc_error", "message": str(e)}])
+    value, expanded, err = _calc_eval(expr)
+    expr_out = expanded if expanded is not None else expr
+    result = {"expression": expr_out,
+              "value": None if value is None else _dstr(value)}
+    if err:
+        return _envelope("calc", {"expr": expr_out}, result, "ERROR", 1,
+                         errors=[err])
+    return _envelope("calc", {"expr": expr_out}, result, *_verdict("PASS"))
 
 
 def _json_three_scenario(price, eps, shares, growth, pe, years=3, currency=""):
@@ -973,11 +999,14 @@ Examples:
         sys.exit(0 if ok else 1)
     elif args.command == "verify-valuation":
         try:
-            verify_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
-                             args.dividend, args.revenue_per_share)
+            results = verify_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
+                                       args.dividend, args.revenue_per_share)
         except ValueError as e:
             print(f"❌ 参数错误: {e}")
             sys.exit(2)
+        # 恒真修复（候选②）：无任何指标可算（如只给价格）不得按成功退出——
+        # 与 --json 路径 INSUFFICIENT/2 对齐（此前无论是否有指标都 exit 0）。
+        sys.exit(0 if results else 2)
     elif args.command == "cross-validate":
         try:
             # parse_float=Decimal: JSON 浮点直接进 Decimal, 杜绝 1e999 → inf

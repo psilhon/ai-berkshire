@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import full_analysis_gate as gate  # noqa: E402
+import full_analysis_correction as correction  # noqa: E402  # correction 分区（候选⑩外移）
 import full_analysis_runtime as runtime  # noqa: E402
 import full_analysis_audit as audit_tool  # noqa: E402
 import full_analysis_doctor as doctor  # noqa: E402
@@ -194,12 +195,12 @@ def main(argv=None) -> int:
                 duration_ms=args.duration_ms, cache_hit=args.cache_hit))
             return 0
         if args.command == "submit-result": emit(runtime.submit_result(root, Path(args.registry), Path(args.result))); return 0
-        if args.command == "submit-correction": return gate.cmd_submit_correction(args)
+        if args.command == "submit-correction": return correction.cmd_submit_correction(args)
         if args.command == "rework": emit(runtime.rework(root, args.work_unit_id, args.reason)); return 0
-        if args.command == "self-check": return gate.cmd_self_check(args)
-        if args.command == "register-summary": return gate.cmd_register_summary(args)
-        if args.command == "render-html": return gate.cmd_render_html(args)
-        if args.command == "finalize": return gate.cmd_finalize(args)
+        # Gate 意图命令（register-summary/finalize/render-html/self-check/…）
+        # 统一走 gate.GATE_COMMANDS 唯一 dispatch 表（候选⑩），不再各写一份。
+        if args.command in gate.GATE_COMMANDS:
+            return gate.GATE_COMMANDS[args.command](args)
         if args.command == "review":
             if args.review_command == "prepare":
                 return review.cmd_prepare(args)

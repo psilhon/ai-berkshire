@@ -46,6 +46,11 @@ def _fetch_rows(
         page += 1
 
 
+# 公开别名：ashare_data 文本 CLI 复用同一分页实现（2026-08-30 候选⑧：
+# source-level adapter 单一真源——此前 ashare_data._fetch_datacenter_rows 是逐字第二实现）。
+fetch_datacenter_rows = _fetch_rows
+
+
 def fetch_history(
     code: str,
     *,

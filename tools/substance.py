@@ -49,11 +49,6 @@ NAMED_DISSENT_DEFAULT = 2               # 扇出类需 >=2 角色在分歧处交
 # 实质小节判定门槛（归一化后字符数）：低于此值视为"一句话带过/占位"，不计入实质章节。
 # 防凑数的关键闸门——逼出真论证（数据/对比/推演），而非短占位。非"写作字数目标"。
 SUBSTANTIVE_MIN_CHARS = 150
-NON_SUBSTANTIVE_SECTION_IDS = {
-    "data_cutoff", "sources_scope", "limitations", "research_disclaimer",
-    "downstream_evidence", "contract_calculations", "command_receipts",
-    "source_dates", "warnings_gaps",
-}
 NA_PREDICATE_FIELDS = {
     "has_comparable_financial_history": "has_comparable_financial_history",
     "has_investable_price": "has_investable_price",
@@ -110,7 +105,6 @@ def substance_errors(skill: dict, text: str) -> list[str]:
     不依赖字节总数，也不强行匹配 contract 的小节标题原文（避免拒绝措辞不同但扎实的报告），
     只校验可机器核验的"结果"信号：
       - 有实质内容的小节数（每节足够正文/含表格/含数字，防空壳/纯标题）
-      - 分歧/反面检验标记数（防片面，逼出不同视角交锋）
       - 扇出类具名分歧（>=2 角色在分歧处交锋）
       - 标题占比（防骨架/注水）
     contract.sections 是确定性准出契约；required/min_content_chars/min_substantive_sections
@@ -150,12 +144,7 @@ def substance_errors(skill: dict, text: str) -> list[str]:
             f"实质章节 {len(substantive_bodies)} < 下限 {required_substantive}"
             "（重复正文只计一次）")
 
-    # 2. 分歧 / 反面检验标记（防片面，逼出不同视角交锋）
-    dissent_pts = len(DISSENT_RE.findall(text))
-    need_d = skill.get("min_dissent_points", 0)
-    if need_d and dissent_pts < need_d:
-        errors.append(f"分歧/反面检验标记 {dissent_pts} < 下限 {need_d}（报告片面，缺不同视角交锋）")
-    # 3. 扇出类具名分歧（>=2 角色在分歧处交锋）
+    # 2. 扇出类具名分歧（>=2 角色在分歧处交锋）
     if stype == "fanout":
         roles = (skill.get("roles") or {}).get("required_roles", [])
         names = [ROLE_NAME_MAP.get(r, r) for r in roles if r != "integrator"]
@@ -168,13 +157,13 @@ def substance_errors(skill: dict, text: str) -> list[str]:
                 named += 1
         if named < NAMED_DISSENT_DEFAULT:
             errors.append(f"具名分歧（>=2 角色交锋）{named} < 下限 {NAMED_DISSENT_DEFAULT}")
-    # 4. 标题占比（防骨架/注水）
+    # 3. 标题占比（防骨架/注水）
     if text:
         head_chars = sum(len(h) for h in re.findall(r"^#{1,6}\s.*$", text, re.M))
         ratio = head_chars / len(text)
         if ratio > HEADING_RATIO_CAP:
             errors.append(f"标题占比 {ratio:.2f} > {HEADING_RATIO_CAP}（骨架/注水嫌疑）")
-    # 5. ## 后紧跟 ### 诊断（帮助 Agent 定位"正文为 0"的具体章节）
+    # 4. ## 后紧跟 ### 诊断（帮助 Agent 定位"正文为 0"的具体章节）
     lines = text.splitlines()
     for i, ln in enumerate(lines):
         m_h2 = re.match(r"^##\s+(.+)$", ln)
@@ -187,7 +176,7 @@ def substance_errors(skill: dict, text: str) -> list[str]:
                 errors.append(
                     f"章节「{m_h2.group(1).strip()}」后紧跟 ### 子标题，"
                     "缺少正文段落（需在 ## 与 ### 之间插入 ≥150 字正文）")
-    # 6. lean 契约 substance 底线：报告必须声明数据截止日、来源、免责（可信度三锚）。
+    # 5. lean 契约 substance 底线：报告必须声明数据截止日、来源、免责（可信度三锚）。
     # 不强制固定标题，但要求内容层面出现这三要素；缺失即视为不可发布。
     sub = skill.get("substance", {})
     if sub.get("require_as_of") and not re.search(r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}", text):

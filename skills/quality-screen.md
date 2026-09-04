@@ -298,7 +298,7 @@ WebSearch 的角色：非 A 股标的的数据收集；A 股关键数据（尤�
 
 ## 依赖与资源清单
 
-本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=/Users/psilhon/WorkSpace/stock/berkshire`）：
+本 Skill 依赖以下外部工具与资源（根路径 `$BERKSHIRE_ROOT=~/ai-berkshire（按实际 checkout 位置解析）`）：
 
 | 依赖项 | 路径 | 用途 | 可达性 |
 |--------|------|------|--------|

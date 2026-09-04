@@ -45,3 +45,20 @@
 - 仓库恢复为 **stdlib 零依赖**。
 
 **恢复条件**：若未来确需零 token 前复权 OHLC 且已验证依赖可用，可从 git 历史（`v3.10.12` 及更早）取回该文件，并按本 ADR 原前提重新评估。
+
+---
+
+## 2026-09-04 修订②：私有函数去重边界（候选⑧ source-level adapter 收敛）
+
+**触发**：2026-08-30 架构评审候选⑧——ashare_data 的 `_em_secu_code` / `_qq_code` / `_em_secid` / `_fetch_datacenter_rows` 与 `ashare_plugin` 的 `CodeIdentity` / `fundamentals._fetch_rows` 逐字同构，构成第二实现。
+
+**与本文第 1 条的关系**：第 1 条裁决的是「测试直捅私有函数是合法 internal seam」——**继续有效**。候选⑧消除的不是测试缝，而是**生产代码里的第二实现**（同一映射逻辑写两遍，单边改动即分叉）。两者正交：去重后私有函数名字、签名、行为、测试全部保留，只是函数体改为委托单一真源。
+
+**修订决策**：
+
+- `_em_secu_code` / `_em_secid` → 委托 `CodeIdentity.secu_code` / `.secid`（`InvalidCodeError` 继承 `ValueError`，异常语义不变）。
+- `_qq_code` → 有效代码委托 `CodeIdentity.quote_code`；**保留无效代码的旧前缀映射垫片**——`cmd_quote("INVALID") → False` 的宽限降级路径被测试锁定，严格化属单独立项。
+- `_fetch_datacenter_rows` → 委托 `ashare_plugin.fundamentals.fetch_datacenter_rows`（原 `_fetch_rows` 转公开别名）；`_curl_json` 经 TransportClient 适配注入，`TransportError` 转回 `ConnectionError` 保持调用方语义。
+- **分页方言合并与 cmd_quote 改用 fetch_quote 单独立项**，本修订不含。
+
+**后果**：测试零改动（142 个 ashare 用例全绿）；代码→插件单一真源；遗留一个显式声明的 `_qq_code` 兼容垫片（无效代码路径），其移除条件 = cmd_quote 对无效代码改抛 ValueError 并更新对应测试。

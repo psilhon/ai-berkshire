@@ -836,5 +836,62 @@ class TestPreflightHelpers(unittest.TestCase):
         self.assertEqual(diag["rc"], 1)
 
 
+class TestVerdictPrimitiveAndValuationExit(unittest.TestCase):
+    """候选②（判决原语收敛）+ cmd_valuation 恒真修复的守护测试。
+
+    病根：文本路径 `verify-valuation --price 100`（无任何指标可算）恒 exit 0，
+    与 --json 路径的 INSUFFICIENT/2 打架——同一输入两个退出码，gate 语义重放
+    与文本退出码不一致。修复后：有指标 → 0；无指标 → 2（证据不足）。
+    """
+
+    SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "financial_rigor.py"
+
+    def _run(self, *argv):
+        return subprocess.run([sys.executable, str(self.SCRIPT), *argv],
+                              capture_output=True, text=True)
+
+    def test_valuation_text_exit_2_when_no_metrics(self):
+        # 恒真修复（红→绿）：只给价格没有任何指标输入 → 证据不足，非成功
+        proc = self._run("verify-valuation", "--price", "100")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
+    def test_valuation_text_exit_0_with_metrics(self):
+        proc = self._run("verify-valuation", "--price", "100", "--eps", "5")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_valuation_text_and_json_agree(self):
+        # 同一输入两个通道退出码必须一致（3 组输入全覆盖三态）
+        cases = [
+            (["--price", "100"], 2),
+            (["--price", "100", "--eps", "5"], 0),
+        ]
+        for argv, expected in cases:
+            text_rc = self._run("verify-valuation", *argv).returncode
+            js = self._run("verify-valuation", "--json", *argv)
+            json_rc = js.returncode
+            self.assertEqual(text_rc, expected, f"text {argv}")
+            self.assertEqual(json_rc, expected, f"json {argv}: {js.stdout}")
+
+    def test_outcome_exit_table_is_single_source(self):
+        # 判决原语：所有 (outcome, exit_code) 组合自此表出
+        self.assertEqual(fr._OUTCOME_EXIT,
+                         {"PASS": 0, "WARN": 0, "FAIL": 1, "ERROR": 1,
+                          "INSUFFICIENT": 2})
+        for outcome, code in fr._OUTCOME_EXIT.items():
+            self.assertEqual(fr._verdict(outcome), (outcome, code))
+
+    def test_json_market_cap_band_matches_text_bool(self):
+        # 同一输入：文本 bool 与 JSON band/exit_code 必须语义一致
+        cases = [
+            (510, 9.11e9, 4.65e12),          # 偏差小 → True / PASS
+            (510, 9.11e9, 4.2e12 * 0.9),     # 偏差大 → False / FAIL
+        ]
+        for price, shares, reported in cases:
+            ok = quiet(fr.verify_market_cap, price, shares, reported, "HKD")
+            env = fr._json_market_cap(price, shares, reported, "HKD")
+            self.assertEqual(env["exit_code"], 0 if ok else 1)
+            self.assertEqual(env["outcome"] == "FAIL", not ok)
+
+
 if __name__ == "__main__":
     unittest.main()

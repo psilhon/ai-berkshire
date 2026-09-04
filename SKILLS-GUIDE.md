@@ -1,6 +1,6 @@
 # Skills 使用指南
 
-本仓库当前包含 **16 个投研业务 Skill、1 个编排 Skill 和 1 个行业路由参考**（共 18 个 canonical 源文件）。`industry-routing` 是行业附录路由矩阵（选行业附录 / 必备 KPI / berkshire A股数据命令），目前被 `earnings-review`、`investment-research` 显式引用加载；真正被 ~10 个 skill 广泛引用的规范层是 `financial-data`（数据源优先级与双源交叉验证）。`skills/*.md` 是 workflow 权威源；`codex-skills/*/SKILL.md` 与 WorkBuddy 全量分析适配器由 `python3 scripts/sync-codex-skills.py` 生成并通过 `--check` 校验。
+本仓库当前包含 **15 个投研业务 Skill、1 个编排 Skill 和 1 个行业路由参考**（共 17 个 canonical 源文件）。`industry-routing` 是行业附录路由矩阵（选行业附录 / 必备 KPI / berkshire A股数据命令），目前被 `earnings-review`、`investment-research` 显式引用加载；真正被 ~10 个 skill 广泛引用的规范层是 `financial-data`（数据源优先级与双源交叉验证）。`skills/*.md` 是 workflow 权威源；`codex-skills/*/SKILL.md` 与 WorkBuddy 全量分析适配器由 `python3 scripts/sync-codex-skills.py` 生成并通过 `--check` 校验。
 
 其中 **13 个业务 Skill 组成单公司全量分析契约**（`tools/full_analysis_contract.json`，schema `full-analysis-contract/lean-v1`），另有 **3 个市场级 / IPO 独立 Skill**（`a-share-market-sentiment`、`macro-liquidity`、`a-share-prospectus-analysis`）不参与契约、独立运行。
 

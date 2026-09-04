@@ -9,8 +9,6 @@
     "run_id",
     "work_unit_id",
     "attempt_id",
-    "agent_job_id",
-    "lease_nonce",
     "skill_id",
     "role_id",
     "status",

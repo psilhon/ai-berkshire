@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -27,6 +28,7 @@ try:
     from tools.ashare_plugin.disclosures import fetch_announcements
     from tools.ashare_plugin.market_signals import fetch_signals
     from tools.ashare_plugin.identifiers import normalize_code
+    from tools.ashare_plugin.fundamentals import fetch_datacenter_rows
     from tools.ashare_plugin.tushare import TushareClient
     from tools.ashare_plugin.tushare_verification import (
         API_FIELDS,
@@ -39,6 +41,7 @@ except ModuleNotFoundError:  # direct execution: tools/ is the script directory
     from ashare_plugin.disclosures import fetch_announcements
     from ashare_plugin.market_signals import fetch_signals
     from ashare_plugin.identifiers import normalize_code
+    from ashare_plugin.fundamentals import fetch_datacenter_rows
     from ashare_plugin.tushare import TushareClient
     from ashare_plugin.tushare_verification import (
         API_FIELDS,
@@ -47,7 +50,6 @@ except ModuleNotFoundError:  # direct execution: tools/ is the script directory
     )
     from ashare_plugin.quote import parse_sina_quote, price_cross_check
 
-_DATACENTER_URL = "https://datacenter.eastmoney.com/securities/api/data/get"
 _TRANSPORT = TransportClient()
 
 # 打板三件套（L2，东财免费源，零鉴权）——需求拉动自 quality-screen（涨停生态/治理旁证）。
@@ -145,26 +147,12 @@ def _curl_json_post(url, data=None, headers=None, json_body: bool = True):
 
 
 def _em_secu_code(code: str) -> str:
-    """将六位 A 股代码标准化为东方财富 SECUCODE。"""
-    raw = code.strip().upper()
-    parts = raw.rsplit(".", 1)
-    code_clean = parts[0]
-    if len(code_clean) != 6 or not code_clean.isdigit():
-        raise ValueError(f"无效 A 股代码: {code}")
+    """将六位 A 股代码标准化为东方财富 SECUCODE。
 
-    if len(parts) == 2:
-        market = parts[1]
-        if market not in {"SH", "SZ", "BJ"}:
-            raise ValueError(f"无效市场后缀: {market}")
-    elif code_clean.startswith(("4", "8", "920")):
-        market = "BJ"
-    elif code_clean.startswith(("6", "9", "5")):
-        market = "SH"
-    elif code_clean.startswith(("0", "1", "2", "3")):
-        market = "SZ"
-    else:
-        raise ValueError(f"无法判断 A 股市场: {code}")
-    return f"{code_clean}.{market}"
+    委托 ashare_plugin.CodeIdentity（2026-08-30 候选⑧单一真源）；
+    InvalidCodeError 继承 ValueError，调用方异常语义不变。
+    """
+    return normalize_code(code).secu_code
 
 
 def _positive_years(text: str) -> int:
@@ -180,31 +168,26 @@ def _positive_years(text: str) -> int:
 
 def _fetch_datacenter_rows(report_type, secu_code, *, sort_column,
                            sort_order="-1", extra_filter="", limit=None):
-    """读取东方财富 Datacenter 数据，按 pages 分页且不静默截断。"""
-    rows = []
-    page = 1
-    page_size = min(limit or 100, 100)
-    while True:
-        data = _curl_json(_DATACENTER_URL, {
-            "type": report_type,
-            "sty": "ALL",
-            "filter": f'(SECUCODE="{secu_code}"){extra_filter}',
-            "p": str(page),
-            "ps": str(page_size),
-            "sr": sort_order,
-            "st": sort_column,
-            "source": "HSF10",
-            "client": "PC",
-        })
-        if not data.get("success"):
-            raise ConnectionError(data.get("message") or "东方财富接口返回失败")
+    """读取东方财富 Datacenter 数据，按 pages 分页且不静默截断。
 
-        result = data.get("result") or {}
-        rows.extend(result.get("data") or [])
-        pages = int(result.get("pages") or 1)
-        if page >= pages or (limit is not None and len(rows) >= limit):
-            return rows[:limit] if limit is not None else rows
-        page += 1
+    委托 ashare_plugin.fetch_datacenter_rows（候选⑧单一真源：此前是逐字
+    第二实现）；本模块的 _curl_json 经 TransportClient 适配注入，
+    TransportError 转回 ConnectionError 以保持既有调用方异常语义。
+    """
+    class _CurlTransport:
+        @staticmethod
+        def get_json(url, params=None, headers=None):
+            # 位置传参：测试以 curl_json.call_args.args[1] 断言 params
+            return _curl_json(url, params)
+
+    try:
+        return fetch_datacenter_rows(
+            report_type, secu_code, sort_column=sort_column,
+            sort_order=sort_order, extra_filter=extra_filter,
+            limit=limit, client=_CurlTransport(),
+        )
+    except TransportError as exc:
+        raise ConnectionError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -212,15 +195,22 @@ def _fetch_datacenter_rows(report_type, secu_code, *, sort_column,
 # ---------------------------------------------------------------------------
 
 def _qq_code(code: str) -> str:
-    """将股票代码转为腾讯行情格式。"""
-    code = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-    if code.startswith(("4", "8", "920")):
-        return f"bj{code}"
-    elif code.startswith(("6", "9", "5")):
-        return f"sh{code}"
-    elif code.startswith(("0", "3", "2", "1")):
-        return f"sz{code}"
-    return f"sh{code}"
+    """将股票代码转为腾讯行情格式（有效代码委托 CodeIdentity.quote_code，候选⑧单一真源）。
+
+    历史宽限行为保留：非六位代码不在此拒绝——cmd_quote("INVALID") → False 的
+    降级路径依赖旧前缀映射。此垫片仅无效代码触达，随 cmd_quote 严格化单独立项后移除。
+    """
+    try:
+        return normalize_code(code).quote_code
+    except ValueError:
+        stripped = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
+        if stripped.startswith(("4", "8", "920")):
+            return f"bj{stripped}"
+        if stripped.startswith(("6", "9", "5")):
+            return f"sh{stripped}"
+        if stripped.startswith(("0", "3", "2", "1")):
+            return f"sz{stripped}"
+        return f"sh{stripped}"
 
 
 def _parse_qq_quote(raw: str) -> dict:
@@ -260,13 +250,11 @@ def _parse_qq_quote(raw: str) -> dict:
 
 
 def _em_secid(code: str) -> str:
-    """将股票代码转为东方财富 secid 格式：沪市前缀 1.，深市/北交所前缀 0.。"""
-    code = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-    if code.startswith("920"):
-        return f"0.{code}"
-    if code.startswith(("6", "9", "5")):
-        return f"1.{code}"
-    return f"0.{code}"
+    """将股票代码转为东方财富 secid 格式：沪市前缀 1.，深市/北交所前缀 0.。
+
+    委托 CodeIdentity.secid（候选⑧单一真源）。
+    """
+    return normalize_code(code).secid
 
 
 def _fetch_52w(code: str) -> tuple:
@@ -453,18 +441,38 @@ def _tushare_dividend_yield(verification):
 # 命令实现
 # ---------------------------------------------------------------------------
 
+@dataclass
+class CommandOutcome:
+    """cmd_* 归一化返回结构（2026-08-30 候选①·depth 送到 interface 的示踪步）。
+
+    此前 64 个 cmd_* 只返回 bool，结构化数据止步于 print——调用方（编排器/
+    测试/未来 WebUI）无法编程取用，print 是唯一出口。本原语把数据送进返回值，
+    print 降为投影。CLI 契约（退出码 + stdout 文案）逐字节不变：
+    main() 对 CommandOutcome 的处理与旧 bool 完全一致（ok=False → exit 1）。
+
+    分步推进：quote/valuation 已迁移；其余命令按同模式分批，全部迁移后
+    main() 的 `outcome is False` 分支可退役。
+    """
+    ok: bool
+    data: dict = field(default_factory=dict)
+    warnings: list = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
 def cmd_quote(code: str):
-    """实时行情快照。"""
+    """实时行情快照（返回 CommandOutcome：数据进返回值，print 为投影）。"""
     qq_code = _qq_code(code)
     try:
         raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
     except (ConnectionError, subprocess.TimeoutExpired) as exc:
         print(f"❌ 获取行情失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False, warnings=[f"获取行情失败: {exc}"])
     d = _parse_qq_quote(raw)
     if not d:
         print(f"❌ 未找到股票 {code}", file=sys.stderr)
-        return False
+        return CommandOutcome(False, warnings=[f"未找到股票 {code}"])
     verification = apply_market_precedence(
         "quote", _safe_verification("quote", code, d)
     )
@@ -493,21 +501,21 @@ def cmd_quote(code: str):
     _print_price_cross_check(d["price"], code)
     _print_precedence(verification)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True, data=d)
 
 
 def cmd_valuation(code: str):
-    """估值指标汇总。"""
+    """估值指标汇总（返回 CommandOutcome：数据进返回值，print 为投影）。"""
     qq_code = _qq_code(code)
     try:
         raw = _curl(f"https://qt.gtimg.cn/q={qq_code}")
     except (ConnectionError, subprocess.TimeoutExpired) as exc:
         print(f"❌ 获取行情失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False, warnings=[f"获取行情失败: {exc}"])
     d = _parse_qq_quote(raw)
     if not d:
         print(f"❌ 未找到股票 {code}", file=sys.stderr)
-        return False
+        return CommandOutcome(False, warnings=[f"未找到股票 {code}"])
     verification = apply_market_precedence(
         "valuation", _safe_verification("valuation", code, d)
     )
@@ -549,7 +557,7 @@ def cmd_valuation(code: str):
         pass
     _print_precedence(verification)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True, data=d)
 
 
 def cmd_financials(code: str):
@@ -4123,7 +4131,9 @@ def main():
     except ValueError as exc:
         print(f"❌ 参数错误: {exc}", file=sys.stderr)
         sys.exit(2)
-    if outcome is False:
+    # 候选①：迁移后的 cmd_* 返回 CommandOutcome（__bool__ = ok），
+    # 退出码契约与旧 bool 时代逐字节一致；未迁移命令仍返回 True/False。
+    if outcome is False or (isinstance(outcome, CommandOutcome) and not outcome.ok):
         sys.exit(1)
 
 

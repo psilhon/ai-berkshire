@@ -166,7 +166,7 @@ python3 scripts/full_analysis.py start \
 
 ---
 
-## Skills 一览（16 个业务 Skill + 1 个编排 Skill）
+## Skills 一览（15 个业务 Skill + 1 个编排 Skill + 1 个路由参考）
 
 ### 🔬 深度研究类
 
