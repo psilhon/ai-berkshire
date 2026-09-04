@@ -18,6 +18,10 @@ validation tools. Keep compatibility with both Claude Code and Codex users.
   installs Codex skills locally.
 - `scripts/install-claude-commands.sh` / `scripts/install-claude-commands.bat`:
   installs Claude Code commands locally.
+- `docs/`: design notes and decision records.
+  - `docs/adr/`: architecture decision records (read before re-proposing a refactor).
+  - `docs/superpowers/`: **historical** SDD plans/specs from past pipeline runs
+    (kept for traceability, not part of any current workflow).
 
 ## Compatibility Rules
 
