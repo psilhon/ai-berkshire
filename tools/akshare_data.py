@@ -22,7 +22,7 @@ from datetime import datetime
 # ── Proxy bypass: AKShare uses requests → urllib3 which on macOS reads ──
 # ── proxy config from env vars AND System Configuration (_scproxy).    ──
 # ── trust_env=False blocks ALL sources: env vars + macOS system proxy. ──
-# ── ashare_data.py / hkex_data.py are unaffected (they use curl).       ──
+# ── ashare_data.py is unaffected (it uses curl).                        ──
 
 for _k in ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
            'all_proxy', 'ALL_PROXY'):
