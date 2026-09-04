@@ -24,3 +24,24 @@
 
 - 正面：避免一轮无收益的大迁移（1584 行测试），保留 transport 层 mock 的测试精度；akshare_data 作为零 token 备用路径继续可用。
 - 负面：私有函数的重构仍受 30 处测试约束——这是 internal seam 的固有代价（测试穿过实现内部），接受它。
+
+---
+
+## 2026-09-04 修订：akshare_data 前提失效，已移除
+
+**触发**：ponytail-audit 全仓过度设计审计（2026-09-04）。
+
+**新证据**（原裁决时未掌握）：
+
+1. **依赖不可用**：`akshare_data.py` 依赖 `akshare` 与 `requests`，二者在本机**均未安装**（实测 `ModuleNotFoundError`）；它是全仓 `tools/` + `scripts/` 唯一的第三方 import，与仓库实际「零依赖」状态矛盾。
+2. **从未被使用**：全仓检索 `akshare_data`（含 `local/` 全部历史运行记录）零命中；零测试。
+3. **后果**：本 ADR「后果·正面」断言的「akshare_data 作为零 token 备用路径**继续可用**」为假。更糟的是 `skills/ashare-data.md` 仍推荐 agent 走这条路径——照文档执行必然失败。
+
+**修订决策**：
+
+- **撤销**本 ADR 第 19 行的「不删除 akshare_data.py」，**移除** `tools/akshare_data.py`（−243L，v3.10.13）。
+- 同步修正 `skills/ashare-data.md` 陷阱 #3：不再推荐仓库内脚本，无 token 场景改为「自行取数（如 pip 装 akshare）」。
+- 本 ADR 第 1 条（私有函数是合法 internal seam）**继续有效**；第 2 条（两个 pe-band 不构成重复）随脚本一并移除，无遗留分歧。
+- 仓库恢复为 **stdlib 零依赖**。
+
+**恢复条件**：若未来确需零 token 前复权 OHLC 且已验证依赖可用，可从 git 历史（`v3.10.12` 及更早）取回该文件，并按本 ADR 原前提重新评估。
