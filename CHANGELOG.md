@@ -5,30 +5,36 @@
 
 ---
 
-## [Unreleased]
+## [v3.10.13] — 2026-09-04
 
-> **代码精简（ponytail-audit 全仓过度设计审计）**：审计 `tools/` + `scripts/` + `tests/`，执行可削减项，累计 **14 files changed, 44 insertions(+), 429 deletions(−)**。单测 809 → **748**（消除 61 次重复执行），全绿。方案与逐条复核记录见 `docs/ponytail-audit-optimization-plan-2026-09-04.md`。
+> **代码精简（ponytail-audit 全仓过度设计审计）**：审计 `tools/` + `scripts/` + `tests/`（约 29k 行），执行全部可削减项与 5 个决策项，累计 **25 files changed, 281 insertions(+), 989 deletions(−)**（净 **−708 行**）。单测 **809 → 741**（消除 61 次重复执行 + 删 7 个随功能移除的测试），`check.sh` 退出码 **0**（顺带修好既有的报告索引漂移）。方案与逐条复核记录见 `docs/ponytail-audit-optimization-plan-2026-09-04.md`。
+>
+> 审计共提 10 条建议，**5 条经复核撤回**（2 条与既有 ADR 冲突、3 条因「测试即契约 / 语义分叉 / 接线遗漏」）——见文末「有意保留」。
 
 ### 🗑 删除 (Removed)
 
 - **`tools/hkex_data.py`（−265L）**：全仓零引用（tools/scripts/tests/skills/codex-skills/docs/CI 全检索），仅自身 docstring 提及。
 - **三处零引用死代码**：`scripts/build_report_index.py::_gitignored`（−23L，连带删已孤立的 `import subprocess`）；`tools/full_analysis_runtime.py::atomic_json`（−3L，本就只是 `run_store.atomic_write_json` 的薄委托且零调用方）。
 - **3 个 shim 测试文件**（`tests/test_full_analysis_{gate,contract,phase2}.py`，−11L）：各仅一行 re-import，导致 `unittest discover` 把 61 个用例执行两遍。
+- **跨 run 产物缓存层（−281L）**：`tools/full_analysis_cache.py` 在 finalize/APPROVED 后自动写缓存，但读取侧 `lookup()` 仅由 CLI 暴露、`next-work` 派发从不查询——**只写不读**。计划文档（`docs/superpowers/plans/2026-07-30-full-analysis-token-cost.md` Task 5）的「命中则登记 `CACHE_REUSED`、不派 Agent」读路径从未实现，按未完成半成品清除；同步删 `cache-lookup` / `cache-store` 两个隐藏子命令与 gate 的写入块。恢复方式：git 历史取回 + 按 Task 5 补读路径（属派发语义变更，非清理范畴）。
+- **`tools/akshare_data.py`（−243L）**：依赖 `akshare` + `requests` 本机**均未安装**（它是全仓唯一第三方 import），全仓检索零命中（含 `local/` 全部历史运行记录）、零测试——从未被实际调用；而 `skills/ashare-data.md` 仍在推荐 agent 走这条必然失败的路径。**据此修订 ADR-0001**（追加 2026-09-04 修订章节，撤销原「不删除」裁定）。仓库恢复 **stdlib 零依赖**。
+- **`equity_dcf.franchise_growth_value`（−6L）**：估值方法库里唯一未接入 `run()` 分派的成员（同层其余 8 个方法均已接线），零生产入口、零 CLI 入口。
 
 ### 🔧 变更 (Changed)
 
 - **原子写统一到 `run_store`**：删 `audit`/`benchmark`/`doctor`/`review` 各自的 `_atomic_write_json` 与 gate 的 `_atomic_write_json_safe`，统一调 `run_store.atomic_write_json`（mkstemp + fsync + 权限保持 + os.replace）。顺带修两处行为漂移：doctor 原用 `with_suffix(path.suffix + '.tmp')`（无后缀/含多点路径会写错临时文件名）、其中两份缺 `mkdir(parents=True)`、三份无 fsync。
 - **`_num` 提为模块级**（`tools/ashare_data.py`）：7 份逐字相同的内部函数 → 1 个，−34L。
 - **取数级别三档合并**：`LEVEL_COMMANDS` 三个 key 值完全相同，`LEVEL_PENDING_LAYERS` 三级全空且打印块永不触发 → 单个执行集常量 + 一张标题表，−22L。三档行为等价（实测命令序列一致，仅标题不同）。
+- **`AGENTS.md` 补 `docs/` 导航**：标注 `docs/superpowers/`（476K SDD 历史存档）为「历史记录、非现行工作流」，并给出 `docs/adr/` 入口（重构前先读 ADR）——此前该目录未被任何入口引用，易被误当作现行规范。
+- **`skills/ashare-data.md` 陷阱 #3 同步**：随 `akshare_data.py` 移除，改为「无 token 时仓库不提供内建脚本，需自行取数」，`codex-skills/` 已重新生成。
 
 ### 📐 有意保留（审计建议但经复核撤回）
 
 - **`run_store.read_events`**：是 `append_event` 的对称读侧，被 5 处测试用作行为验证缝（含 gate/runtime 薄委托验证），与 ADR-0001「测试引用内部缝合法」同裁定。
 - **`gate.validate_result_bundle`**：`full_analysis_gate.py:407` 将其写为三方共用 `admit_bundle` 的契约口径，且是 `test_mk_result_bundle` 的 oracle 入口（4 个故障注入子用例依赖它变红）。
 - **JSON 读取 5 个变体不合并**：实为 4 种不同错误语义（GateError / RunStoreError / DoctorError / 静默 None / 裸抛），合并会改异常类型、破坏 doctor 的异常逃逸约束。
-- **`tools/full_analysis_cache.py` 不删**：`gate.py:1402` 在 APPROVED 后实际调用 `store_approved()`；真问题是「只写不读」（决策项 D1）。
-- **`tools/akshare_data.py` 不删**：ADR-0001 明文裁定保留（零 token 前复权 OHLC 补充路径）。
-- **`equity_dcf.franchise_growth_value`**：未接入 `run()` 属实，但更像接线遗漏而非推测性功能，交决策项 D5。
+- **事件账本 `events.jsonl` 只写不读（两侧均保留）**：`append_event` 有 19 处写入、`read_events` 零生产读取（doctor 走 `evidence_receipt.load_journal`）。删 `read_events` 会削弱 5 个行为测试（含 gate/runtime 薄委托验证），19 处写入的审计留痕价值也高于 11 行收益。
+- **`full_analysis_benchmark.py`**（394L）保留：审计时看似不在 skill 的 L2–L4 链里，但 2026-08 的运行记录显示实际用过。
 
 ---
 

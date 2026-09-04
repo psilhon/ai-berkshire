@@ -163,7 +163,17 @@ P1 通过判据：check.sh 全绿 + 手工对照
 
 ### 当前状态（2026-09-04 收工）
 
-**已执行 7 个 commit**（均未 push，未打 tag）：
+**决策项全部处理完毕**：
+
+| 决策项 | 处置 | Δ |
+|---|---|---|
+| D1 缓存只写不读 | **删除**（半成品，读路径从未实现；恢复方式见 CHANGELOG） | −281 |
+| D2 事件账本只写不读 | **保留**（19 处写入的审计留痕 + 5 个行为测试依赖读侧） | 0 |
+| D3 akshare_data | **删除 + 修订 ADR-0001**（依赖未安装、零使用、ADR 断言已为假） | −243 |
+| D4 docs/superpowers | **AGENTS.md 加导航**，标注为历史存档 | 0 |
+| D5 franchise_growth_value | **删除**（唯一未接入 `run()` 的估值方法） | −6 |
+
+**已执行 11 个 commit**（已发版 v3.10.13）：
 
 | commit | 内容 | Δ |
 |---|---|---|
@@ -173,12 +183,12 @@ P1 通过判据：check.sh 全绿 + 手工对照
 | `b139948` | 原子写统一到 `run_store`（5 份副本 → 单一事实源） | −16 |
 | `b7d46a8` | `_num` 7 份 → 1 个模块级 | −34 |
 | `c4d8766` | 取数级别三档合并（删全空的 `LEVEL_PENDING_LAYERS`） | −22 |
-| 累计（`v3.10.12..HEAD`） | 14 files changed | **44 insertions(+), 429 deletions(−)** |
+| `e3a5e45` | D1：删跨 run 产物缓存层（只写不读） | −281 |
+| `cfc747a` | D5：删 `franchise_growth_value` | −6 |
+| `7a90219` | D3：删 `akshare_data.py` + 修订 ADR-0001 + skill/ADR 同步 | −245 |
+| `9a6596b` | D4：AGENTS.md 补 docs 导航 | — |
+| 累计（`v3.10.12..v3.10.13`） | 25 files changed | **281 insertions(+), 989 deletions(−)，净 −708** |
 
-单测：**809 → 748 tests，OK**（61 次重复执行消除）。check.sh 真实退出码仍是 1，原因不变（第 6 步本地报告索引漂移，既有数据问题）。
+单测：**809 → 741 tests，OK**。check.sh 真实退出码 **0**（顺带重建 `local/reports/INDEX.md`，修好基线里既有的索引漂移）。
 
-**剩余待办**：
-- [x] P0 可执行项 / P1 可执行项
-- [ ] D1 / D2 / D3 / D4 / **D5** 拍板（D1 缓存只写不读是最大项，−281L 或补读路径）
-- [ ] （可选）顺手重建 `local/reports/INDEX.md`，让 check.sh 回到 exit 0
-- [ ] 确认是否发版（+0.0.1 semver + tag）与 push——**HARD-GATE，等你 1 click**
+**剩余待办**：无——决策项 D1–D5 已全部处置，v3.10.13 已发版。
