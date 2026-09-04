@@ -5,6 +5,22 @@
 
 ---
 
+## [v3.10.15] — 2026-09-04
+
+> **遗留四项清零**：候选① 全量迁移 + 候选⑨ 第二步 + _qq_code 严格化 + 收养 skill 归属落地。单测 **764 → 766**，`check.sh` 退出码 **0**。
+
+### 🔧 变更 (Changed)
+
+- **`ashare_data` 全部 64 个 cmd_* 返回 `CommandOutcome`（候选① 完成）**：AST 定界批量迁移 192 处裸 bool 返回（cmd_margin 附带 warnings 负载），类型统一完成；CLI 契约（退出码 + stdout）逐字节不变，测试恒等断言（35 处 `assertIs`）升级为布尔断言；`data` 负载按命令增量补齐（quote/valuation 已带全量行情字典）。
+- **`_qq_code` 严格化（ADR-0001 修订②垫片移除条件达成）**：无效代码改抛 ValueError（main 转 exit 2 参数错误），删除旧前缀映射垫片——`cmd_quote("INVALID")` 静默拼错代码取数的宽限路径退役，新增 `test_invalid_code_raises_value_error` / `test_main_exits_two_on_invalid_code` 锁定新契约。
+- **depends_on 环检测单一真源（候选⑨第二步）**：`find_dep_cycle` 落位 `tools/full_analysis_contract.py`（契约自身语义归属契约模块）；runtime `detect_dependency_cycle` 与离线校验器 `_find_dep_cycle` 均改为委托。校验器「刻意独立」立场不变——独立的是 Runtime（执行态），契约模块纯 stdlib 零执行依赖。
+
+### 🧹 用户侧（仓库外）
+
+- **7 个收养 skill 转正式独立**：`deep-company-series` / `dyp-ask` / `earnings-team` / `portfolio-review` / `private-company-research` / `thesis-drift` / `wechat-article` 剥离过期的「移植说明」派生头（各 5 行，其声明的 berkshire 源已删除），内容零改动；用户侧 sync 派生副本报告归零。
+
+---
+
 ## [v3.10.14] — 2026-09-04
 
 > **架构深化落地（2026-08-30 /improve-codebase-architecture 12 候选，本轮修复 8 项，4 项前轮已完成或撤回）**：数据抽检准出收敛单一真源、同步链孤儿检测、测试基建 factory、守卫故障注入、准入判定单一真源、verdict 原语收敛、source-level adapter 去重、gate 分区与 dispatch 合一、ashare_data 归一化返回示踪步。单测 **741 → 761**，`check.sh` 退出码 **0**。

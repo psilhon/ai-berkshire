@@ -80,3 +80,43 @@ def get_skill_or_none(registry: dict, skill_id: str) -> dict | None:
         if item.get("skill_id") == skill_id:
             return item
     return None
+
+
+# ---------------------------------------------------------------------------
+# depends_on 依赖图（候选⑨第二步：环检测单一真源）
+# ---------------------------------------------------------------------------
+
+
+def find_dep_cycle(graph: dict) -> list | None:
+    """三色 DFS 检测 depends_on 依赖环，返回环路径节点列表（无环返回 None）。
+
+    本函数是 contract 自身语义（depends_on 结构完整性）的一部分，故归属
+    契约模块而非执行模块——runtime（派发门禁）与
+    scripts/check-full-analysis-contract.py（离线校验器）共同委托此实现，
+    此前三份 DFS 各写一遍（2026-08-30 候选⑨）。
+    """
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in graph}
+
+    def _has_cycle(node: str, stack: list) -> list | None:
+        color[node] = GRAY
+        stack.append(node)
+        for dep in graph.get(node, []):
+            if dep not in color:
+                continue
+            if color[dep] == GRAY:
+                return stack[stack.index(dep):] + [dep]
+            if color[dep] == WHITE:
+                found = _has_cycle(dep, stack)
+                if found:
+                    return found
+        stack.pop()
+        color[node] = BLACK
+        return None
+
+    for node in graph:
+        if color[node] == WHITE:
+            cycle = _has_cycle(node, [])
+            if cycle:
+                return cycle
+    return None

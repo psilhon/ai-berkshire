@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - Windows compatibility
 TOOLS_DIR = Path(__file__).resolve().parent
 from full_analysis_contract import (  # noqa: E402
     CONTRACT_PATH,
+    find_dep_cycle,
     get_skill_or_none,
     load_contract,
 )
@@ -359,38 +360,12 @@ def build_dependency_graph(skills: list) -> dict:
 
 
 def detect_dependency_cycle(graph: dict) -> list | None:
-    """DFS 检测依赖环，返回构成环的节点列表（无环返回 None）。"""
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color = {node: WHITE for node in graph}
-    parent: dict = {}
+    """DFS 检测依赖环，返回构成环的节点列表（无环返回 None）。
 
-    def dfs(node: str) -> list | None:
-        color[node] = GRAY
-        for dep in graph.get(node, []):
-            if dep not in color:
-                continue
-            if color[dep] == GRAY:
-                # 回溯环路径
-                cycle = [dep, node]
-                cur = node
-                while cur in parent and parent[cur] != dep:
-                    cur = parent[cur]
-                    cycle.append(cur)
-                return cycle
-            if color[dep] == WHITE:
-                parent[dep] = node
-                found = dfs(dep)
-                if found:
-                    return found
-        color[node] = BLACK
-        return None
-
-    for node in graph:
-        if color[node] == WHITE:
-            found = dfs(node)
-            if found:
-                return found
-    return None
+    v3.10.15 起委托 contract.find_dep_cycle 单一真源（候选⑨第二步）；
+    本函数保留名字与签名，gate 的既有调用零改动。
+    """
+    return find_dep_cycle(graph)
 
 
 def next_work(run_root: Path, *, methodology_mode: str = "full") -> dict:

@@ -62,3 +62,5 @@
 - **分页方言合并与 cmd_quote 改用 fetch_quote 单独立项**，本修订不含。
 
 **后果**：测试零改动（142 个 ashare 用例全绿）；代码→插件单一真源；遗留一个显式声明的 `_qq_code` 兼容垫片（无效代码路径），其移除条件 = cmd_quote 对无效代码改抛 ValueError 并更新对应测试。
+
+**2026-09-04 v3.10.15 追记**：垫片移除条件已满足——`_qq_code` 改为纯委托 `CodeIdentity.quote_code`，无效代码抛 ValueError（main 转 exit 2 参数错误），对应测试更新（`test_invalid_code_raises_value_error` / `test_main_exits_two_on_invalid_code`）。本修订无遗留垫片。

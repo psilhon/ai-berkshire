@@ -12,6 +12,14 @@ import json
 import sys
 from pathlib import Path
 
+# 环检测单一真源（候选⑨第二步）：委托 tools/full_analysis_contract.find_dep_cycle。
+# 契约模块是纯 stdlib、零执行依赖——「刻意独立」立场不变：独立的是 Runtime
+# （执行态），不是契约自身的语义。
+_TOOLS_DIR = str(Path(__file__).resolve().parents[1] / "tools")
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+from full_analysis_contract import find_dep_cycle as _find_dep_cycle_shared  # noqa: E402
+
 
 EXPECTED_SKILLS = {
     "ashare-data", "financial-data", "quality-screen", "investment-checklist",
@@ -98,32 +106,8 @@ def _check_depends_on(errors: list[str], skills: list, known: set,
 
 
 def _find_dep_cycle(graph: dict[str, list[str]]) -> list | None:
-    """三色 DFS 找依赖环，返回环路径（如 [a, b, a]）；无环返回 None。"""
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color = {node: WHITE for node in graph}
-
-    def _has_cycle(node: str, stack: list) -> list | None:
-        color[node] = GRAY
-        stack.append(node)
-        for dep in graph.get(node, []):
-            if dep not in color:
-                continue
-            if color[dep] == GRAY:
-                return stack[stack.index(dep):] + [dep]
-            if color[dep] == WHITE:
-                found = _has_cycle(dep, stack)
-                if found:
-                    return found
-        stack.pop()
-        color[node] = BLACK
-        return None
-
-    for node in graph:
-        if color[node] == WHITE:
-            cycle = _has_cycle(node, [])
-            if cycle:
-                return cycle
-    return None
+    """三色 DFS 找依赖环。v3.10.15 起委托 contract.find_dep_cycle 单一真源。"""
+    return _find_dep_cycle_shared(graph)
 
 
 def _ashare_cli_commands(repo_root: Path) -> tuple[set[str] | None, str | None]:

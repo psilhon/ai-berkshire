@@ -217,11 +217,19 @@ class TestEquityHistoryCommand(OfflineAshareDataTestCase):
 class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
     def test_quote_and_valuation_return_false_without_quote(self, _curl):
-        # 候选①示踪步：quote/valuation 返回 CommandOutcome——CLI 契约（exit 1）
-        # 与旧 bool 时代逐字节一致；恒等断言相应升级为布尔断言。
+        # v3.10.15 严格化：无效代码抛 ValueError（exit 2 参数错误），
+        # False 降级路径仅保留给「合法代码但行情源无返回」。
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            self.assertFalse(ashare_data.cmd_quote("INVALID"))
-            self.assertFalse(ashare_data.cmd_valuation("INVALID"))
+            self.assertFalse(ashare_data.cmd_quote("600036"))
+            self.assertFalse(ashare_data.cmd_valuation("600036"))
+
+    @mock.patch.object(ashare_data, "_curl")
+    def test_invalid_code_raises_value_error(self, _curl):
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            with self.assertRaises(ValueError):
+                ashare_data.cmd_quote("INVALID")
+            with self.assertRaises(ValueError):
+                ashare_data.cmd_valuation("INVALID")
 
     @mock.patch.object(ashare_data, "_curl_json")
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
@@ -229,7 +237,7 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
         curl_json.return_value = {"success": True, "result": {"data": []}}
 
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            self.assertIs(ashare_data.cmd_financials("600036"), False)
+            self.assertFalse(ashare_data.cmd_financials("600036"))
 
         self.assertEqual(curl_json.call_count, 2)
 
@@ -238,7 +246,7 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
         curl_json.return_value = {"QuotationCodeTable": {"Data": []}}
 
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            self.assertIs(ashare_data.cmd_search("不存在"), False)
+            self.assertFalse(ashare_data.cmd_search("不存在"))
 
     @mock.patch.object(ashare_data, "_fetch_52w", return_value=("12", "8"))
     @mock.patch.object(ashare_data, "_curl", return_value=_quote_raw())
@@ -264,7 +272,7 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
         }
 
         with redirect_stdout(StringIO()):
-            self.assertIs(ashare_data.cmd_financials("600036"), True)
+            self.assertTrue(ashare_data.cmd_financials("600036"))
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_search_returns_true_with_results(self, curl_json):
@@ -277,7 +285,7 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
         }
 
         with redirect_stdout(StringIO()):
-            self.assertIs(ashare_data.cmd_search("招商银行"), True)
+            self.assertTrue(ashare_data.cmd_search("招商银行"))
 
     @mock.patch.object(
         ashare_data, "_curl", side_effect=ConnectionError("offline")
@@ -297,7 +305,7 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     )
     def test_financials_request_errors_return_false(self, _curl, _curl_json):
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()) as error:
-            self.assertIs(ashare_data.cmd_financials("600036"), False)
+            self.assertFalse(ashare_data.cmd_financials("600036"))
 
         self.assertIn("财务数据", error.getvalue())
 
@@ -306,7 +314,7 @@ class TestLegacyCommandExitSemantics(OfflineAshareDataTestCase):
     )
     def test_search_request_error_returns_false(self, _curl_json):
         with redirect_stderr(StringIO()) as error:
-            self.assertIs(ashare_data.cmd_search("招商银行"), False)
+            self.assertFalse(ashare_data.cmd_search("招商银行"))
 
         self.assertIn("offline", error.getvalue())
 
@@ -936,7 +944,7 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
         calls = self._patch_runners()
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_run_level("600519", "quick")
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertEqual(
             calls,
             [("quote", "600519"), ("valuation", "600519"),
@@ -960,7 +968,7 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
         calls = self._patch_runners(valuation=False)
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_run_level("600519", "quick")
-        self.assertIs(result, False)
+        self.assertFalse(result)
         # 中间一条失败不得中断后续命令
         self.assertEqual([name for name, _ in calls],
                          ["quote", "valuation", "financials"])
@@ -974,7 +982,7 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
         calls = self._patch_runners(quote=ConnectionError("offline"))
         with redirect_stdout(StringIO()) as out, redirect_stderr(StringIO()):
             result = ashare_data.cmd_run_level("600519", "quick")
-        self.assertIs(result, False)
+        self.assertFalse(result)
         self.assertEqual([name for name, _ in calls],
                          ["quote", "valuation", "financials"])
         self.assertIn("❌ quote", out.getvalue())
@@ -985,7 +993,7 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
         # L2 热度层已就位（ths-hot 交付），enhanced 无待建候选层
         self._patch_runners()
         with redirect_stdout(StringIO()) as out:
-            self.assertIs(ashare_data.cmd_run_level("600519", "enhanced"), True)
+            self.assertTrue(ashare_data.cmd_run_level("600519", "enhanced"))
         text = out.getvalue()
         self.assertNotIn("尚未就位的候选层", text)
         self.assertNotIn("L2 候选", text)
@@ -1018,8 +1026,8 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
                            "MktNum": "1"}],
         ):
             with redirect_stdout(StringIO()):
-                self.assertIs(
-                    ashare_data.cmd_run_level("招商银行", "quick"), True
+                self.assertTrue(
+                    ashare_data.cmd_run_level("招商银行", "quick")
                 )
         self.assertEqual([code for _, code in calls],
                          ["600036", "600036", "600036"])
@@ -1034,8 +1042,8 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
                            "MktNum": "2"}],
         ):
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()) as err:
-                self.assertIs(
-                    ashare_data.cmd_run_level("招商", "quick"), False
+                self.assertFalse(
+                    ashare_data.cmd_run_level("招商", "quick")
                 )
         self.assertEqual(calls, [])  # 未代为选择，任何取数命令都不执行
         self.assertIn("请指定六位代码", err.getvalue())
@@ -1046,8 +1054,8 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
             ashare_data, "_search_candidates", return_value=[]
         ):
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                self.assertIs(
-                    ashare_data.cmd_run_level("不存在的公司", "quick"), False
+                self.assertFalse(
+                    ashare_data.cmd_run_level("不存在的公司", "quick")
                 )
         self.assertEqual(calls, [])
 
@@ -1084,7 +1092,7 @@ class TestLimitPoolCommand(OfflineAshareDataTestCase):
         ]
         with redirect_stdout(StringIO()):
             result = ashare_data.cmd_limit_pool("20260731")
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertEqual(curl_json.call_count, 4)
 
     @mock.patch.object(ashare_data, "_curl_json")
@@ -1092,7 +1100,7 @@ class TestLimitPoolCommand(OfflineAshareDataTestCase):
         curl_json.side_effect = [{"data": {"pool": []}}] * 4
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_limit_pool("20260731")
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_returns_false_on_request_error(self, curl_json):
@@ -1100,7 +1108,7 @@ class TestLimitPoolCommand(OfflineAshareDataTestCase):
         curl_json.side_effect = ashare_data.TransportError("offline")
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_limit_pool("20260731")
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_passes_trade_date_and_referer_to_api(self, curl_json):
@@ -1132,7 +1140,7 @@ class TestMonitorPoolCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_monitor_pool("20260731")
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("501018", text)
         self.assertIn("(SH)", text)
         self.assertIn("920002", text)
@@ -1146,14 +1154,14 @@ class TestMonitorPoolCommand(OfflineAshareDataTestCase):
                                     "VALIDATEENDDATE": "2020-01-01"}]
         with redirect_stdout(StringIO()):
             result = ashare_data.cmd_monitor_pool("20260731")
-        self.assertIs(result, True)
+        self.assertTrue(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_returns_false_on_request_error(self, curl_json):
         curl_json.side_effect = ashare_data.TransportError("offline")
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_monitor_pool("20260731")
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
 
 class TestAnomalyPoolCommand(OfflineAshareDataTestCase):
@@ -1169,7 +1177,7 @@ class TestAnomalyPoolCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_anomaly_pool("20260731")
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("300688", text)
         self.assertIn("(SZ)", text)
         self.assertIn("70.11", text)
@@ -1181,14 +1189,14 @@ class TestAnomalyPoolCommand(OfflineAshareDataTestCase):
         curl_json.return_value = {"result": 1, "msg": "unknow team"}
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_anomaly_pool("20260731")
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_returns_false_on_request_error(self, curl_json):
         curl_json.side_effect = ashare_data.TransportError("offline")
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_anomaly_pool("20260731")
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_rule_code_multiplied_by_ten_when_s_is_six(self, curl_json):
@@ -1260,7 +1268,7 @@ class TestThsHotCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_ths_hot("hour", None, 50)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("同花顺热榜", text)
         self.assertIn("600519", text)
         self.assertIn("白酒", text)
@@ -1279,7 +1287,7 @@ class TestThsHotCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_ths_hot("hour", None, 50)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("东财人气榜", text)
         self.assertIn("600519", text)
         self.assertIn("贵州茅台", text)
@@ -1295,7 +1303,7 @@ class TestThsHotCommand(OfflineAshareDataTestCase):
         get_client.return_value = None                         # 无 TUSHARE_TOKEN
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_ths_hot("hour", None, 50)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json_post")
     @mock.patch.object(ashare_data, "_get_tushare_client")
@@ -1311,7 +1319,7 @@ class TestThsHotCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_ths_hot("hour", "20260731", 50)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("Tushare ths_hot", text)
         fake.query.assert_called_once_with(
             "ths_hot", params={"trade_date": "20260731"}, fields=[])
@@ -1406,7 +1414,7 @@ class TestIrdInteractCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_ird_interact("002475", 20)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("互动易问答", text)
         self.assertIn("立讯精密", text)
         self.assertIn("公司回购进度如何？", text)
@@ -1419,7 +1427,7 @@ class TestIrdInteractCommand(OfflineAshareDataTestCase):
         post.return_value = {"data": []}  # 第一步未检索到主体
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_ird_interact("600519", 20)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json_post")
     def test_empty_when_no_qa_rows(self, post):
@@ -1429,19 +1437,19 @@ class TestIrdInteractCommand(OfflineAshareDataTestCase):
         ]
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_ird_interact("600519", 20)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json_post")
     def test_transport_error_returns_false(self, post):
         post.side_effect = ashare_data.TransportError("offline")
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_ird_interact("002475", 20)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     def test_invalid_code_returns_false(self):
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_ird_interact("not-a-code", 20)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
 
 class TestClsTelegraphCommand(OfflineAshareDataTestCase):
@@ -1456,7 +1464,7 @@ class TestClsTelegraphCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_cls_telegraph(50)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("财联社实时电报", text)
         self.assertIn("美联储巴尔金讲话", text)
         self.assertIn("墨西哥地震", text)
@@ -1468,21 +1476,21 @@ class TestClsTelegraphCommand(OfflineAshareDataTestCase):
         curl_json.return_value = {"errno": 1, "msg": "bad sign"}
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_cls_telegraph(50)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_empty_returns_false(self, curl_json):
         curl_json.return_value = {"errno": 0, "msg": "", "data": {"roll_data": []}}
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_cls_telegraph(50)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     @mock.patch.object(ashare_data, "_curl_json")
     def test_transport_error_returns_false(self, curl_json):
         curl_json.side_effect = ashare_data.TransportError("offline")
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_cls_telegraph(50)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     def test_sign_is_deterministic(self):
         params = {"appName": "CailianpressWeb", "os": "web", "sv": "7.7.5",
@@ -1504,7 +1512,7 @@ class TestReportListCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_report_list("600519", None, 30)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("研报列表", text)
         self.assertIn("中邮证券", text)
         self.assertIn("买入", text)
@@ -1522,7 +1530,7 @@ class TestReportListCommand(OfflineAshareDataTestCase):
         with redirect_stdout(StringIO()) as out:
             result = ashare_data.cmd_report_list(None, "1238", 30)
         text = out.getvalue()
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertIn("行业研报", text)
         self.assertIn("AI剧漫剧数据报告", text)
         params = curl_json.call_args.kwargs["params"]
@@ -1539,7 +1547,7 @@ class TestReportListCommand(OfflineAshareDataTestCase):
         ]
         with redirect_stdout(StringIO()):
             result = ashare_data.cmd_report_list("600519", None, 30)
-        self.assertIs(result, True)
+        self.assertTrue(result)
         self.assertEqual(curl_json.call_count, 2)  # 不再请求第三页
 
     @mock.patch.object(ashare_data, "_curl_json")
@@ -1547,17 +1555,17 @@ class TestReportListCommand(OfflineAshareDataTestCase):
         curl_json.return_value = {"TotalPage": 1, "data": []}
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_report_list("600519", None, 30)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     def test_requires_code_or_industry(self):
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_report_list(None, None, 30)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
     def test_invalid_code_returns_false(self):
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
             result = ashare_data.cmd_report_list("bad-code", None, 30)
-        self.assertIs(result, False)
+        self.assertFalse(result)
 
 
 class TestL3TriadCli(OfflineAshareDataTestCase):
@@ -1604,20 +1612,28 @@ class TestCommandOutcomeContract(OfflineAshareDataTestCase):
     @mock.patch.object(ashare_data, "_curl", return_value='v_none="";')
     def test_quote_failure_carries_warning_not_exception(self, _curl):
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            outcome = ashare_data.cmd_quote("INVALID")
+            outcome = ashare_data.cmd_quote("600036")
         self.assertIsInstance(outcome, ashare_data.CommandOutcome)
         self.assertFalse(outcome.ok)
         self.assertTrue(outcome.warnings, "失败必须带可编程 warnings")
         self.assertEqual(outcome.data, {})
 
     def test_main_exits_one_on_failed_outcome(self):
-        """CLI 退出码契约冻结：CommandOutcome(ok=False) → exit 1（与旧 bool 一致）。"""
+        """CLI 退出码契约冻结：CommandOutcome(ok=False) → exit 1（合法代码无行情）。"""
         with mock.patch.object(ashare_data, "_curl", return_value='v_none="";'), \
-                mock.patch.object(sys, "argv", [TOOL, "quote", "INVALID"]), \
+                mock.patch.object(sys, "argv", [TOOL, "quote", "600036"]), \
                 redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             with self.assertRaises(SystemExit) as ctx:
                 ashare_data.main()
         self.assertEqual(ctx.exception.code, 1)
+
+    def test_main_exits_two_on_invalid_code(self):
+        """v3.10.15 严格化：无效代码走 ValueError → exit 2（参数错误，非业务失败）。"""
+        with mock.patch.object(sys, "argv", [TOOL, "quote", "INVALID"]), \
+                redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                ashare_data.main()
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":

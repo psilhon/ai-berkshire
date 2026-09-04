@@ -195,22 +195,13 @@ def _fetch_datacenter_rows(report_type, secu_code, *, sort_column,
 # ---------------------------------------------------------------------------
 
 def _qq_code(code: str) -> str:
-    """将股票代码转为腾讯行情格式（有效代码委托 CodeIdentity.quote_code，候选⑧单一真源）。
+    """将股票代码转为腾讯行情格式（委托 CodeIdentity.quote_code，候选⑧单一真源）。
 
-    历史宽限行为保留：非六位代码不在此拒绝——cmd_quote("INVALID") → False 的
-    降级路径依赖旧前缀映射。此垫片仅无效代码触达，随 cmd_quote 严格化单独立项后移除。
+    v3.10.15 严格化：无效代码直接抛 ValueError（由 main 转 exit 2 参数错误），
+    ADR-0001 修订②声明的宽限垫片按条件移除——cmd_quote 对无效代码的降级
+    由调用方（编排器/用户）以合法代码重试，而非静默拼错代码取数。
     """
-    try:
-        return normalize_code(code).quote_code
-    except ValueError:
-        stripped = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-        if stripped.startswith(("4", "8", "920")):
-            return f"bj{stripped}"
-        if stripped.startswith(("6", "9", "5")):
-            return f"sh{stripped}"
-        if stripped.startswith(("0", "3", "2", "1")):
-            return f"sz{stripped}"
-        return f"sh{stripped}"
+    return normalize_code(code).quote_code
 
 
 def _parse_qq_quote(raw: str) -> dict:
@@ -443,15 +434,15 @@ def _tushare_dividend_yield(verification):
 
 @dataclass
 class CommandOutcome:
-    """cmd_* 归一化返回结构（2026-08-30 候选①·depth 送到 interface 的示踪步）。
+    """cmd_* 归一化返回结构（2026-08-30 候选①：depth 送到 interface）。
 
     此前 64 个 cmd_* 只返回 bool，结构化数据止步于 print——调用方（编排器/
     测试/未来 WebUI）无法编程取用，print 是唯一出口。本原语把数据送进返回值，
     print 降为投影。CLI 契约（退出码 + stdout 文案）逐字节不变：
     main() 对 CommandOutcome 的处理与旧 bool 完全一致（ok=False → exit 1）。
 
-    分步推进：quote/valuation 已迁移；其余命令按同模式分批，全部迁移后
-    main() 的 `outcome is False` 分支可退役。
+    v3.10.15：全部 64 个 cmd_* 已返回本结构（类型统一完成）；data 负载
+    按命令增量补齐——quote/valuation 已带全量行情字典，其余命令逐步丰富。
     """
     ok: bool
     data: dict = field(default_factory=dict)
@@ -608,7 +599,7 @@ def cmd_financials(code: str):
 
     if not reports:
         print("❌ 未能获取财务数据，建议通过 WebSearch 补充", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     for r in reports[:5]:
         date = r.get("REPORT_DATE", "")[:10]
@@ -637,7 +628,7 @@ def cmd_financials(code: str):
         if roe is not None:
             print(f"  ROE(加权):      {_fmt_pct(roe)}")
     _print_verification(_safe_verification("financials", code, reports[:5]))
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_history(code: str, years: int = 10):
@@ -654,11 +645,11 @@ def cmd_history(code: str, years: int = 10):
     except (ConnectionError, json.JSONDecodeError,
             subprocess.TimeoutExpired) as exc:
         print(f"❌ 获取长期财务数据失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     if not reports:
         print(f"❌ 未获取到 {secu_code} 的年度财务数据", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     name = reports[0].get("SECURITY_NAME_ABBR") or secu_code
     print("=" * 60)
@@ -674,7 +665,7 @@ def cmd_history(code: str, years: int = 10):
         print(f"  利息覆盖:           {_fmt_times(row.get('INTSTCOVRATE'))}")
         print(f"  经营现金流:         {_fmt_yi(row.get('NETCASH_OPERATE_PK'))}")
     _print_verification(_safe_verification("history", code, reports))
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_equity_history(code: str):
@@ -690,11 +681,11 @@ def cmd_equity_history(code: str):
     except (ConnectionError, json.JSONDecodeError,
             subprocess.TimeoutExpired) as exc:
         print(f"❌ 获取历史股本失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     if not rows:
         print(f"❌ 未获取到 {secu_code} 的历史股本", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     name = rows[0].get("SECURITY_NAME_ABBR") or secu_code
     print("=" * 60)
@@ -709,7 +700,7 @@ def cmd_equity_history(code: str):
         print(f"  变动股数:  {_fmt_yi(row.get('TOTAL_SHARES_CHANGE'))}")
         print(f"  变动原因:  {reason}")
     _print_verification(_safe_verification("equity-history", code, rows))
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_search(keyword: str):
@@ -719,11 +710,11 @@ def cmd_search(keyword: str):
     except (ConnectionError, json.JSONDecodeError,
             subprocess.TimeoutExpired) as exc:
         print(f"❌ 搜索股票失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     if not results:
         print(f"❌ 未找到匹配 '{keyword}' 的股票", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
 
     print("=" * 60)
     print(f"搜索结果: '{keyword}'")
@@ -735,7 +726,7 @@ def cmd_search(keyword: str):
         mkt_label = {"1": "沪", "2": "深", "3": "北"}.get(str(market), "")
         print(f"  {code} {name} [{mkt_label}]")
     _print_verification(_safe_verification("search", keyword, results))
-    return True
+    return CommandOutcome(True)
 
 
 def _print_result_meta(result):
@@ -754,7 +745,7 @@ def cmd_announcements(code: str, limit: int = 20):
         print(f"❌ 获取公告失败: {result.get('message', '数据不足')}", file=sys.stderr)
         for warning in result.get("warnings", []):
             print(f"  ⚠️ {warning}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
     print("=" * 60)
     print(f"公告: {code}")
     print("=" * 60)
@@ -767,7 +758,7 @@ def cmd_announcements(code: str, limit: int = 20):
     if verification is None:
         verification = safe_verify_command("announcements", code, result)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_signals(code: str, trade_date: str = None):
@@ -777,7 +768,7 @@ def cmd_signals(code: str, trade_date: str = None):
         print(f"❌ 获取市场信号失败: {result.get('message', '数据不足')}", file=sys.stderr)
         for warning in result.get("warnings", []):
             print(f"  ⚠️ {warning}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
     print("=" * 60)
     print(f"市场信号证据: {code}")
     print("=" * 60)
@@ -790,7 +781,7 @@ def cmd_signals(code: str, trade_date: str = None):
     if verification is None:
         verification = safe_verify_command("signals", code, result["data"], trade_date=trade_date)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 # ---------------------------------------------------------------------------
@@ -843,7 +834,7 @@ def cmd_income_stmt(code: str, years: int = 5, json_output: bool = False):
     """利润表原始数据 — Tushare income"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
     all_rows = []
@@ -855,14 +846,14 @@ def cmd_income_stmt(code: str, years: int = 5, json_output: bool = False):
         print(json.dumps(all_rows, ensure_ascii=False, indent=2))
     else:
         _format_fin_stmt(all_rows, "利润表", code)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_balance_sheet(code: str, years: int = 5, json_output: bool = False):
     """资产负债表 — Tushare balancesheet"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
     all_rows = []
@@ -874,14 +865,14 @@ def cmd_balance_sheet(code: str, years: int = 5, json_output: bool = False):
         print(json.dumps(all_rows, ensure_ascii=False, indent=2))
     else:
         _format_fin_stmt(all_rows, "资产负债表", code)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_cash_flow(code: str, years: int = 5, json_output: bool = False):
     """现金流量表 — Tushare cashflow"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     end_years = [str(datetime.now().year - i) + "1231" for i in range(years)]
     all_rows = []
@@ -893,21 +884,21 @@ def cmd_cash_flow(code: str, years: int = 5, json_output: bool = False):
         print(json.dumps(all_rows, ensure_ascii=False, indent=2))
     else:
         _format_fin_stmt(all_rows, "现金流量表", code)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_money_flow(code: str, trade_date: str = None):
     """个股资金流向 — Tushare moneyflow"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("moneyflow", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare moneyflow 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"资金流向: {code} ({trade_date})")
     print(f"数据来源: Tushare moneyflow")
@@ -920,21 +911,21 @@ def cmd_money_flow(code: str, trade_date: str = None):
         net_mf = float(d.get('net_mf_amount', 0) or 0)
         direction = "主力净流入" if net_mf > 0 else "主力净流出"
         print(f"  {direction}: {_fmt_yi(abs(net_mf))}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_factors(code: str, trade_date: str = None):
     """量化因子 — Tushare stk_factor_pro"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("stk_factor_pro", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare stk_factor_pro 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"量化因子: {code} ({trade_date})")
@@ -952,11 +943,11 @@ def cmd_sector_peers(code: str, json_output: bool = False):
     """同花顺概念成分股 — Tushare ths_member"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     r = client.query("ths_member", params={"ts_code": code}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare ths_member 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     if json_output:
         print(json.dumps(r["data"], ensure_ascii=False, indent=2))
     else:
@@ -966,14 +957,14 @@ def cmd_sector_peers(code: str, json_output: bool = False):
         print(f"{'='*60}\n")
         for row in r["data"]:
             print(f"  {row.get('ts_code','?')}  {row.get('name','?')}  {row.get('con_code','')}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_macro(indicator: str, period: str = None):
     """宏观经济指标 — Tushare cn_gdp/cn_cpi/cn_m/shibor"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     api_map = {
         "gdp": ("cn_gdp", {}),
         "cpi": ("cn_cpi", {"m": period or datetime.now().strftime("%Y%m")}),
@@ -984,7 +975,7 @@ def cmd_macro(indicator: str, period: str = None):
     r = client.query(api_name, params=params, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare {api_name} 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"宏观经济: {indicator.upper()}")
     print(f"数据来源: Tushare {api_name}")
@@ -994,19 +985,19 @@ def cmd_macro(indicator: str, period: str = None):
             if v is not None and str(v).strip():
                 print(f"  {k}: {v}")
         print()
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_name_history(code: str):
     """历史更名 — Tushare namechange"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     r = client.query("namechange", params={"ts_code": ts_code}, fields=[])
     if not r.get("ok"):
         print(f"❌ Tushare namechange 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"历史名称变更: {code}")
     print(f"数据来源: Tushare namechange，共 {len(r['data'])} 条")
@@ -1014,7 +1005,7 @@ def cmd_name_history(code: str):
     for row in r["data"]:
         print(f"  {row.get('start_date','?')[:10]} ~ {row.get('end_date','?')[:10] if row.get('end_date') else '至今'}  "
               f"{row.get('name','?')}")
-    return True
+    return CommandOutcome(True)
 
 
 # === Tier 1 高价值 API（基于 Tushare 完整数据审计） ===
@@ -1023,14 +1014,14 @@ def cmd_limit_price(code: str, trade_date: str = None):
     """涨跌停价格 — Tushare stk_limit"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("stk_limit", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ stk_limit 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"涨跌停价格: {code} ({trade_date})")
@@ -1044,20 +1035,20 @@ def cmd_limit_price(code: str, trade_date: str = None):
         pct_to_up = (up - close) / close * 100
         pct_to_dn = (dn - close) / close * 100
         print(f"  收盘价: {close:.2f}  距涨停: {pct_to_up:+.2f}%  距跌停: {pct_to_dn:+.2f}%")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_suspend(trade_date: str = None):
     """停复牌信息 — Tushare suspend_d"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("suspend_d", params={"trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ suspend_d 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"停复牌信息: {trade_date}")
     print(f"数据来源: Tushare suspend_d，共 {len(r['data'])} 条")
@@ -1067,21 +1058,21 @@ def cmd_suspend(trade_date: str = None):
               f"{d.get('suspend_timing','')}")
     if len(r["data"]) > 30:
         print(f"  ... 共 {len(r['data'])} 条，仅显示前 30")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_weekly(code: str, trade_date: str = None):
     """周线行情 — Tushare weekly"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("weekly", params={"ts_code": ts_code, "trade_date": trade_date, "fields": "ts_code,trade_date,open,high,low,close,vol,amount"}, fields=[])
     if not r.get("ok"):
         print(f"❌ weekly 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"周线行情: {code} (周止 {trade_date})")
@@ -1101,14 +1092,14 @@ def cmd_monthly(code: str, trade_date: str = None):
     """月线行情 — Tushare monthly"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("monthly", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ monthly 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"月线行情: {code} (月止 {trade_date})")
@@ -1128,13 +1119,13 @@ def cmd_broker_recommend(month: str = None):
     """券商月度金股 — Tushare broker_recommend"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not month:
         month = datetime.now().strftime("%Y%m")
     r = client.query("broker_recommend", params={"month": month}, fields=[])
     if not r.get("ok"):
         print(f"❌ broker_recommend 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"券商月度金股推荐: {month}")
     print(f"数据来源: Tushare broker_recommend，共 {len(r['data'])} 条")
@@ -1144,21 +1135,21 @@ def cmd_broker_recommend(month: str = None):
               f"券商={d.get('broker','?')}  月度={d.get('month','')}")
     if len(r["data"]) > 30:
         print(f"  ... 共 {len(r['data'])} 条")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_cyq_chips(code: str, trade_date: str = None):
     """每日筹码分布 — Tushare cyq_perf"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("cyq_perf", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ cyq_perf 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"每日筹码分布: {code} ({trade_date})")
@@ -1177,20 +1168,20 @@ def cmd_cyq_chips(code: str, trade_date: str = None):
                 print(f"  {k:20s}: {fv:>10.4f}")
         except (ValueError, TypeError):
             print(f"  {k:20s}: {v}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_limit_list(trade_date: str = None):
     """涨跌停数据 — Tushare limit_list_d"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("limit_list_d", params={"trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ limit_list_d 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"涨跌停数据: {trade_date}")
     print(f"数据来源: Tushare limit_list_d，共 {len(r['data'])} 条")
@@ -1203,20 +1194,20 @@ def cmd_limit_list(trade_date: str = None):
               f"涨{d.get('pct_chg','?')}%  成交{d.get('amount','?')}")
     if len(r["data"]) > 30:
         print(f"  ... 共 {len(r['data'])} 条")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_top_list(trade_date: str = None):
     """龙虎榜 — Tushare top_list"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("top_list", params={"trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ top_list 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"龙虎榜: {trade_date}")
     print(f"数据来源: Tushare top_list，共 {len(r['data'])} 条")
@@ -1226,21 +1217,21 @@ def cmd_top_list(trade_date: str = None):
               f"净买={d.get('net_amount','?')}万  涨跌幅={d.get('pct_change','?')}%")
     if len(r["data"]) > 20:
         print(f"  ... 共 {len(r['data'])} 条")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_unblock(code: str, end_date: str = None, limit: int = 10):
     """限售股解禁 — Tushare share_float"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not end_date:
         end_date = datetime.now().strftime("%Y%m%d")
     r = client.query("share_float", params={"ts_code": ts_code, "end_date": end_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ share_float 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"限售股解禁: {code}")
     print(f"数据来源: Tushare share_float，共 {len(r['data'])} 条")
@@ -1250,24 +1241,24 @@ def cmd_unblock(code: str, end_date: str = None, limit: int = 10):
               f"占比{d.get('float_ratio','?')}%  类型={d.get('share_type','?')}")
     if len(r["data"]) > limit:
         print(f"  ... 共 {len(r['data'])} 条，仅显示前 {limit}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_block_trade(code: str, trade_date: str = None):
     """大宗交易 — Tushare block_trade"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("block_trade", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ block_trade 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     if not r["data"]:
         print(f"无大宗交易")
-        return True
+        return CommandOutcome(True)
     print(f"{'='*60}")
     print(f"大宗交易: {code} ({trade_date})")
     print(f"数据来源: Tushare block_trade")
@@ -1275,7 +1266,7 @@ def cmd_block_trade(code: str, trade_date: str = None):
     for d in r["data"]:
         print(f"  {d.get('trade_date','?')}  价{d.get('price','?')}  "
               f"量{d.get('vol','?')}万  买方={d.get('buyer','?','')}  卖方={d.get('seller','?','')}")
-    return True
+    return CommandOutcome(True)
 
 
 def _ths_hot_list(period: str = "hour") -> list:
@@ -1413,7 +1404,7 @@ def cmd_ths_hot(period: str = "hour", trade_date: str = None, top: int = 50):
                   f"涨{pct_s} 排名变={r.get('rank_chg','?')}{extra}")
         if len(rows) > top:
             print(f"  ... 共 {len(rows)} 条")
-        return True
+        return CommandOutcome(True)
 
     print("[ths-hot] 零依赖源（同花顺/东财）均未返回数据，尝试 Tushare ths_hot 回退…")
     return _ths_hot_tushare(trade_date)
@@ -1440,16 +1431,16 @@ def cmd_ird_interact(code: str, limit: int = 20):
         code = normalize_code(code).code
     except ValueError as exc:
         print(f"❌ 代码无效: {exc}")
-        return False
+        return CommandOutcome(False)
     try:
         d1 = _curl_json_post(_IRM_QUERY_URL, data={"keyWord": code}, json_body=False)
     except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
         print(f"❌ 互动易定码失败: {exc}")
-        return False
+        return CommandOutcome(False)
     d1_list = (d1.get("data") or []) if isinstance(d1, dict) else []
     if not d1_list:
         print(f"⚠️ 互动易未检索到 {code} 的 IR 主体")
-        return False
+        return CommandOutcome(False)
     org_id = d1_list[0].get("secid")
     params = {
         "_t": "1", "stockcode": code, "orgId": org_id, "pageSize": str(limit),
@@ -1460,11 +1451,11 @@ def cmd_ird_interact(code: str, limit: int = 20):
         d2 = _curl_json_post(f"{_IRM_QA_URL}?{qs}", data=None, json_body=False)
     except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
         print(f"❌ 互动易问答请求失败: {exc}")
-        return False
+        return CommandOutcome(False)
     rows = (d2.get("rows") or []) if isinstance(d2, dict) else []
     if not rows:
         print(f"⚠️ {code} 互动易当前无问答记录（部分公司回复率极低）")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"互动易问答: {code}（共 {d2.get('total', len(rows))} 条，显示前 {len(rows)}）")
     print(f"数据来源: 巨潮互动易（一手定性：投资者提问 + 公司官方回复）")
@@ -1484,7 +1475,7 @@ def cmd_ird_interact(code: str, limit: int = 20):
         shown += 1
         if shown >= limit:
             break
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_cls_telegraph(top: int = 50):
@@ -1504,16 +1495,16 @@ def cmd_cls_telegraph(top: int = 50):
         data = _curl_json(url, headers={"User-Agent": _CLS_UA, "Referer": "https://www.cls.cn/"})
     except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
         print(f"❌ 财联社电报请求失败: {exc}")
-        return False
+        return CommandOutcome(False)
     if not isinstance(data, dict) or data.get("errno") != 0:
         err_no = data.get("errno") if isinstance(data, dict) else "?"
         err_msg = data.get("msg") if isinstance(data, dict) else ""
         print(f"❌ 财联社电报返回错误: errno={err_no} msg={err_msg}")
-        return False
+        return CommandOutcome(False)
     rows = (data.get("data") or {}).get("roll_data", []) or []
     if not rows:
         print("⚠️ 财联社电报当前无数据")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"财联社实时电报（全市场快讯，共 {len(rows)} 条）")
     print(f"数据来源: 财联社 v1（本地签名零 key）")
@@ -1526,7 +1517,7 @@ def cmd_cls_telegraph(top: int = 50):
         print(f"  {t} | {title}")
         if content and content != title:
             print(f"      {content[:80]}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_report_list(code: str = None, industry: str = None, limit: int = 30):
@@ -1544,12 +1535,12 @@ def cmd_report_list(code: str = None, industry: str = None, limit: int = 30):
             scope_code = normalize_code(code).code
         except ValueError as exc:
             print(f"❌ 代码无效: {exc}")
-            return False
+            return CommandOutcome(False)
         qtype, scope_code = "0", scope_code
         scope = f"个股研报({scope_code})"
     else:
         print("❌ 需指定股票代码（个股研报）或 --industry（行业研报）")
-        return False
+        return CommandOutcome(False)
 
     all_rows = []
     pages = 0
@@ -1571,7 +1562,7 @@ def cmd_report_list(code: str = None, industry: str = None, limit: int = 30):
                            headers={"Referer": "https://data.eastmoney.com/"})
         except (ConnectionError, json.JSONDecodeError, subprocess.TimeoutExpired, TransportError) as exc:
             print(f"❌ 研报请求失败: {exc}")
-            return False
+            return CommandOutcome(False)
         if not isinstance(d, dict):
             break
         rows = d.get("data") or []
@@ -1583,7 +1574,7 @@ def cmd_report_list(code: str = None, industry: str = None, limit: int = 30):
 
     if not all_rows:
         print(f"⚠️ {scope} 东财研报库无覆盖（北交所老号段需先迁 920 码）")
-        return False
+        return CommandOutcome(False)
     show = all_rows[:limit]
     print(f"{'='*60}")
     print(f"研报列表: {scope}（共 {len(all_rows)} 篇，显示前 {len(show)}）")
@@ -1596,21 +1587,21 @@ def cmd_report_list(code: str = None, industry: str = None, limit: int = 30):
         eps = r.get("predictThisYearEps") or ""
         if rating or eps:
             print(f"      评级={rating} 今年EPS预测={eps}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_stk_factor(code: str, trade_date: str = None):
     """股票技术面因子(基础版) — Tushare stk_factor"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("stk_factor", params={"ts_code": ts_code, "trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ stk_factor 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"技术因子: {code} ({trade_date})")
@@ -1627,7 +1618,7 @@ def cmd_stk_factor(code: str, trade_date: str = None):
                 print(f"  {k:20s}: {fv:>10.4f}")
         except (ValueError, TypeError):
             print(f"  {k:20s}: {v}")
-    return True
+    return CommandOutcome(True)
 
 
 # === Tier 1b: 券商研报/北向资金/融资融券/板块资金流 ===
@@ -1636,12 +1627,12 @@ def cmd_analyst_reports(code: str, limit: int = 20):
     """券商研报 — Tushare report_rc"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     ts_code = normalize_code(code).secu_code
     r = client.query("report_rc", params={"ts_code": ts_code}, fields=[])
     if not r.get("ok"):
         print(f"❌ report_rc 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"券商研报: {code}")
     print(f"数据来源: Tushare report_rc，共 {len(r['data'])} 篇")
@@ -1654,20 +1645,20 @@ def cmd_analyst_reports(code: str, limit: int = 20):
         print()
     if len(r["data"]) > limit:
         print(f"  ... 共 {len(r['data'])} 篇，仅显示前 {limit}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_hsgt_flow(trade_date: str = None):
     """沪深港通资金流向 — Tushare moneyflow_hsgt"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("moneyflow_hsgt", params={"trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ moneyflow_hsgt 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     d = r["data"][0]
     print(f"{'='*60}")
     print(f"沪深港通资金流向: {trade_date}")
@@ -1679,20 +1670,20 @@ def cmd_hsgt_flow(trade_date: str = None):
     print(f"  南向资金净流入: {south/1e4:.2f}亿元")
     print(f"  沪股通: {float(d.get('hgt',0))/1e4:.2f}亿  深股通: {float(d.get('sgt',0))/1e4:.2f}亿")
     print(f"  港股通(沪): {float(d.get('ggt_ss',0))/1e4:.2f}亿  港股通(深): {float(d.get('ggt_sz',0))/1e4:.2f}亿")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_hsgt_top10(trade_date: str = None):
     """沪深港通十大成交股 — Tushare hsgt_top10"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     r = client.query("hsgt_top10", params={"trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ hsgt_top10 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"沪深港通十大成交股: {trade_date}")
     print(f"数据来源: Tushare hsgt_top10，共 {len(r['data'])} 条")
@@ -1700,21 +1691,21 @@ def cmd_hsgt_top10(trade_date: str = None):
     for d in r["data"][:20]:
         amt = float(d.get("amount", 0) or 0)
         print(f"  {d.get('name','?'):10s}  净买={amt/1e4:.2f}亿  通道={d.get('channel','')}")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_sector_flow(source: str = "ths", trade_date: str = None):
     """板块资金流向 — Tushare moneyflow_ths/moneyflow_dc"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     api = f"moneyflow_{source}"
     r = client.query(api, params={"trade_date": trade_date}, fields=[])
     if not r.get("ok"):
         print(f"❌ {api} 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     print(f"{'='*60}")
     print(f"板块资金流向({source.upper()}): {trade_date}")
     print(f"数据来源: Tushare {api}，共 {len(r['data'])} 个板块")
@@ -1731,14 +1722,14 @@ def cmd_sector_flow(source: str = "ths", trade_date: str = None):
         net = float(d.get("net_amount", 0) or 0)
         name = d.get("name", "?")
         print(f"  {name:20s}  净流入={net/1e4:+.2f}亿")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_margin(code: str = None, trade_date: str = None):
     """融资融券 — Tushare margin/margin_detail"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
     if not trade_date:
         trade_date = datetime.now().strftime("%Y%m%d")
     if code:
@@ -1755,7 +1746,7 @@ def cmd_margin(code: str = None, trade_date: str = None):
     if not r.get("ok"):
         print(f"❌ margin 查询失败: {r.get('error_type', r.get('message', '未知'))}")
         print(f"  (可能该日非交易日或无数据)")
-        return True  # Not a hard error
+        return CommandOutcome(True, warnings=["margin 查询失败（非硬错误，可能该日非交易日或无数据）"])
     print(f"{'='*60}")
     print(title)
     print(f"数据来源: Tushare margin/margin_detail，共 {len(r['data'])} 条")
@@ -1764,14 +1755,14 @@ def cmd_margin(code: str = None, trade_date: str = None):
         rzye = float(d.get("rzye", 0) or 0)
         rqye = float(d.get("rqye", 0) or 0)
         print(f"  {d.get('ts_code','汇总'):12s}  融资余额={rzye/1e8:.2f}亿  融券余额={rqye/1e8:.2f}亿")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
     """历史 PE/PB 分位——Tushare daily_basic 全历史序列。"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
 
@@ -1782,7 +1773,7 @@ def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
     )
     if not pe_result["ok"]:
         print(f"❌ Tushare daily_basic 查询失败: {pe_result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = pe_result["data"]
     cutoff_year = datetime.now().year - years
@@ -1792,7 +1783,7 @@ def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
     ]
     if not filtered:
         print(f"❌ 近 {years} 年无数据")
-        return False
+        return CommandOutcome(False)
 
     pe_vals = [float(r["pe"]) for r in filtered if r.get("pe") and float(r["pe"]) > 0]
     pb_vals = [float(r["pb"]) for r in filtered if r.get("pb") and float(r["pb"]) > 0]
@@ -1850,7 +1841,7 @@ def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
             "years": years,
             "pe": pe_stats, "pb": pb_stats,
         }, indent=2, ensure_ascii=False))
-        return True
+        return CommandOutcome(True)
 
     display_name = qq_data.get("name", code) if qq_data else code
     print("=" * 60)
@@ -1894,7 +1885,7 @@ def cmd_pe_band(code: str, years: int = 5, json_output: bool = False):
         "quote_date": qq_data.get("quote_time", ""),
     })
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_research_visits(code: str, limit: int = 20):
@@ -1905,7 +1896,7 @@ def cmd_research_visits(code: str, limit: int = 20):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
 
@@ -1916,7 +1907,7 @@ def cmd_research_visits(code: str, limit: int = 20):
     )
     if not result["ok"]:
         print(f"❌ Tushare stk_surv 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     visits = result["data"]
     # Sort by date descending
@@ -1954,7 +1945,7 @@ def cmd_research_visits(code: str, limit: int = 20):
     # Verification: Tushare is the primary source; self-check
     verification = _safe_verification("research-visits", code, visits)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_insider_trades(code: str, limit: int = 20):
@@ -1965,7 +1956,7 @@ def cmd_insider_trades(code: str, limit: int = 20):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
 
@@ -1976,7 +1967,7 @@ def cmd_insider_trades(code: str, limit: int = 20):
     )
     if not result["ok"]:
         print(f"❌ Tushare stk_holdertrade 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     trades = result["data"]
     # Sort by date descending
@@ -2026,7 +2017,7 @@ def cmd_insider_trades(code: str, limit: int = 20):
     # Verification: Tushare is the primary source
     verification = _safe_verification("insider-trades", code, trades)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 # ---------------------------------------------------------------------------
@@ -2044,7 +2035,7 @@ def cmd_consensus(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2054,7 +2045,7 @@ def cmd_consensus(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare forecast 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     forecasts = result["data"]
     forecasts.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
@@ -2097,7 +2088,7 @@ def cmd_consensus(code: str):
 
     verification = _safe_verification("consensus", code, forecasts)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_shareholders(code: str):
@@ -2107,7 +2098,7 @@ def cmd_shareholders(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2117,7 +2108,7 @@ def cmd_shareholders(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare top10_holders 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     holders = result["data"]
     # Group by period (end_date)
@@ -2157,7 +2148,7 @@ def cmd_shareholders(code: str):
 
     verification = _safe_verification("shareholders", code, holders)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_dividend_history(code: str):
@@ -2167,7 +2158,7 @@ def cmd_dividend_history(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2177,7 +2168,7 @@ def cmd_dividend_history(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare dividend 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     divs = result["data"]
     divs.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
@@ -2210,7 +2201,7 @@ def cmd_dividend_history(code: str):
 
     verification = _safe_verification("dividend", code, divs)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 # ── SW Industry mapping cache ──
@@ -2268,7 +2259,7 @@ def cmd_industry_pe(code: str, json_output: bool = False):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
 
@@ -2277,26 +2268,26 @@ def cmd_industry_pe(code: str, json_output: bool = False):
                      fields=("ts_code", "name", "industry"))
     if not r["ok"]:
         print(f"❌ 无法获取行业分类: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     stock_name = r["data"][0].get("name", code)
     industry = r["data"][0].get("industry", "")
     if not industry:
         print(f"❌ 未找到 {code} 的行业分类")
-        return False
+        return CommandOutcome(False)
 
     # 2. Map to SW index code
     sw_code = _find_sw_index(client, industry)
     if not sw_code:
         print(f"❌ 无法将行业「{industry}」映射到申万指数")
-        return False
+        return CommandOutcome(False)
 
     # 3. Query industry PE/PB
     r = client.query("sw_daily", params={"ts_code": sw_code},
                      fields=("ts_code", "trade_date", "pe", "pb", "close"))
     if not r["ok"]:
         print(f"❌ sw_daily 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = r["data"]
     pe_vals = [float(row["pe"]) for row in rows if row.get("pe") and float(row["pe"]) > 0]
@@ -2304,7 +2295,7 @@ def cmd_industry_pe(code: str, json_output: bool = False):
 
     if not pe_vals:
         print(f"❌ 行业 {sw_code} 无 PE 数据")
-        return False
+        return CommandOutcome(False)
 
     import statistics
     pe_sorted = sorted(pe_vals)
@@ -2367,7 +2358,7 @@ def cmd_industry_pe(code: str, json_output: bool = False):
             "industry_pe": pe_stats, "industry_pb": pb_stats,
             "stock_vs_industry": stock_comparison,
         }, indent=2, ensure_ascii=False))
-        return True
+        return CommandOutcome(True)
 
     print("=" * 60)
     print(f"行业 PE/PB 基准: {stock_name} ({ts_code})")
@@ -2399,7 +2390,7 @@ def cmd_industry_pe(code: str, json_output: bool = False):
         "industry": industry, "sw_code": sw_code,
     })
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 # ── P2: News + Disclosure ──
@@ -2409,12 +2400,12 @@ def cmd_news(limit: int = 20):
     """主要新闻——Tushare major_news。"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     r = client.query("major_news", params={}, fields=API_FIELDS["major_news"])
     if not r["ok"]:
         print(f"❌ major_news 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     news = r["data"]
     news.sort(key=lambda x: str(x.get("pub_time", "")), reverse=True)
@@ -2434,14 +2425,14 @@ def cmd_news(limit: int = 20):
 
     verification = _safe_verification("news", "market", news)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_disclosure_calendar(code: str):
     """披露日历——Tushare disclosure_date。"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     r = client.query("disclosure_date", params={"ts_code": ts_code},
@@ -2449,9 +2440,9 @@ def cmd_disclosure_calendar(code: str):
     if not r["ok"]:
         if r["error_type"] == "empty_data":
             print(f"⚠️ {code} 无预披露日期信息")
-            return True
+            return CommandOutcome(True)
         print(f"❌ disclosure_date 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     records = r["data"]
     records.sort(key=lambda x: str(x.get("end_date", "")), reverse=True)
@@ -2472,7 +2463,7 @@ def cmd_disclosure_calendar(code: str):
 
     verification = _safe_verification("disclosure-calendar", code, records)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 # ── P3: HK Stock ──
@@ -2507,21 +2498,21 @@ def cmd_hk_quote(code: str):
     """H股行情——Tushare hk_daily。用于 A+H 双重上市公司的独立源交叉验证。"""
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     # Find HK code
     ts_code_a = normalize_code(code).secu_code
     hk_code = _find_hk_code(client, ts_code_a)
     if not hk_code:
         print(f"❌ 未找到 {code} 对应的 H 股代码")
-        return False
+        return CommandOutcome(False)
 
     # Get HK daily data
     r = client.query("hk_daily", params={"ts_code": hk_code},
                      fields=API_FIELDS["hk_daily"])
     if not r["ok"]:
         print(f"❌ hk_daily 查询失败: {r.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = r["data"]
     latest = max(rows, key=lambda x: str(x.get("trade_date", "")))
@@ -2549,7 +2540,7 @@ def cmd_hk_quote(code: str):
 
     verification = _safe_verification("hk-quote", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_ah_cross_check(code: str, json_output: bool = False):
@@ -2560,7 +2551,7 @@ def cmd_ah_cross_check(code: str, json_output: bool = False):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code_a = normalize_code(code).secu_code
     hk_code = _find_hk_code(client, ts_code_a)
@@ -2607,7 +2598,7 @@ def cmd_ah_cross_check(code: str, json_output: bool = False):
 
     if json_output:
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return True
+        return CommandOutcome(True)
 
     print("=" * 60)
     print(f"A+H 交叉验证: {code}")
@@ -2616,7 +2607,7 @@ def cmd_ah_cross_check(code: str, json_output: bool = False):
 
     if not hk_code:
         print(f"\n  ⚠️ {code} 非 A+H 双重上市公司")
-        return True
+        return CommandOutcome(True)
 
     print(f"\n  H股代码: {hk_code}")
     if a_latest:
@@ -2628,7 +2619,7 @@ def cmd_ah_cross_check(code: str, json_output: bool = False):
 
     verification = _safe_verification("ah-cross-check", code, result)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_management(code: str):
@@ -2638,7 +2629,7 @@ def cmd_management(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2648,7 +2639,7 @@ def cmd_management(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare stk_rewards 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     mgmt = result["data"]
     # Get latest period
@@ -2686,7 +2677,7 @@ def cmd_management(code: str):
 
     verification = _safe_verification("management", code, mgmt)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_managers(code: str):
@@ -2697,7 +2688,7 @@ def cmd_managers(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2707,7 +2698,7 @@ def cmd_managers(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare stk_managers 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
 
@@ -2763,7 +2754,7 @@ def cmd_managers(code: str):
 
     verification = _safe_verification("managers", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_mainbz(code: str):
@@ -2774,7 +2765,7 @@ def cmd_mainbz(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
 
@@ -2791,7 +2782,7 @@ def cmd_mainbz(code: str):
     all_rows = prod + region
     if not all_rows:
         print(f"❌ Tushare fina_mainbz 无数据（{ts_code}）")
-        return False
+        return CommandOutcome(False)
 
     latest = max((str(r.get("end_date") or "") for r in all_rows), default="")
 
@@ -2824,7 +2815,7 @@ def cmd_mainbz(code: str):
     print("\n  注：Tushare 分部为独立第二源，可与东财 F10 主营构成交叉核对达成分部双源。")
     verification = _safe_verification("mainbz", code, all_rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_repurchase(code: str):
@@ -2835,7 +2826,7 @@ def cmd_repurchase(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2845,7 +2836,7 @@ def cmd_repurchase(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare repurchase 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
     rows.sort(key=lambda r: str(r.get("ann_date") or ""), reverse=True)
@@ -2873,7 +2864,7 @@ def cmd_repurchase(code: str):
 
     verification = _safe_verification("repurchase", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_pledge(code: str):
@@ -2883,7 +2874,7 @@ def cmd_pledge(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2893,7 +2884,7 @@ def cmd_pledge(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare pledge_stat 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
     rows.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
@@ -2927,7 +2918,7 @@ def cmd_pledge(code: str):
 
     verification = _safe_verification("pledge", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_express(code: str):
@@ -2937,7 +2928,7 @@ def cmd_express(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -2945,7 +2936,7 @@ def cmd_express(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare express 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
     rows.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
@@ -2987,7 +2978,7 @@ def cmd_express(code: str):
 
     verification = _safe_verification("express", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_kline(code: str, days: int = 120):
@@ -2998,7 +2989,7 @@ def cmd_kline(code: str, days: int = 120):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     start = (datetime.now() - timedelta(days=int(days * 1.7))).strftime("%Y%m%d")
@@ -3009,11 +3000,11 @@ def cmd_kline(code: str, days: int = 120):
     )
     if not daily["ok"]:
         print(f"❌ Tushare daily 查询失败: {daily.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
     rows = [r for r in daily["data"] if r.get("close") is not None]
     if not rows:
         print("❌ 无日线数据")
-        return False
+        return CommandOutcome(False)
 
     adj = client.query(
         "adj_factor", params={"ts_code": ts_code, "start_date": start},
@@ -3083,7 +3074,7 @@ def cmd_kline(code: str, days: int = 120):
 
     verification = _safe_verification("kline", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_audit(code: str):
@@ -3093,7 +3084,7 @@ def cmd_audit(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -3101,7 +3092,7 @@ def cmd_audit(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare fina_audit 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
     seen = {}
@@ -3135,7 +3126,7 @@ def cmd_audit(code: str):
 
     verification = _safe_verification("audit", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_holder_num(code: str):
@@ -3145,7 +3136,7 @@ def cmd_holder_num(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -3154,7 +3145,7 @@ def cmd_holder_num(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare stk_holdernumber 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
     rows.sort(key=lambda r: str(r.get("end_date") or ""), reverse=True)
@@ -3188,7 +3179,7 @@ def cmd_holder_num(code: str):
 
     verification = _safe_verification("holder-num", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_ratios(code: str):
@@ -3199,7 +3190,7 @@ def cmd_ratios(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     result = client.query(
@@ -3208,7 +3199,7 @@ def cmd_ratios(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare fina_indicator 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     annual = [r for r in result["data"] if str(r.get("end_date") or "").endswith("1231")]
     seen = {}
@@ -3245,7 +3236,7 @@ def cmd_ratios(code: str):
 
     verification = _safe_verification("ratios", code, result["data"])
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_peers(code: str, level: str = "l3"):
@@ -3255,7 +3246,7 @@ def cmd_peers(code: str, level: str = "l3"):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     r1 = client.query(
@@ -3265,7 +3256,7 @@ def cmd_peers(code: str, level: str = "l3"):
     if not r1["ok"] or not r1["data"]:
         msg = r1.get("message", "无数据") if not r1["ok"] else "未归入申万成分"
         print(f"❌ 未找到 {ts_code} 的申万行业归属: {msg}")
-        return False
+        return CommandOutcome(False)
 
     info = r1["data"][0]
     l1, l2, l3 = info.get("l1_name"), info.get("l2_name"), info.get("l3_name")
@@ -3304,7 +3295,7 @@ def cmd_peers(code: str, level: str = "l3"):
 
     verification = _safe_verification("peers", code, r1["data"])
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_north_hold(code: str):
@@ -3314,7 +3305,7 @@ def cmd_north_hold(code: str):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     ts_code = normalize_code(code).secu_code
     start = (datetime.now() - timedelta(days=400)).strftime("%Y%m%d")
@@ -3324,7 +3315,7 @@ def cmd_north_hold(code: str):
     )
     if not result["ok"]:
         print(f"❌ Tushare hk_hold 查询失败: {result.get('message', '未知')}")
-        return False
+        return CommandOutcome(False)
 
     rows = result["data"]
     rows.sort(key=lambda r: str(r.get("trade_date") or ""), reverse=True)
@@ -3358,7 +3349,7 @@ def cmd_north_hold(code: str):
 
     verification = _safe_verification("north-hold", code, rows)
     _print_verification(verification)
-    return True
+    return CommandOutcome(True)
 
 
 _INDEX_ALIASES = {
@@ -3379,7 +3370,7 @@ def cmd_index_val(index: str = "hs300"):
     """
     client = _get_tushare_client()
     if not client:
-        return False
+        return CommandOutcome(False)
 
     alias = _INDEX_ALIASES.get(str(index).lower())
     idx_code, idx_name = alias if alias else (index, index)
@@ -3391,7 +3382,7 @@ def cmd_index_val(index: str = "hs300"):
     if not result["ok"] or not result["data"]:
         aliases = " / ".join(sorted(_INDEX_ALIASES))
         print(f"❌ index_dailybasic 无数据（{idx_code}）；可用别名: {aliases} 或直接传指数代码如 000300.SH")
-        return False
+        return CommandOutcome(False)
 
     rows = sorted(result["data"], key=lambda r: str(r.get("trade_date") or ""))
     latest = rows[-1]
@@ -3416,7 +3407,7 @@ def cmd_index_val(index: str = "hs300"):
               f"{min(vals):>8.2f} {statistics.median(vals):>8.2f} {max(vals):>8.2f}")
 
     print("\n  注：分位越低=市场整体估值越便宜（市场择时/情绪锚，非个股买卖结论）。")
-    return True
+    return CommandOutcome(True)
 
 
 # ===========================================================================
@@ -3496,10 +3487,10 @@ def cmd_limit_pool(trade_date: str = None):
     if total == 0:
         print("❌ 未获取到涨停生态数据（非交易日或接口无返回），建议通过 WebSearch 补充",
               file=sys.stderr)
-        return False
+        return CommandOutcome(False)
     print(f"\n  数据来源: 东方财富 push2ex（涨停/炸板/跌停/昨涨停）| 合计 {total} 条")
     print("  ⚠️ 本池为全市场情绪旁证，不参与个股去劣硬指标判决")
-    return True
+    return CommandOutcome(True)
 
 
 def cmd_monitor_pool(trade_date: str = None):
@@ -3516,7 +3507,7 @@ def cmd_monitor_pool(trade_date: str = None):
     except (TransportError, ConnectionError, json.JSONDecodeError,
             subprocess.TimeoutExpired) as exc:
         print(f"❌ 重点监控池请求失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
     today = (f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
              if len(trade_date) == 8 else trade_date)
     active = []
@@ -3536,12 +3527,12 @@ def cmd_monitor_pool(trade_date: str = None):
     print("=" * 64)
     if not active:
         print("  当前无处于监控窗口内的标的")
-        return True
+        return CommandOutcome(True)
     for s in active:
         print(f"  ⚠️ {s['code']} {s['name']}({s['market']}) 监控期 {s['start']}~{s['end']}")
     print("\n  数据来源: 东方财富 mobappconfig（交易所重点监控名单）")
     print("  ⚠️ 命中重点监控=治理红线告警，仅作旁证不作判决")
-    return True
+    return CommandOutcome(True)
 
 
 def _anomaly_market(code, m, board=None) -> str:
@@ -3565,11 +3556,11 @@ def cmd_anomaly_pool(trade_date: str = None):
     except (TransportError, ConnectionError, json.JSONDecodeError,
             subprocess.TimeoutExpired) as exc:
         print(f"❌ 日内异动池请求失败: {exc}", file=sys.stderr)
-        return False
+        return CommandOutcome(False)
     if data.get("result") != 0:
         print(f"❌ 日内异动池接口拒绝: result={data.get('result')} msg={data.get('msg')!r}",
               file=sys.stderr)
-        return False
+        return CommandOutcome(False)
     items = []
     for x in data.get("data") or []:
         e = x.get("e")
@@ -3588,7 +3579,7 @@ def cmd_anomaly_pool(trade_date: str = None):
     print("=" * 64)
     if not items:
         print("  当日无严重异常波动标的")
-        return True
+        return CommandOutcome(True)
     for s in items[:30]:
         flag = "今日" if s["is_today"] else "历史"
         print(f"  🔥 {s['code']} {s['name']}({s['market']}) {s['change_pct']}% "
@@ -3599,7 +3590,7 @@ def cmd_anomaly_pool(trade_date: str = None):
         print(f"  ⚠️ 请求日期 {trade_date} 与接口返回交易日 {date} 不一致，已展示接口实际交易日")
     print("\n  数据来源: 东方财富 dycalchis（严重异常波动）")
     print("  ⚠️ 异动且在监控池=最高风险，仅作治理旁证不作判决")
-    return True
+    return CommandOutcome(True)
 
 
 # ---------------------------------------------------------------------------
@@ -3724,7 +3715,7 @@ def cmd_run_level(target: str, level: str = "quick"):
 
     code = _resolve_target(target)
     if code is None:
-        return False
+        return CommandOutcome(False)
 
     outcomes = []
     total = len(commands)
@@ -3753,8 +3744,8 @@ def cmd_run_level(target: str, level: str = "quick"):
         print()
         print(f"⚠️ {len(failed)}/{total} 条命令未取到数据，"
               f"相关结论按“数据不足”处理，不得推测填充。")
-        return False
-    return True
+        return CommandOutcome(False)
+    return CommandOutcome(True)
 
 
 # ---------------------------------------------------------------------------
