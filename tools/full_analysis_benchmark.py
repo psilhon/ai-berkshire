@@ -27,19 +27,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import run_store
 
 STABILITY_SCHEMA_VERSION = "stability-report/v1"
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-
-
-def _atomic_write_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def load_manifest(run_root: Path) -> dict:
@@ -329,7 +323,7 @@ def compare(run_roots: list[Path], output_dir: Path | None = None) -> tuple[dict
             "metrics": {},
         }
         if output_dir:
-            _atomic_write_json(output_dir / "stability-report.json", report)
+            run_store.atomic_write_json(output_dir / "stability-report.json", report)
         return report, 2
 
     report = {
@@ -369,7 +363,7 @@ def compare(run_roots: list[Path], output_dir: Path | None = None) -> tuple[dict
     report["issues"] = issues
 
     if output_dir:
-        _atomic_write_json(output_dir / "stability-report.json", report)
+        run_store.atomic_write_json(output_dir / "stability-report.json", report)
 
     return report, (0 if report["overall_verdict"] == "STABLE" else 1)
 

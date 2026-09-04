@@ -1574,7 +1574,7 @@ def _run_review_gate(root: Path, registry: Path) -> dict:
         # 聚合已有评审结果
         summary, _ = module.aggregate(root)
         summary_path = root / "evidence/review/semantic-review-summary.json"
-        _atomic_write_json_safe(summary_path, summary)
+        atomic_write_json(summary_path, summary)
         print(f"[review] {summary['overall_verdict']}  "
               f"评审 {summary['skills_reviewed']} 个核心单元  "
               f"findings {summary['total_findings']}  "
@@ -1591,12 +1591,6 @@ def _run_review_gate(root: Path, registry: Path) -> dict:
         except Exception:  # noqa: BLE001
             pass
         return {"status": "unavailable"}
-
-
-def _atomic_write_json_safe(path: Path, data) -> None:
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def _run_doctor_advisory(root: Path, registry: Path) -> dict:

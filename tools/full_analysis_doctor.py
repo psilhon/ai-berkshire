@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import sys
 from pathlib import Path
+
+import run_store
 
 DEFAULT_REGISTRY = str(Path(__file__).resolve().parent / "full_analysis_contract.json")
 
@@ -65,13 +66,6 @@ def _load(path: Path, label: str) -> dict:
     if not isinstance(data, dict):
         raise DoctorError(f"{label} 顶层必须为对象: {path}")
     return data
-
-
-def _atomic_write_json(path: Path, data) -> None:
-    """临时文件 + os.replace 原子写入，避免半成品报告污染 evidence/。"""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
 
 
 def _work_unit_to_skill(wid: str) -> str:
@@ -280,7 +274,7 @@ def run_and_render(run_root: Path, registry: Path, *, as_json: bool = False,
     """
     report = diagnose(run_root, registry)
     if write:
-        _atomic_write_json(run_root / "evidence/doctor-report.json", report)
+        run_store.atomic_write_json(run_root / "evidence/doctor-report.json", report)
     if as_json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

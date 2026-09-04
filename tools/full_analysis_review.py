@@ -32,6 +32,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import run_store
 
 REVIEW_SCHEMA_VERSION = "semantic-review/v1"
 BRIEF_SCHEMA_VERSION = "review-brief/v1"  # full 诊断模式（旧评审 Agent 兼容）
@@ -109,13 +110,6 @@ def load_registry(path: Path) -> dict:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-
-
-def _atomic_write_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def _digest(value) -> str:
@@ -395,7 +389,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                 ),
             }
         brief_path = review_dir / f"review-brief-{skill_id}.json"
-        _atomic_write_json(brief_path, brief)
+        run_store.atomic_write_json(brief_path, brief)
         brief_index[skill_id] = {
             "brief_digest": brief_digest,
             "report_digest": report_digest,
@@ -405,7 +399,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                          "fact_count": len(evidence["facts"]),
                          "report_bytes": len(report_text.encode("utf-8"))})
 
-    _atomic_write_json(review_dir / "review-index.json", {
+    run_store.atomic_write_json(review_dir / "review-index.json", {
         "run_id": manifest.get("run", {}).get("run_id"),
         "scope": [item["skill_id"] for item in prepared],
         "briefs": brief_index,
@@ -536,7 +530,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(f"❌ 评审结果与当前简报不匹配: {mismatched}", file=sys.stderr)
         return 1
     out_path = root / "evidence/review" / f"review-result-{skill_id}.json"
-    _atomic_write_json(out_path, result)
+    run_store.atomic_write_json(out_path, result)
     # E13: 聚合 fix_source 到 review-index（供 fix-list 导出季度源头修复清单）
     index_path = root / "evidence/review/review-index.json"
     try:
@@ -554,7 +548,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
                     "kind": fs.get("kind"),
                     "note": fs.get("note"),
                 })
-        _atomic_write_json(index_path, index)
+        run_store.atomic_write_json(index_path, index)
     except (OSError, json.JSONDecodeError):
         pass
     print(json.dumps({"skill_id": skill_id, "verdict": result["verdict"],
@@ -719,7 +713,7 @@ def cmd_summarize(args: argparse.Namespace) -> int:
         return code if code != 0 else 1
 
     summary_path = root / "evidence/review/semantic-review-summary.json"
-    _atomic_write_json(summary_path, summary)
+    run_store.atomic_write_json(summary_path, summary)
     print(json.dumps({"overall_verdict": summary["overall_verdict"],
                       "skills_review_required": summary["skills_review_required"],
                       "total_findings": summary["total_findings"],

@@ -27,6 +27,8 @@ from pathlib import Path
 from full_analysis_snapshot import analysis_snapshot
 from financial_rigor import build_rigor_argv, REPLAYABLE_OPERATIONS
 
+import run_store
+
 
 PWL_CODES = {"tushare_unavailable", "web_bandwidth_degraded", "ephemeral_source"}
 DEFAULT_REGISTRY = str(Path(__file__).resolve().parent / "full_analysis_contract.json")
@@ -48,12 +50,6 @@ def load_manifest(run_root: Path) -> dict:
 
 def load_registry(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def _atomic_write_json(path: Path, data) -> None:
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
 
 
 def _evidence_by_skill(manifest: dict) -> dict:
@@ -323,7 +319,7 @@ def audit(run_root: Path, registry_path: Path = Path(DEFAULT_REGISTRY)) -> tuple
     sources = manifest.get("sources", [])
     calculations = manifest.get("calculations", [])
     if _replay_calculation_requests(calculations):
-        _atomic_write_json(root / "evidence/00-analysis-manifest.json", manifest)
+        run_store.atomic_write_json(root / "evidence/00-analysis-manifest.json", manifest)
     source_ids = [source.get("source_id") for source in sources]
     fact_ids = [fact.get("fact_id") for fact in facts]
     errors: list[dict] = []
@@ -450,8 +446,8 @@ def audit(run_root: Path, registry_path: Path = Path(DEFAULT_REGISTRY)) -> tuple
 
     audit_dir = root / "evidence/audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
-    _atomic_write_json(audit_dir / "audit-result.json", report)
-    _atomic_write_json(root / "evidence/quality-scorecard.json", scorecard)
+    run_store.atomic_write_json(audit_dir / "audit-result.json", report)
+    run_store.atomic_write_json(root / "evidence/quality-scorecard.json", scorecard)
     return report, 0 if report["status"] == "PASS" else 1
 
 
