@@ -154,14 +154,6 @@ def moat_verdict(ratio):
     return "毁灭价值（EPV < 净资产）"
 
 
-def franchise_growth_value(e, g, roiic, coc):
-    if not (coc > g):
-        die("franchise_growth_value: 需要 coc > g")
-    if not (roiic > g):
-        return 0.0
-    return e * (1 - g / roiic) / (coc - g)
-
-
 # ---------------------------------------------------------------------------
 # EVA / 剩余收益
 # ---------------------------------------------------------------------------

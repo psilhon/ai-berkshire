@@ -173,12 +173,6 @@ class TestEpvMoat(unittest.TestCase):
         self.assertAlmostEqual(r["ev"], 100.0, places=10)
         self.assertAlmostEqual(r["equity"], 85.0, places=10)
 
-    def test_franchise_growth_requires_coc_above_g(self):
-        with self.assertRaises(SystemExit):
-            ed.franchise_growth_value(10.0, 0.09, 0.12, 0.08)
-        # roiic <= g → 成长价值 0（不 die）
-        self.assertEqual(ed.franchise_growth_value(10.0, 0.05, 0.04, 0.09), 0.0)
-
 
 class TestEva(unittest.TestCase):
     def test_demo_golden(self):
