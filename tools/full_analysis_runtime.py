@@ -222,11 +222,6 @@ def parse_time(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-def atomic_json(path: Path, value: object) -> None:
-    """薄委托：原子写收进 run_store（tmp+fsync+权限保持；此前本模块无 fsync）。"""
-    run_store.atomic_write_json(path, value)
-
-
 def load_state(run_root: Path) -> dict:
     try:
         return run_store.load_runtime_state(run_root)
