@@ -5,6 +5,33 @@
 
 ---
 
+## [Unreleased]
+
+> **代码精简（ponytail-audit 全仓过度设计审计）**：审计 `tools/` + `scripts/` + `tests/`，执行可削减项，累计 **14 files changed, 44 insertions(+), 429 deletions(−)**。单测 809 → **748**（消除 61 次重复执行），全绿。方案与逐条复核记录见 `docs/ponytail-audit-optimization-plan-2026-09-04.md`。
+
+### 🗑 删除 (Removed)
+
+- **`tools/hkex_data.py`（−265L）**：全仓零引用（tools/scripts/tests/skills/codex-skills/docs/CI 全检索），仅自身 docstring 提及。
+- **三处零引用死代码**：`scripts/build_report_index.py::_gitignored`（−23L，连带删已孤立的 `import subprocess`）；`tools/full_analysis_runtime.py::atomic_json`（−3L，本就只是 `run_store.atomic_write_json` 的薄委托且零调用方）。
+- **3 个 shim 测试文件**（`tests/test_full_analysis_{gate,contract,phase2}.py`，−11L）：各仅一行 re-import，导致 `unittest discover` 把 61 个用例执行两遍。
+
+### 🔧 变更 (Changed)
+
+- **原子写统一到 `run_store`**：删 `audit`/`benchmark`/`doctor`/`review` 各自的 `_atomic_write_json` 与 gate 的 `_atomic_write_json_safe`，统一调 `run_store.atomic_write_json`（mkstemp + fsync + 权限保持 + os.replace）。顺带修两处行为漂移：doctor 原用 `with_suffix(path.suffix + '.tmp')`（无后缀/含多点路径会写错临时文件名）、其中两份缺 `mkdir(parents=True)`、三份无 fsync。
+- **`_num` 提为模块级**（`tools/ashare_data.py`）：7 份逐字相同的内部函数 → 1 个，−34L。
+- **取数级别三档合并**：`LEVEL_COMMANDS` 三个 key 值完全相同，`LEVEL_PENDING_LAYERS` 三级全空且打印块永不触发 → 单个执行集常量 + 一张标题表，−22L。三档行为等价（实测命令序列一致，仅标题不同）。
+
+### 📐 有意保留（审计建议但经复核撤回）
+
+- **`run_store.read_events`**：是 `append_event` 的对称读侧，被 5 处测试用作行为验证缝（含 gate/runtime 薄委托验证），与 ADR-0001「测试引用内部缝合法」同裁定。
+- **`gate.validate_result_bundle`**：`full_analysis_gate.py:407` 将其写为三方共用 `admit_bundle` 的契约口径，且是 `test_mk_result_bundle` 的 oracle 入口（4 个故障注入子用例依赖它变红）。
+- **JSON 读取 5 个变体不合并**：实为 4 种不同错误语义（GateError / RunStoreError / DoctorError / 静默 None / 裸抛），合并会改异常类型、破坏 doctor 的异常逃逸约束。
+- **`tools/full_analysis_cache.py` 不删**：`gate.py:1402` 在 APPROVED 后实际调用 `store_approved()`；真问题是「只写不读」（决策项 D1）。
+- **`tools/akshare_data.py` 不删**：ADR-0001 明文裁定保留（零 token 前复权 OHLC 补充路径）。
+- **`equity_dcf.franchise_growth_value`**：未接入 `run()` 属实，但更像接线遗漏而非推测性功能，交决策项 D5。
+
+---
+
 ## [v3.10.12] — 2026-09-02
 
 > **industry-analysis skill 质量优化（darwin-skill 基线 + 3 轮优化）**：对 v3.10.11 物理合并产物执行 9 维加权基线评估（86.0，full_test），独立子 agent 实测暴露 4 处指令缺口后进入 Phase 2 优化循环 3 轮 → **91.5（Δ +5.5）**。改动仅限 `skills/industry-analysis.md`（+30/−12 行），契约单元/引用面/产物文件名零变化。
