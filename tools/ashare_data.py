@@ -3607,27 +3607,17 @@ def cmd_anomaly_pool(trade_date: str = None):
 #      run-ashare-command 逐条执行并冻结收据，命令级血缘一条都不能塌缩。
 # ---------------------------------------------------------------------------
 
-# 各级“已就位”的命令集（standalone 可复现的部分）。
-# L2/L3 的候选层命令尚未实现——按需求拉动交付，不预建。
-LEVEL_COMMANDS = {
-    "quick": ("quote", "valuation", "financials"),
-    "enhanced": ("quote", "valuation", "financials"),
-    "full": ("quote", "valuation", "financials"),
-}
+# standalone 快查实际执行的命令集（三档当前完全相同）。
+# 原因：L1 CORE 由编排器 feeds 映射按公司动态决定，standalone 不可复现；
+# L2/L3 的候选层命令已全部作为独立子命令交付（打板三件套 + 热度层 + 互动易/财联社/
+# 研报，共 7 个），由消费方 skill 直接调用，run-level 不代跑（ADR-003）。
+# 故三档的差异只在 LEVEL_LABELS 的标题，不在执行集。
+LEVEL_COMMANDS = ("quote", "valuation", "financials")
 
 LEVEL_LABELS = {
     "quick": "L0 QUICK（快查·概览三件套）",
     "enhanced": "L2 ENHANCED（增强信号）",
     "full": "L3 FULL（全量侦察）",
-}
-
-# 各级尚未就位的候选层：如实告知，不静默冒充已覆盖。
-# 全部 7 个需求拉动候选（打板三件套 + 热度层 + 互动易/财联社/研报）已作为独立子命令交付，
-# 由消费方 skill 调用；run-level 仅跑 L1 快查不代跑 L2/L3（ADR-003）。
-LEVEL_PENDING_LAYERS = {
-    "quick": (),
-    "enhanced": (),
-    "full": (),
 }
 
 _CORE_REJECTION = (
@@ -3704,8 +3694,8 @@ def cmd_run_level(target: str, level: str = "quick"):
     normalized = (level or "").strip().lower()
     if normalized == "core":
         raise ValueError(_CORE_REJECTION)
-    if normalized not in LEVEL_COMMANDS:
-        valid = " / ".join(LEVEL_COMMANDS)
+    if normalized not in LEVEL_LABELS:
+        valid = " / ".join(LEVEL_LABELS)
         raise ValueError(f"未知取数级别 {level!r}，可选：{valid}（不含 core）")
 
     runners = {
@@ -3713,7 +3703,7 @@ def cmd_run_level(target: str, level: str = "quick"):
         "valuation": cmd_valuation,
         "financials": cmd_financials,
     }
-    commands = LEVEL_COMMANDS[normalized]
+    commands = LEVEL_COMMANDS
 
     print("=" * 60)
     print(f"取数级别: {LEVEL_LABELS[normalized]}")
@@ -3749,13 +3739,6 @@ def cmd_run_level(target: str, level: str = "quick"):
         mark = "✅" if ok else "❌"
         suffix = "" if ok else "  ← 失败，详见上方该命令原始输出"
         print(f"  {mark} {name}{suffix}")
-
-    pending = LEVEL_PENDING_LAYERS[normalized]
-    if pending:
-        print()
-        print("本级尚未就位的候选层（需求拉动后接入，当前未取数）：")
-        for layer in pending:
-            print(f"  · {layer}")
 
     failed = [name for name, ok in outcomes if not ok]
     if failed:

@@ -911,11 +911,9 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
             ashare_data.cmd_run_level("600519", " CORE ")
 
     def test_level_registry_never_contains_core(self):
-        self.assertNotIn("core", ashare_data.LEVEL_COMMANDS)
-        self.assertEqual(
-            set(ashare_data.LEVEL_COMMANDS),
-            set(ashare_data.LEVEL_PENDING_LAYERS),
-        )
+        self.assertNotIn("core", ashare_data.LEVEL_LABELS)
+        self.assertEqual(set(ashare_data.LEVEL_LABELS),
+                         {"quick", "enhanced", "full"})
 
     def test_unknown_level_is_rejected(self):
         with self.assertRaises(ValueError) as ctx:
@@ -925,8 +923,10 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
     # --- L0 静态清单 ------------------------------------------------------
 
     def test_quick_level_is_the_overview_triplet(self):
+        # 三档执行集当前相同：L1 CORE 由编排器 feeds 映射按公司动态决定，
+        # standalone 不可复现；L2/L3 候选层已全部交付为独立子命令。
         self.assertEqual(
-            ashare_data.LEVEL_COMMANDS["quick"],
+            ashare_data.LEVEL_COMMANDS,
             ("quote", "valuation", "financials"),
         )
 
@@ -990,7 +990,8 @@ class TestRunLevelCommand(OfflineAshareDataTestCase):
 
     def test_full_declares_no_pending_layers_after_l3_complete(self):
         # 打板三件套 + 热度层(L2) + 互动易/财联社/研报(L3) 全部交付为独立子命令，
-        # LEVEL_PENDING_LAYERS 三级均清空；run-level 仍仅跑 L1 快查不代跑 L2/L3
+        # 已无待建候选层（原 LEVEL_PENDING_LAYERS 三级均空，已删）；
+        # run-level 仍仅跑 L1 快查不代跑 L2/L3
         self._patch_runners()
         with redirect_stdout(StringIO()) as out:
             ashare_data.cmd_run_level("600519", "full")
